@@ -85,7 +85,9 @@ export class Player {
     // boots' speedBonus (which recompute() rewrites whenever the inventory
     // changes), so GM speed never gets clobbered by an equip change.
     const boost = this.gm ? 5 : 1 + (this.speedBonus || 0);
-    const speed = (controls.sprint ? SPRINT : WALK) * boost * (inWater ? 0.45 : 1);
+    // An ice/frost status slows movement (slowFactor < 1); GM ignores it.
+    const slow = this.gm ? 1 : (this.slowFactor != null ? this.slowFactor : 1);
+    const speed = (controls.sprint ? SPRINT : WALK) * boost * (inWater ? 0.45 : 1) * slow;
 
     // movement direction relative to the camera
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
