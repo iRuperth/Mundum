@@ -6,14 +6,15 @@ const GRAVITY = 26;
 const JUMP_V = 8.6;
 const WALK = 4.6;
 const SPRINT = 7.6;
-const MAX_STEP = 1.05; // altura máxima de escalón que se puede subir andando
+const MAX_STEP = 1.05; // tallest step you can walk up
+const WORLD_LIMIT = 1600; // keeps the player inside the playable map
 
 export const EYE_HEIGHT = 1.5;
 
 export class Player {
   constructor(scene, world, profile) {
     this.world = world;
-    this.char = buildCharacter(profile.colors);
+    this.char = buildCharacter(profile);
     scene.add(this.char.group);
 
     this.pos = new THREE.Vector3();
@@ -38,6 +39,16 @@ export class Player {
     this.shadow.position.set(x, this.pos.y + 0.05, z);
   }
 
+  // Rebuild the visible model when sex/hair changes in the creation screen.
+  rebuildCharacter(profile) {
+    const scene = this.char.group.parent;
+    if (scene) scene.remove(this.char.group);
+    this.char = buildCharacter(profile);
+    this.char.group.position.copy(this.pos);
+    this.char.group.rotation.y = this.yaw + Math.PI;
+    if (scene) scene.add(this.char.group);
+  }
+
   applyLook(dx, dy) {
     this.yaw -= dx;
     this.pitch = THREE.MathUtils.clamp(this.pitch - dy, -1.45, 1.45);
@@ -49,9 +60,10 @@ export class Player {
 
   update(dt, controls) {
     const inWater = this.inWater;
-    const speed = (controls.sprint ? SPRINT : WALK) * (inWater ? 0.45 : 1);
+    const boost = 1 + (this.speedBonus || 0);
+    const speed = (controls.sprint ? SPRINT : WALK) * boost * (inWater ? 0.45 : 1);
 
-    // dirección de movimiento relativa a la cámara
+    // movement direction relative to the camera
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
     let dx = fx * controls.move.z + (-fz) * controls.move.x;
     let dz = fz * controls.move.z + fx * controls.move.x;
@@ -60,7 +72,7 @@ export class Player {
     this.vel.x = dx * speed;
     this.vel.z = dz * speed;
 
-    // salto / nado
+    // jump / swim
     if (controls.consumeJump() && this.grounded && !inWater) this.vel.y = JUMP_V;
     if (inWater) {
       this.vel.y -= 7 * dt;
@@ -70,15 +82,15 @@ export class Player {
       this.vel.y -= GRAVITY * dt;
     }
 
-    // movimiento horizontal con bloqueo de paredes (por eje, para deslizarse)
+    // horizontal movement with wall blocking, per-axis so we slide along walls
     let nx = this.pos.x + this.vel.x * dt;
     let nz = this.pos.z + this.vel.z * dt;
     if (this.world.heightAt(nx, this.pos.z) - this.pos.y > MAX_STEP) { nx = this.pos.x; this.vel.x = 0; }
     if (this.world.heightAt(nx, nz) - this.pos.y > MAX_STEP) { nz = this.pos.z; this.vel.z = 0; }
-    this.pos.x = nx;
-    this.pos.z = nz;
+    this.pos.x = THREE.MathUtils.clamp(nx, -WORLD_LIMIT, WORLD_LIMIT);
+    this.pos.z = THREE.MathUtils.clamp(nz, -WORLD_LIMIT, WORLD_LIMIT);
 
-    // vertical + suelo
+    // vertical + ground
     this.pos.y += this.vel.y * dt;
     const ground = this.world.heightAt(this.pos.x, this.pos.z);
     if (this.pos.y <= ground) {
@@ -89,14 +101,15 @@ export class Player {
       this.grounded = this.pos.y - ground < 0.08;
     }
 
-    // animación y colocación del modelo
+    // model animation and placement
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
     this.walkPhase += hSpeed * dt * 2.3;
     this.char.animate(this.walkPhase, hSpeed / WALK, this.grounded || inWater);
+    this.char.updateAttack(dt);
     this.char.group.position.copy(this.pos);
     this.char.group.rotation.y = this.yaw + Math.PI;
 
-    // sombra de apoyo
+    // contact shadow
     const k = Math.max(0, 1 - (this.pos.y - ground) * 0.12);
     this.shadow.position.set(this.pos.x, ground + 0.05, this.pos.z);
     this.shadow.scale.setScalar(0.55 + 0.45 * k);
