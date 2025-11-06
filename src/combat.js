@@ -213,6 +213,32 @@ class Creature {
       return;
     }
 
+    // FLEE: below its HP threshold a creature runs away from the player instead
+    // of fighting. fleeBelowHpPct comes from the def (small/passive critters flee
+    // at 20%; many Tibia mobs flee 8–30%). A flying flee-er gets a height boost
+    // below so it visibly takes off. Provoked passives also flee when scared.
+    const fleePct = this.def.fleeBelowHpPct || 0;
+    const scared = fleePct > 0 && (this.hp / this.maxHp) <= fleePct;
+    if (scared && dist < 30) {
+      this.fleeing = true;
+      const sp = this.def.speed * (this.def.flying ? 1.3 : 1.1) * dt;   // panic is faster
+      const nx = this.pos.x - (dx / dist) * sp;
+      const nz = this.pos.z - (dz / dist) * sp;
+      // don't flee into a city or off the map
+      if (!(!this.dungeon && cityAt(nx, nz)) && this.world.heightAt(nx, nz) >= 0.4) {
+        this.pos.x = nx; this.pos.z = nz;
+      }
+      this.yaw = Math.atan2(-dx, -dz);   // face away
+      this._applyFlight(dt, true);
+      this.pos.y = this.world.heightAt(this.pos.x, this.pos.z) + (this._flyY || 0);
+      this.model.group.position.copy(this.pos);
+      this.model.group.rotation.y = this.yaw;
+      this.model.update(dt, true);
+      this._updateLabels(player, eye);
+      return;
+    }
+    this.fleeing = false;
+
     let moving = false;
     let chasing = wantsPlayer && dist > engageRange;
     if (chasing) {
@@ -262,7 +288,11 @@ class Creature {
           if (dist <= a.radius) {
             let dmg = this.def.attack * a.damageMul * (isNight ? 1.3 : 1);
             dmg = Math.max(1, Math.round(dmg - player.defense * 0.5));
+            // The burst's own element drives the status it inflicts (a poison
+            // cloud poisons even if the creature's base element differs).
+            this.areaKind = a.kind;
             onPlayerHit(dmg, this);
+            this.areaKind = null;
           }
         } else {
           let dmg = this.def.attack * (isNight ? 1.3 : 1);
@@ -274,11 +304,28 @@ class Creature {
       }
     }
 
-    this.pos.y = this.world.heightAt(this.pos.x, this.pos.z);
+    // Flying foes hover; they SWOOP DOWN to ground level while attacking in range
+    // and rise back up otherwise (and rise more when fleeing — handled above).
+    const inAtkRange = ranged ? (dist <= engageRange) : (dist <= ATTACK_RANGE);
+    this._applyFlight(dt, false, wantsPlayer && !inAtkRange);
+    this.pos.y = this.world.heightAt(this.pos.x, this.pos.z) + (this._flyY || 0);
     this.model.group.position.copy(this.pos);
     this.model.group.rotation.y = this.yaw;
     this.model.update(dt, moving);
     this._updateLabels(player, eye);
+  }
+
+  // Smoothly ease the creature's flight height (this._flyY) toward a target. Only
+  // affects flying defs; grounded foes keep _flyY at 0. `fleeing` lifts it high to
+  // escape; `cruise` keeps it aloft while approaching; otherwise it swoops to 0 to
+  // bite. So a dragon dives in, attacks, then climbs away — easy for archers,
+  // hard for melee knights to corner.
+  _applyFlight(dt, fleeing, cruise) {
+    if (!this.def.flying) { this._flyY = 0; return; }
+    const high = this.def.flyHeight || 3.2;
+    const target = fleeing ? high * 1.4 : (cruise ? high : 0.2);
+    const cur = this._flyY || 0;
+    this._flyY = cur + (target - cur) * Math.min(1, dt * 3);
   }
 
   // Nameplate + health bar visibility/orientation, factored out so the leash
