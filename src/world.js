@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { makeNoise } from './noise.js';
 
 export const WATER_LEVEL = 0;
-const CHUNK = 64;   // tamaño de cada chunk en metros
-const RES = 32;     // subdivisiones por chunk
+const CHUNK = 64;   // chunk size in meters
+const RES = 32;     // subdivisions per chunk
 
 const C_SAND      = new THREE.Color(0xd5c382);
 const C_SAND_DEEP = new THREE.Color(0x8f9a66);
@@ -52,8 +52,8 @@ export class World {
     scene.add(this.water);
   }
 
-  // Altura del terreno en cualquier punto del mundo: misma fórmula para
-  // generar la malla y para la física, así no hace falta raycasting.
+  // Terrain height at any world point: the mesh and the physics share this one
+  // formula, so no raycasting is needed.
   heightAt(x, z) {
     const n = this.noise;
     const cont = n.fbm(x * 0.0016, z * 0.0016, 3);
@@ -82,7 +82,7 @@ export class World {
 
   _refreshQueue(cx, cz) {
     const r = this.radius;
-    // descartar chunks lejanos
+    // drop chunks that are now too far
     for (const [key, chunk] of this.chunks) {
       if (Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) > r + 1) {
         this.scene.remove(chunk.group);
@@ -91,7 +91,7 @@ export class World {
         this.chunks.delete(key);
       }
     }
-    // encolar los que faltan, ordenados por cercanía
+    // queue the missing ones, nearest first
     this.queue.length = 0;
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
@@ -109,7 +109,7 @@ export class World {
     const ox = (cx + 0.5) * CHUNK, oz = (cz + 0.5) * CHUNK;
     const group = new THREE.Group();
 
-    // --- terreno ---
+    // terrain
     const geo = new THREE.PlaneGeometry(CHUNK, CHUNK, RES, RES);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
@@ -141,7 +141,7 @@ export class World {
     terrain.position.set(ox, 0, oz);
     group.add(terrain);
 
-    // --- vegetación y rocas (deterministas por chunk) ---
+    // vegetation and rocks, deterministic per chunk
     const trees = [], rocks = [];
     for (let i = 0; i < 30; i++) {
       const wx = cx * CHUNK + n.hash(cx * 53 + i, cz * 91 + 7) * CHUNK;

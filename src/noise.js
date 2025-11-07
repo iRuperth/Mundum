@@ -1,4 +1,4 @@
-// Ruido procedural con semilla fija: el mundo es idéntico para todos los jugadores.
+// Seeded procedural noise: every player gets an identical world.
 export function makeNoise(seed) {
   const s = seed | 0;
 
