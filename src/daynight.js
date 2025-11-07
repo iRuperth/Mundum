@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 
-// Ciclo día/noche ligado a la hora real del dispositivo.
-// expone isNight() y damageMultiplier() para el combate de la fase 2
-// (de noche las criaturas pegan un 30% más).
+// Day/night cycle driven by the device's real clock.
+// isNight() and damageMultiplier() feed phase-2 combat: creatures hit 30% harder at night.
 const DAY = new THREE.Color(0x7ec9ff);
 const NIGHT = new THREE.Color(0x0b1030);
 const DAWN = new THREE.Color(0xff9e6b);
@@ -26,14 +25,14 @@ export class DayNight {
       new THREE.MeshBasicMaterial({ color: 0xdfe8ff, fog: false }));
     scene.add(this.sunMesh, this.moonMesh);
 
-    // estrellas (puntos fijos respecto al jugador)
+    // stars, fixed relative to the player
     const N = 700;
     const pos = new Float32Array(N * 3);
     let s = 123456789;
     const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
     for (let i = 0; i < N; i++) {
       const a = rnd() * Math.PI * 2;
-      const y = rnd() * 0.95 + 0.05; // hemisferio superior
+      const y = rnd() * 0.95 + 0.05; // upper hemisphere
       const r = Math.sqrt(1 - y * y);
       pos[i * 3] = Math.cos(a) * r * 750;
       pos[i * 3 + 1] = y * 750;
