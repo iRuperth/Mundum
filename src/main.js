@@ -9,6 +9,7 @@ import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor } from 
 import { EquipVisuals, buildWeaponMesh, buildArrowMesh } from './equipVisuals.js';
 import { wandColorForLevel } from './data/items.js';
 import { CombatSystem } from './combat.js';
+import { PlayerStatus } from './statusEffects.js';
 import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, CITIES } from './cities.js';
 import { Minimap } from './minimap.js';
 import { UI } from './ui.js';
@@ -735,9 +736,25 @@ const controls = new Controls(canvas, ui, {
   onChat: () => openChat(),
 });
 
+// Burn / poison / slow afflicting the player. Damage-over-time drains HP through
+// this hook and shows a coloured floating number; the slow is read in the loop.
+const playerStatus = new PlayerStatus((amount, kind) => {
+  if (!player.alive) return;
+  player.hp -= amount;
+  spawnFloatText(player.pos, `-${amount}`, kind === 'burn' ? '#ff7a33' : '#8fdd4a');
+  if (player.hp <= 0) onPlayerDeath();
+});
+
 const combat = new CombatSystem(scene, world, {
-  onPlayerHit: (dmg) => {
+  onPlayerHit: (dmg, src) => {
     if (!player.alive) return;
+    // The hitting creature may afflict a status (fire→burn, poison→poison,
+    // ice/water→slow). statusForCreature decides from its element/family.
+    if (src && src.def) {
+      const kind = src.areaKind || (src.def.areaAttack && src.def.areaAttack.kind);
+      const applied = playerStatus.applyFromCreature(src.def, kind);
+      if (applied === 'slow') playerStatus.refreshSlowCombat();
+    }
     // Shielding (Tibia use-skill) blocks part of the blow — but only when you
     // actually carry a shield (a two-handed weapon means no shield, no block and
     // no training). Defensive buffs reduce damage further.
@@ -2171,6 +2188,9 @@ function tick() {
       if (place === 'surface') { checkDungeon(); maybeDescend(); }
       else maybeAscend();
       regenVitals(dt);
+      // Burn/poison drain + ice slow. The slow factor feeds player movement.
+      playerStatus.tick(dt);
+      player.slowFactor = playerStatus.speedMultiplier();
     }
 
     peers.tick(dt);
