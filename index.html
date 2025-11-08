@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" id="html-root">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -12,33 +12,88 @@
 <body>
 <canvas id="game"></canvas>
 
-<!-- HUD durante el juego -->
 <div id="hud" class="hidden">
   <div id="hud-top">
     <div id="hud-title">MUNDUM</div>
     <div id="hud-clock"><span id="clock-icon">☀️</span> <span id="clock-time">--:--</span></div>
+    <div id="hud-event" class="hidden"></div>
+    <button id="hud-mute" title="">🔊</button>
   </div>
-  <div id="hint">Haz clic para capturar el ratón &nbsp;·&nbsp; WASD moverse &nbsp;·&nbsp; Espacio saltar &nbsp;·&nbsp; Shift correr &nbsp;·&nbsp; C cámara</div>
+
+  <div id="vitals">
+    <div class="bar hp"><div id="hp-fill" class="fill"></div><span id="hp-text" class="bar-text"></span></div>
+    <div class="bar xp"><div id="xp-fill" class="fill"></div><span id="xp-text" class="bar-text"></span></div>
+    <div id="level-badge">1</div>
+  </div>
+
+  <div id="quest-box" class="hidden"></div>
+  <div id="hint"></div>
+  <div id="toast-stack"></div>
 </div>
 
-<!-- Controles en pantalla -->
+<div id="side-panel" class="hidden">
+  <button id="panel-toggle" title="">‹</button>
+  <div id="minimap-box">
+    <canvas id="minimap" width="150" height="150"></canvas>
+    <div id="city-name"></div>
+  </div>
+  <div id="paperdoll">
+    <div class="slot" data-slot="amulet" title=""></div>
+    <div class="slot" data-slot="helmet" title=""></div>
+    <div class="slot" data-slot="weapon" title=""></div>
+    <div class="slot" data-slot="armor" title=""></div>
+    <div class="slot" data-slot="shield" title=""></div>
+    <div class="slot" data-slot="legs" title=""></div>
+    <div class="slot" data-slot="boots" title=""></div>
+    <div class="slot" data-slot="bag" title=""></div>
+  </div>
+  <div id="cap-row"><span id="cap-icon">🎒</span> <span id="cap-text"></span></div>
+  <div id="backpack-grid"></div>
+</div>
+
 <div id="controls-ui" class="hidden">
   <div id="stick-base"><div id="stick-knob"></div></div>
-  <button id="btn-cam" class="round-btn" title="Cambiar cámara (C)">👁</button>
-  <button id="btn-jump" class="round-btn touch-only" title="Saltar">⬆</button>
+  <button id="btn-cam" class="round-btn" title="">👁</button>
+  <button id="btn-attack" class="round-btn touch-only" title="">⚔</button>
+  <button id="btn-jump" class="round-btn touch-only" title="">⬆</button>
+  <button id="btn-bag" class="round-btn touch-only" title="">🎒</button>
 </div>
 
-<!-- Pantalla de creación de personaje -->
+<div id="chat" class="hidden">
+  <div id="chat-log"></div>
+  <input id="chat-input" maxlength="160" autocomplete="off" class="hidden">
+</div>
+
+<div id="context-card" class="hidden"></div>
+
 <div id="creation">
   <div id="creation-card">
     <h1>MUNDUM</h1>
-    <p class="subtitle">Crea tu personaje</p>
-    <label class="field">Nombre
-      <input id="name-input" maxlength="16" placeholder="Aventurero" autocomplete="off">
+    <p class="subtitle" data-i18n="createHero"></p>
+    <label class="field" data-i18n-label="name">
+      <input id="name-input" maxlength="16" autocomplete="off">
     </label>
+    <div class="seg-row">
+      <div class="seg" id="sex-seg">
+        <button data-sex="male" class="selected" data-i18n="male"></button>
+        <button data-sex="female" data-i18n="female"></button>
+      </div>
+    </div>
+    <div class="seg-row">
+      <div class="seg" id="hair-seg">
+        <button data-hair="short" class="selected" data-i18n="hairShort"></button>
+        <button data-hair="long" data-i18n="hairLong"></button>
+        <button data-hair="spiky" data-i18n="hairSpiky"></button>
+        <button data-hair="bald" data-i18n="hairBald"></button>
+      </div>
+    </div>
     <div id="swatch-rows"></div>
-    <button id="btn-play">▶ &nbsp;Jugar</button>
-    <p class="tiny">Fase 1 · El mundo y tu personaje</p>
+    <button id="btn-play">▶ &nbsp;<span data-i18n="play"></span></button>
+    <div id="lang-row">
+      <button data-lang="es" class="lang-btn">ES</button>
+      <button data-lang="en" class="lang-btn">EN</button>
+    </div>
+    <p class="tiny" data-i18n="phaseTag"></p>
   </div>
 </div>
 
