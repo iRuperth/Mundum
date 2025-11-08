@@ -2,9 +2,10 @@
 // date so every player gets the same one without a server.
 
 // Total accumulated xp required to reach a level. Level 1 starts at 0.
+// A gentle exponent keeps two kids of different levels roughly in sync.
 export function xpForLevel(level) {
   if (level <= 1) return 0;
-  return Math.floor(50 * Math.pow(level - 1, 2.6));
+  return Math.floor(45 * Math.pow(level - 1, 2.35));
 }
 
 export function levelForXp(xp) {
