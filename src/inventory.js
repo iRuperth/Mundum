@@ -114,9 +114,12 @@ export class Inventory {
   unequip(slot) {
     const item = this.equip[slot];
     if (!item) return false;
-    if (slot !== 'bag' && this.backpack.length >= this.bagCapacity) return false;
+    // The bag holds the backpack contents and stays equipped; removing it would
+    // lose its capacity and orphan the carried items.
+    if (slot === 'bag') return false;
+    if (this.backpack.length >= this.bagCapacity) return false;
     this.equip[slot] = null;
-    if (slot !== 'bag') this.backpack.push(item);
+    this.backpack.push(item);
     return true;
   }
 
