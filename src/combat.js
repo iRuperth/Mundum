@@ -35,7 +35,16 @@ class Creature {
     this.bar = makeHealthBar();
     this.model.group.add(this.bar.group);
     this.bar.group.position.y = 1.5 * def.variantScale + 0.4;
+
+    this.baseScale = this.model.group.scale.x;
+    this.dying = false;
+    this.deathT = 0;
+    this.flashT = 0;
+    this._mats = [];
+    this.model.group.traverse((o) => { if (o.material && o.material.emissive) this._mats.push(o.material); });
   }
+
+  flash() { this.flashT = 0.12; }
 
   placeAt(x, z) {
     this.pos.set(x, this.world.heightAt(x, z), z);
@@ -43,6 +52,20 @@ class Creature {
   }
 
   update(dt, player, onPlayerHit, isNight) {
+    if (this.flashT > 0) {
+      this.flashT -= dt;
+      const k = Math.max(0, this.flashT / 0.12);
+      for (const m of this._mats) m.emissive.setRGB(k, k, k);
+    }
+    if (this.dying) {
+      this.deathT += dt;
+      const e = this.deathT / 0.35;
+      const s = this.baseScale * Math.max(0.01, 1 - e);
+      this.model.group.scale.setScalar(s);
+      this.model.group.rotation.z += dt * 6;
+      if (e >= 1) this.dead = true;
+      return;
+    }
     if (this.dead) return;
     const dx = player.pos.x - this.pos.x;
     const dz = player.pos.z - this.pos.z;
@@ -80,9 +103,15 @@ class Creature {
   }
 
   takeDamage(amount) {
+    if (this.dying) return false;
     this.hp -= amount;
-    if (this.hp <= 0) { this.hp = 0; this.dead = true; }
-    return this.dead;
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this.dying = true;
+      this.bar.group.visible = false;
+      return true;
+    }
+    return false;
   }
 
   dispose() {
@@ -166,9 +195,10 @@ export class CombatSystem {
 
     for (let i = this.creatures.length - 1; i >= 0; i--) {
       const c = this.creatures[i];
+      // Award the kill the moment it starts dying, then let it dissolve.
+      if (c.dying && !c._rewarded) { c._rewarded = true; this.onKill(c, eventMult); }
       const dist = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
-      if (c.dead || dist > DESPAWN_RADIUS) {
-        if (c.dead) this.onKill(c, eventMult);
+      if (c.dead || (!c.dying && dist > DESPAWN_RADIUS)) {
         c.dispose();
         this.creatures.splice(i, 1);
       }
@@ -181,7 +211,7 @@ export class CombatSystem {
   attack(player, camDir) {
     let best = null, bestScore = -1;
     for (const c of this.creatures) {
-      if (c.dead) continue;
+      if (c.dead || c.dying) continue;
       const dx = c.pos.x - player.pos.x;
       const dz = c.pos.z - player.pos.z;
       const dist = Math.hypot(dx, dz);
@@ -229,8 +259,15 @@ export class CombatSystem {
       new THREE.MeshLambertMaterial({ color: item.color || 0xd9b34a }));
     mesh.position.set(pos.x, this.world.heightAt(pos.x, pos.z) + 0.4, pos.z);
     this.scene.add(mesh);
+
+    // Rare drops get a colored glow so kids spot treasure from afar.
+    let glow = null;
+    if (item.rarity === 'legendary' || item.rarity === 'elite') {
+      glow = new THREE.PointLight(item.rarity === 'legendary' ? 0xffd166 : 0x5dade2, 8, 4);
+      mesh.add(glow);
+    }
     const drop = {
-      item, mesh, pos: mesh.position,
+      item, mesh, glow, pos: mesh.position,
       spin(dt) { mesh.rotation.y += dt * 1.6; mesh.position.y = this.baseY + Math.sin(performance.now() * 0.003) * 0.1; },
       baseY: mesh.position.y,
     };
