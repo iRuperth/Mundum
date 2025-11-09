@@ -63,8 +63,26 @@ export class Minimap {
     ctx.fill();
     ctx.restore();
 
+    this._drawLegend(ctx);
+
     const here = cityAt(player.pos.x, player.pos.z);
     this.cityLabel.textContent = here ? here.name : t('wilderness');
+  }
+
+  _drawLegend(ctx) {
+    const rows = [['#f1c40f', t('city')], ['#e74c3c', t('enemy')], ['#3498db', t('player')]];
+    ctx.font = '8px system-ui';
+    ctx.textBaseline = 'middle';
+    let y = 8;
+    for (const [color, label] of rows) {
+      ctx.fillStyle = color;
+      ctx.fillRect(4, y - 2, 5, 5);
+      ctx.fillStyle = 'rgba(0,0,0,.6)';
+      ctx.fillRect(11, y - 5, ctx.measureText(label).width + 4, 10);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, 13, y);
+      y += 12;
+    }
   }
 
   worldToMap(wp, player, half) {
