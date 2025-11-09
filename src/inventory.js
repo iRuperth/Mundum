@@ -1,4 +1,5 @@
 import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, instanceFromCoin, rollWeaponInstance, RARITY, COINS, getCoin, getLight, instanceFromLight } from './data/items.js';
+import { getTrophy, instanceFromTrophy } from './data/trophies.js';
 
 export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra'];
 const BASE_CAPACITY = 400;
@@ -40,6 +41,8 @@ export function resolveItem(itemId, rng, level, lang) {
   if (light) return instanceFromLight(light, lang || 'es');
   const coin = getCoin(id);
   if (coin) return instanceFromCoin(coin, 1, lang || 'es');
+  const trophy = getTrophy(id);
+  if (trophy) return instanceFromTrophy(trophy, lang || 'es');
   return null;
 }
 
