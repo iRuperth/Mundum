@@ -20,6 +20,8 @@ const STRINGS = {
     xp: 'Exp',
     capacity: 'Capacidad',
     city: 'Ciudad',
+    enemy: 'Enemigo',
+    player: 'Jugador',
     wilderness: 'Tierras salvajes',
 
     slotAmulet: 'Amuleto',
@@ -78,6 +80,12 @@ const STRINGS = {
     questBoard: 'Misiones',
     chest: 'Cofre',
     interact: 'Pulsa E para interactuar',
+    healed: '¡Curado!',
+    questDone: '¡Misión completada!',
+    firstQuestHint: 'Mira tus misiones arriba a la izquierda y el mapa para llegar',
+    onboard1: 'Pulsa E para hablar con el NPC que brilla y coger una misión',
+    onboard2: 'Haz clic para atacar criaturas y recoge su botín',
+    onboard3: 'Cúrate gratis en el templo, compra en la tienda, guarda en el depósito',
 
     connected: '{0} se ha conectado',
     disconnected: '{0} se ha desconectado',
@@ -110,6 +118,8 @@ const STRINGS = {
     xp: 'Exp',
     capacity: 'Capacity',
     city: 'City',
+    enemy: 'Enemy',
+    player: 'You',
     wilderness: 'Wilderness',
 
     slotAmulet: 'Amulet',
@@ -168,6 +178,12 @@ const STRINGS = {
     questBoard: 'Quests',
     chest: 'Chest',
     interact: 'Press E to interact',
+    healed: 'Healed!',
+    questDone: 'Quest complete!',
+    firstQuestHint: 'Check your quests top-left and the map to find your way',
+    onboard1: 'Press E to talk to the glowing NPC and get a quest',
+    onboard2: 'Click to attack creatures and grab the loot they drop',
+    onboard3: 'Heal free at the temple, buy at the shop, store at the depot',
 
     connected: '{0} has connected',
     disconnected: '{0} has disconnected',
