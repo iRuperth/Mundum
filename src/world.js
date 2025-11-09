@@ -78,6 +78,9 @@ export class World {
     }
     this.water.position.x = px;
     this.water.position.z = pz;
+    const shimmer = Math.sin(performance.now() * 0.0012);
+    this.water.position.y = WATER_LEVEL - 0.04 + shimmer * 0.03;
+    this.water.material.opacity = 0.68 + shimmer * 0.06;
   }
 
   _refreshQueue(cx, cz) {
