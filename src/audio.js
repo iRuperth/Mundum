@@ -176,6 +176,7 @@ const sfx = {
   hit: () => { blip("square", 200, 70, 0.14, 0.35); noise(0.1, 0.25, 500, 1); },
   creatureHit: () => blip("sawtooth", 420, 120, 0.18, 0.3),
   levelUp: () => arpeggio([60, 64, 67, 72, 76], 0.09, "triangle", 0.3),
+  questComplete: () => { arpeggio([60, 64, 67, 72, 76, 79, 84], 0.08, "triangle", 0.32); blip("triangle", 523, 784, 0.45, 0.22); },
   pickup: () => { blip("square", 880, 880, 0.06, 0.3); blip("square", 1320, 1320, 0.09, 0.25); },
   click: () => blip("square", 660, 660, 0.04, 0.2),
   death: () => blip("sawtooth", 300, 60, 0.7, 0.35),
