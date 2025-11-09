@@ -98,6 +98,11 @@ export class Peers {
     const peer = this.peers.get(id);
     if (!peer) return;
     this.scene.remove(peer.char.group);
+    peer.char.group.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+    if (peer.tag) { peer.tag.tex.dispose(); peer.tag.sprite.material.dispose(); }
     this.peers.delete(id);
   }
 

@@ -42,7 +42,12 @@ export class Player {
   // Rebuild the visible model when sex/hair changes in the creation screen.
   rebuildCharacter(profile) {
     const scene = this.char.group.parent;
-    if (scene) scene.remove(this.char.group);
+    const old = this.char.group;
+    if (scene) scene.remove(old);
+    old.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
     this.char = buildCharacter(profile);
     this.char.group.position.copy(this.pos);
     this.char.group.rotation.y = this.yaw + Math.PI;
