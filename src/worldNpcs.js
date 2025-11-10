@@ -67,22 +67,31 @@ export class WorldNpcs {
     const cityById = {};
     for (const c of CITIES) cityById[c.id] = c;
     for (const npc of NPCS) {
-      const city = cityById[npc.city];
-      if (!city) continue;
-      // Vendors stand (and stroll) inside their themed shop building; everyone
-      // else uses their authored offset from the city center.
-      let x, z, indoor = false;
-      const dKey = districtForNpc(npc);
-      const interior = dKey ? this._interiorFor(npc.city, dKey) : null;
-      if (interior) { x = interior.x; z = interior.z; indoor = true; }
-      else { x = city.x + (npc.offset ? npc.offset.x : 0); z = city.z + (npc.offset ? npc.offset.z : 0); }
-      // The whole city sits on one flat pad, so every NPC stands on city.groundY.
-      const y = city.groundY != null ? city.groundY : this.world.heightAt(x, z);
-      // Dress NPCs for their city's climate: snow towns wear cool winter coats,
-      // desert towns wear warm sandy robes; temperate towns keep their own color.
-      const color = climateTint(npc.color, city.biome);
+      // LOOSE NPCs stand out in the wild at explicit world coords (no city) — e.g.
+      // the renegade orc near the orc camp. They snap to terrain height.
+      let x, z, indoor = false, color, y;
+      if (npc.worldPos) {
+        x = npc.worldPos.x; z = npc.worldPos.z;
+        y = this.world.heightAt(x, z);
+        color = npc.color;
+      } else {
+        const city = cityById[npc.city];
+        if (!city) continue;
+        // Vendors stand (and stroll) inside their themed shop building; everyone
+        // else uses their authored offset from the city center.
+        const dKey = districtForNpc(npc);
+        const interior = dKey ? this._interiorFor(npc.city, dKey) : null;
+        if (interior) { x = interior.x; z = interior.z; indoor = true; }
+        else { x = city.x + (npc.offset ? npc.offset.x : 0); z = city.z + (npc.offset ? npc.offset.z : 0); }
+        // The whole city sits on one flat pad, so every NPC stands on city.groundY.
+        y = city.groundY != null ? city.groundY : this.world.heightAt(x, z);
+        // Dress NPCs for their city's climate.
+        color = climateTint(npc.color, city.biome);
+      }
       const model = buildNpcModel(npc.model, { color, scale: 1 });
-      const yaw = Math.atan2(city.x - x, city.z - z);
+      // Face toward the city center (town NPCs) or a default heading (loose NPCs).
+      const faceCity = !npc.worldPos && cityById[npc.city];
+      const yaw = faceCity ? Math.atan2(faceCity.x - x, faceCity.z - z) : 0;
       model.group.position.set(x, y, z);
       model.group.rotation.y = yaw;
       this.scene.add(model.group);
