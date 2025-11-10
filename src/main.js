@@ -6,7 +6,8 @@ import { DayNight } from './daynight.js';
 import { HAIR_STYLES } from './character.js';
 import { initLang, getLang, setLang, applyStaticDom, t } from './i18n.js';
 import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor } from './inventory.js';
-import { EquipVisuals } from './equipVisuals.js';
+import { EquipVisuals, buildWeaponMesh } from './equipVisuals.js';
+import { wandColorForLevel } from './data/items.js';
 import { CombatSystem } from './combat.js';
 import { buildCities, interactableAt, nearestCity, placeCities } from './cities.js';
 import { Minimap } from './minimap.js';
@@ -38,6 +39,23 @@ renderer.setSize(innerWidth, innerHeight);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(isTouch ? 70 : 75, innerWidth / innerHeight, 0.1, 3000);
 camera.rotation.order = 'YXZ';
+scene.add(camera);
+
+// First-person weapon viewmodel: held in front of the camera so you see your
+// own weapon (wand, sword, bow...) Minecraft-style.
+const viewModel = new THREE.Group();
+viewModel.position.set(0.32, -0.32, -0.7);
+viewModel.rotation.set(0.1, -0.3, 0);
+camera.add(viewModel);
+let viewModelMesh = null;
+function setViewModel(item, level) {
+  if (viewModelMesh) { viewModel.remove(viewModelMesh); viewModelMesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); viewModelMesh = null; }
+  if (!item) return;
+  const color = item.type === 'wand' ? wandColorForLevel(level) : (item.color || 0xb0b0b0);
+  viewModelMesh = buildWeaponMesh(item.type, color);
+  viewModelMesh.scale.setScalar(1.1);
+  viewModel.add(viewModelMesh);
+}
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -149,11 +167,65 @@ const gameUI = new UI(panelRefs, inv, depot, {
   },
 });
 
-const minimap = new Minimap(document.getElementById('minimap'), world, document.getElementById('city-name'));
+const minimapCanvas = document.getElementById('minimap');
+const mapOverlay = document.getElementById('map-overlay');
+const minimap = new Minimap(minimapCanvas, world, document.getElementById('city-name'), {
+  coords: document.getElementById('coords'),
+  big: document.getElementById('bigmap'),
+  bigCoords: document.getElementById('bigmap-coords'),
+  overlay: mapOverlay,
+});
+
+// Tap the minimap to open the full-screen map; tap the backdrop or ✕ to close.
+minimapCanvas.addEventListener('click', () => minimap.toggle(true));
+document.getElementById('bigmap-close').addEventListener('click', () => minimap.toggle(false));
+mapOverlay.addEventListener('click', (e) => { if (e.target === mapOverlay) minimap.toggle(false); });
+addEventListener('keydown', (e) => { if (e.code === 'Escape' && minimap.expanded) minimap.toggle(false); });
+
+// --- Expanded map: drag to pan, wheel / pinch to zoom, button to recenter ---
+const bigmap = document.getElementById('bigmap');
+const bigRecenter = document.getElementById('bigmap-recenter');
+const mapPtrs = new Map();           // active pointers on the big map
+let pinchDist = 0;                    // last two-finger distance, for pinch zoom
+
+bigmap.addEventListener('pointerdown', (e) => {
+  bigmap.setPointerCapture(e.pointerId);
+  mapPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (mapPtrs.size === 2) pinchDist = twoFingerDist();
+});
+bigmap.addEventListener('pointermove', (e) => {
+  const prev = mapPtrs.get(e.pointerId);
+  if (!prev) return;
+  if (mapPtrs.size === 2) {
+    mapPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const d = twoFingerDist();
+    if (pinchDist > 0 && d > 0) minimap.zoom(pinchDist / d);
+    pinchDist = d;
+  } else {
+    // CSS scales the 600px canvas to its on-screen size; convert px to canvas px.
+    const scale = bigmap.width / bigmap.getBoundingClientRect().width;
+    minimap.pan((e.clientX - prev.x) * scale, (e.clientY - prev.y) * scale, player);
+    mapPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  }
+});
+const endMapPtr = (e) => { mapPtrs.delete(e.pointerId); if (mapPtrs.size < 2) pinchDist = 0; };
+bigmap.addEventListener('pointerup', endMapPtr);
+bigmap.addEventListener('pointercancel', endMapPtr);
+bigmap.addEventListener('wheel', (e) => { e.preventDefault(); minimap.zoom(e.deltaY > 0 ? 1.12 : 0.89); }, { passive: false });
+if (bigRecenter) bigRecenter.addEventListener('click', () => minimap.recenter());
+
+function twoFingerDist() {
+  const pts = [...mapPtrs.values()];
+  if (pts.length < 2) return 0;
+  return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+}
 
 const controls = new Controls(canvas, ui, {
   onToggleCamera: () => { firstPerson = !firstPerson; },
-  onLockChange: (locked) => { ui.hint.classList.toggle('hidden', locked); },
+  onLockChange: (locked) => {
+    ui.hint.classList.toggle('hidden', locked);
+    document.getElementById('crosshair').classList.toggle('hidden', !locked || state !== 'play');
+  },
   onToggleBag: () => gameUI.togglePanel(),
   onChat: () => openChat(),
 });
@@ -296,6 +368,7 @@ async function startGame() {
   ui.controlsUi.classList.remove('hidden');
   panelRefs.sidePanel.classList.remove('hidden');
   document.getElementById('chat').classList.remove('hidden');
+  if (isTouch) document.getElementById('crosshair').classList.remove('hidden');
   audio.unlock();
   audio.startMusic();
   if (!isTouch) canvas.requestPointerLock();
@@ -416,6 +489,7 @@ function recompute() {
   player.weapon = inv.weapon();
   player.speedBonus = inv.speedBonus();
   equipVisuals.refresh(inv.equip, player.level);
+  setViewModel(inv.equip.weapon, player.level);
   gameUI.renderAll();
   gameUI.setCapacity(player.level);
   saveLocal();
@@ -562,6 +636,11 @@ function checkDungeon() {
   if (id !== (currentDungeon ? currentDungeon.id : null)) {
     currentDungeon = d;
     combat.setDungeon(d);
+    // Shift the score by danger: deeper dungeons get the ominous abyss theme,
+    // shallower ones a darker dungeon theme, and the open world its bright one.
+    if (!d) audio.setMood('overworld');
+    else if ((d.minLevel || 1) >= 22) audio.setMood('abyss');
+    else audio.setMood('dungeon');
     if (d) {
       gameUI.toast('🕳️ ' + (d.name ? (d.name[getLang()] || d.name.es) : d.id));
       if (questLog.onEvent('reach', d.id).length) onQuestProgress();
@@ -618,6 +697,7 @@ function updateCamera() {
   }
   player.char.group.visible = !firstPerson;
   player.shadow.visible = !firstPerson;
+  viewModel.visible = firstPerson && player.alive;
 }
 
 let createT = 0.6;
@@ -672,7 +752,10 @@ function tick() {
           gameUI.toast(t('looted', picked.name), 'loot');
           if (questLog.onEvent('collect', picked.baseId).length) onQuestProgress();
           recompute();
-        } else combat.spawnDrop(player.pos, picked);
+        } else {
+          combat.spawnDrop(player.pos, picked);
+          gameUI.toast(t(r === 'heavy' ? 'tooHeavy' : 'full'), 'bad');
+        }
       }
 
       checkDungeon();

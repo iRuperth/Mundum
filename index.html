@@ -12,6 +12,7 @@
 <body>
 <canvas id="game"></canvas>
 <div id="low-hp-vignette"></div>
+<div id="crosshair" class="hidden"></div>
 
 <div id="hud" class="hidden">
   <div id="hud-top">
@@ -69,6 +70,8 @@
 <div id="map-overlay" class="hidden">
   <canvas id="bigmap" width="600" height="600"></canvas>
   <div id="bigmap-coords"></div>
+  <div id="bigmap-hint">Drag to move · scroll / pinch to zoom</div>
+  <button id="bigmap-recenter" title="Recenter on player">⌖</button>
   <button id="bigmap-close" title="Close">✕</button>
 </div>
 

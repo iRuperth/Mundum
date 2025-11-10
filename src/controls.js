@@ -46,11 +46,12 @@ export class Controls {
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled || this.isTouch) return;
       if (document.pointerLockElement === canvas) {
-        if (e.button === 0) this._attackQueued = true;
+        if (e.button === 2) this._attackQueued = true;
       } else {
         canvas.requestPointerLock();
       }
     });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('mousemove', (e) => {
       if (document.pointerLockElement === canvas) {
         this._lookDX += e.movementX * LOOK_MOUSE;
