@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { buildNpcModel } from './npcModels.js';
 import { NPCS } from './data/npcs.js';
 import { CITIES } from './cities.js';
+import { WATER_LEVEL } from './world.js';
 
 const NPC_RADIUS = 2.6;
+const DRY_MARGIN = 0.8; // keep NPCs this far above the waterline
 
 // Places every NPC on its city plaza and shows a floating '!' over quest
 // givers that have something available.
@@ -21,8 +23,13 @@ export class WorldNpcs {
     for (const npc of NPCS) {
       const city = cityById[npc.city];
       if (!city) continue;
-      const x = city.x + (npc.offset ? npc.offset.x : 0);
-      const z = city.z + (npc.offset ? npc.offset.z : 0);
+      let x = city.x + (npc.offset ? npc.offset.x : 0);
+      let z = city.z + (npc.offset ? npc.offset.z : 0);
+      // pull toward the city center until standing on dry land
+      for (let i = 0; i < 12 && this.world.heightAt(x, z) < WATER_LEVEL + DRY_MARGIN; i++) {
+        x += (city.x - x) * 0.2;
+        z += (city.z - z) * 0.2;
+      }
       const y = this.world.heightAt(x, z);
       const model = buildNpcModel(npc.model, { color: npc.color, scale: 1 });
       model.group.position.set(x, y, z);
