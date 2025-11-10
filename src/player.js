@@ -6,8 +6,10 @@ const GRAVITY = 26;
 const JUMP_V = 8.6;
 const WALK = 4.6;
 const SPRINT = 7.6;
-const MAX_STEP = 1.05; // tallest step you can walk up
+const MAX_STEP = 1.05;    // tallest step you can walk up
 const WORLD_LIMIT = 1600; // keeps the player inside the playable map
+const PLAYER_RADIUS = 0.35;       // body width used for solid collisions
+const MAX_WADE_DEPTH = 1.0;       // can't walk more than 1 m below the waterline
 
 export const EYE_HEIGHT = 1.5;
 
@@ -63,6 +65,20 @@ export class Player {
     return this.pos.y + 0.4 < WATER_LEVEL;
   }
 
+  // Whether the player can't stand at (x, z): a wall too tall to step up, a
+  // tree/rock footprint, or water deeper than the wade limit. Walking parallel
+  // to (or out of) deep water is still allowed — only going deeper is blocked.
+  _blocked(x, z) {
+    const ground = this.world.heightAt(x, z);
+    if (ground - this.pos.y > MAX_STEP) return true;
+    if (this.world.solidAt(x, z, PLAYER_RADIUS)) return true;
+    if (ground < WATER_LEVEL - MAX_WADE_DEPTH) {
+      const here = this.world.heightAt(this.pos.x, this.pos.z);
+      if (ground < here) return true; // refuse to wade deeper, allow coming back out
+    }
+    return false;
+  }
+
   update(dt, controls) {
     const inWater = this.inWater;
     const boost = 1 + (this.speedBonus || 0);
@@ -87,11 +103,12 @@ export class Player {
       this.vel.y -= GRAVITY * dt;
     }
 
-    // horizontal movement with wall blocking, per-axis so we slide along walls
+    // horizontal movement, resolved per-axis so we slide along whatever blocks us:
+    // tall steps (walls), tree/rock footprints, and water deeper than the wade limit.
     let nx = this.pos.x + this.vel.x * dt;
     let nz = this.pos.z + this.vel.z * dt;
-    if (this.world.heightAt(nx, this.pos.z) - this.pos.y > MAX_STEP) { nx = this.pos.x; this.vel.x = 0; }
-    if (this.world.heightAt(nx, nz) - this.pos.y > MAX_STEP) { nz = this.pos.z; this.vel.z = 0; }
+    if (this._blocked(nx, this.pos.z)) { nx = this.pos.x; this.vel.x = 0; }
+    if (this._blocked(nx, nz)) { nz = this.pos.z; this.vel.z = 0; }
     this.pos.x = THREE.MathUtils.clamp(nx, -WORLD_LIMIT, WORLD_LIMIT);
     this.pos.z = THREE.MathUtils.clamp(nz, -WORLD_LIMIT, WORLD_LIMIT);
 

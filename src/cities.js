@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { WEAPONS, ARMORS, CONTAINERS } from './data/items.js';
+import { WATER_LEVEL } from './world.js';
+
+// A prop counts as "on dry land" only this far above the waterline, so nothing
+// sits in the shallows.
+const DRY_MARGIN = 0.8;
 
 // Fixed city layout. Nominal positions are deterministic; each is then snapped
 // to the nearest flat grassland so cities never sit underwater. Every city has
@@ -42,6 +47,18 @@ function findLand(world, ox, oz) {
     }
   }
   return { x: ox, z: oz };
+}
+
+// Pull a prop position toward the city center until it sits on dry land, so a
+// house/shop/portal that nominally lands in the water gets nudged back ashore.
+function liftToLand(world, cx, cz, x, z) {
+  let px = x, pz = z;
+  for (let i = 0; i < 12; i++) {
+    if (world.heightAt(px, pz) >= WATER_LEVEL + DRY_MARGIN) break;
+    px += (cx - px) * 0.2;
+    pz += (cz - pz) * 0.2;
+  }
+  return { x: px, z: pz };
 }
 
 export function shopStock() {
@@ -94,8 +111,8 @@ export function buildCities(scene, world) {
 
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
-      const hx = c.x + Math.cos(a) * 18;
-      const hz = c.z + Math.sin(a) * 18;
+      const house = liftToLand(world, c.x, c.z, c.x + Math.cos(a) * 18, c.z + Math.sin(a) * 18);
+      const hx = house.x, hz = house.z;
       const hy = world.heightAt(hx, hz);
       const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 4), matWall);
       wall.position.set(hx, hy + 1.5, hz);
@@ -105,7 +122,7 @@ export function buildCities(scene, world) {
       group.add(wall, roof);
     }
 
-    const shopPos = { x: c.x + 9, z: c.z };
+    const shopPos = liftToLand(world, c.x, c.z, c.x + 9, c.z);
     const shopY = world.heightAt(shopPos.x, shopPos.z);
     const shopMesh = new THREE.Mesh(new THREE.BoxGeometry(3, 2.4, 3), matShop);
     shopMesh.position.set(shopPos.x, shopY + 1.2, shopPos.z);
@@ -114,13 +131,13 @@ export function buildCities(scene, world) {
     shopRoof.rotation.y = Math.PI / 4;
     group.add(shopMesh, shopRoof);
 
-    const depotPos = { x: c.x - 9, z: c.z };
+    const depotPos = liftToLand(world, c.x, c.z, c.x - 9, c.z);
     const depotY = world.heightAt(depotPos.x, depotPos.z);
     const depotMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 1.4, 1.4), matDepot);
     depotMesh.position.set(depotPos.x, depotY + 0.7, depotPos.z);
     group.add(depotMesh);
 
-    const portalPos = { x: c.x, z: c.z + 11 };
+    const portalPos = liftToLand(world, c.x, c.z, c.x, c.z + 11);
     const portalY = world.heightAt(portalPos.x, portalPos.z);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.3, 8, 18), matPortal);
     ring.position.set(portalPos.x, portalY + 1.6, portalPos.z);

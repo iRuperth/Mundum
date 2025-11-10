@@ -23,6 +23,7 @@ export class World {
     this.radius = radius;
     this.noise = makeNoise(seed);
     this.chunks = new Map();
+    this.solids = new Map(); // chunk key -> [{x, z, r}] collidable trunks/rocks
     this.queue = [];
     this._cx = null;
     this._cz = null;
@@ -64,6 +65,24 @@ export class World {
     return h;
   }
 
+  // True if (x, z) lies inside a tree trunk or rock footprint. `pad` widens the
+  // check by the player's own radius so the body, not just its center, collides.
+  solidAt(x, z, pad = 0) {
+    const cx = Math.floor(x / CHUNK), cz = Math.floor(z / CHUNK);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const list = this.solids.get(`${cx + dx},${cz + dz}`);
+        if (!list) continue;
+        for (const s of list) {
+          const rr = s.r + pad;
+          const ddx = s.x - x, ddz = s.z - z;
+          if (ddx * ddx + ddz * ddz < rr * rr) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   update(px, pz, buildAll = false) {
     const cx = Math.floor(px / CHUNK), cz = Math.floor(pz / CHUNK);
     if (cx !== this._cx || cz !== this._cz) {
@@ -92,6 +111,7 @@ export class World {
         chunk.terrainGeo.dispose();
         for (const m of chunk.instanced) m.dispose();
         this.chunks.delete(key);
+        this.solids.delete(key);
       }
     }
     // queue the missing ones, nearest first
@@ -199,7 +219,14 @@ export class World {
       instanced.push(rocksMesh);
     }
 
+    // collision footprints: trunk radius scales with tree size, rocks a bit wider
+    const solids = [];
+    for (const t of trees) solids.push({ x: t.x, z: t.z, r: 0.3 + t.s * 0.22 });
+    for (const r of rocks) solids.push({ x: r.x, z: r.z, r: 0.45 + r.s * 0.5 });
+
     this.scene.add(group);
-    this.chunks.set(`${cx},${cz}`, { cx, cz, group, terrainGeo: geo, instanced });
+    const key = `${cx},${cz}`;
+    this.chunks.set(key, { cx, cz, group, terrainGeo: geo, instanced });
+    this.solids.set(key, solids);
   }
 }
