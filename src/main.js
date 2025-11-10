@@ -60,8 +60,16 @@ let profile = loadProfile();
 
 const homeCity = nearestCity(0, 0);
 const player = new Player(scene, world, profile);
-player.spawnAt(homeCity.x, homeCity.z);
+spawnInCity(homeCity);
 world.update(player.pos.x, player.pos.z, true);
+
+// Spawn just outside the temple pillar ring, facing away from the city center,
+// so the third-person camera never clips a pillar on arrival. The -z side is
+// clear (shop is at +x, depot at -x, portal at +z).
+function spawnInCity(city) {
+  player.spawnAt(city.x, city.z - 8);
+  player.yaw = Math.PI;
+}
 
 player.level = 1;
 player.exp = 0;
@@ -459,7 +467,7 @@ function showDeathScreen(msg) {
 }
 
 function respawn() {
-  player.spawnAt(homeCity.x, homeCity.z);
+  spawnInCity(homeCity);
   player.hp = player.maxHp;
   player.alive = true;
   combat.clear();
@@ -562,7 +570,7 @@ function checkDungeon() {
 }
 
 function teleportTo(city) {
-  player.spawnAt(city.x, city.z);
+  spawnInCity(city);
   world.update(player.pos.x, player.pos.z, true);
   combat.clear();
   gameUI.closeContext();
