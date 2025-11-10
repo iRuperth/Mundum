@@ -21,6 +21,7 @@ import { WorldNpcs } from './worldNpcs.js';
 import { questsForNpc } from './data/quests.js';
 import { buildDungeonEntrances, dungeonEntranceAt, chestAt, openChestVisual, update as updateDungeons } from './dungeons.js';
 import { resolveItem } from './inventory.js';
+import { FloatText } from './floatText.js';
 
 const SEED = 20260612;
 const PROFILE_KEY = 'mundum.profile';
@@ -80,11 +81,16 @@ let equipVisuals = new EquipVisuals(player.char);
 const peers = new Peers(scene, world);
 const net = new Net();
 let currentDungeon = null;
+let firstQuestHintShown = false;
+let shakeAmount = 0;
+let lowHpActive = false;
+const lowHpVignette = document.getElementById('low-hp-vignette');
+const floatText = new FloatText(scene);
 
 let firstPerson = true;
 let state = 'create';
 
-const fillLight = new THREE.PointLight(0xffeedd, 30, 12);
+const fillLight = new THREE.PointLight(0xffeedd, 9, 9);
 scene.add(fillLight);
 
 const ui = {
@@ -149,11 +155,16 @@ const combat = new CombatSystem(scene, world, {
     if (!player.alive) return;
     player.hp -= dmg;
     audio.sfx.hit();
+    shakeAmount = Math.min(0.5, shakeAmount + 0.18);
     if (player.hp <= 0) onPlayerDeath();
   },
   onCreatureHit: (c, dmg, mult) => {
     audio.sfx.creatureHit();
-    spawnFloatText(c.pos, mult > 1 ? `${dmg}!` : `${dmg}`, mult > 1 ? '#ffd166' : '#ffffff');
+    if (mult > 1) { spawnFloatText(c.pos, `${dmg}!`, '#7bed6f'); shakeAmount = Math.min(0.5, shakeAmount + 0.1); }
+    else if (mult === 0) spawnFloatText(c.pos, '0', '#9aa0a6');
+    else if (mult < 1) spawnFloatText(c.pos, `${dmg}`, '#74b9ff');
+    else spawnFloatText(c.pos, `${dmg}`, '#ffffff');
+    if (c.flash) c.flash();
   },
   onKill: (c, xp) => {
     gainXp(xp);
@@ -280,6 +291,13 @@ async function startGame() {
   audio.unlock();
   audio.startMusic();
   if (!isTouch) canvas.requestPointerLock();
+
+  if (!localStorage.getItem('mundum.onboarded')) {
+    localStorage.setItem('mundum.onboarded', '1');
+    setTimeout(() => gameUI.toast('👉 ' + t('onboard1')), 1500);
+    setTimeout(() => gameUI.toast('⚔️ ' + t('onboard2')), 7000);
+    setTimeout(() => gameUI.toast('🏛️ ' + t('onboard3')), 12500);
+  }
 
   connectOnline();
 }
@@ -449,26 +467,7 @@ function respawn() {
 }
 
 function spawnFloatText(pos, text, color) {
-  const c2 = document.createElement('canvas');
-  c2.width = 128; c2.height = 64;
-  const ctx = c2.getContext('2d');
-  ctx.font = 'bold 40px system-ui';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.lineWidth = 5; ctx.strokeStyle = '#000';
-  ctx.strokeText(text, 64, 32); ctx.fillStyle = color; ctx.fillText(text, 64, 32);
-  const tex = new THREE.CanvasTexture(c2);
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  sprite.scale.set(1, 0.5, 1);
-  sprite.position.set(pos.x, pos.y + 1.6, pos.z);
-  scene.add(sprite);
-  const start = performance.now();
-  (function rise() {
-    const e = (performance.now() - start) / 800;
-    if (e >= 1) { scene.remove(sprite); tex.dispose(); sprite.material.dispose(); return; }
-    sprite.position.y = pos.y + 1.6 + e * 0.8;
-    sprite.material.opacity = 1 - e;
-    requestAnimationFrame(rise);
-  })();
+  floatText.spawn(pos, text, color);
 }
 
 function tryInteract() {
@@ -489,12 +488,26 @@ function tryInteract() {
 function openNpcDialog(npc) {
   if (document.pointerLockElement) document.exitPointerLock();
   questLog.onEvent('talk', npc.id);
+  if (npc.role === 'priest' && player.hp < player.maxHp) {
+    player.hp = player.maxHp;
+    audio.sfx.levelUp();
+    gameUI.toast('✨ ' + t('healed'), 'levelup');
+    gameUI.setVitals(player.hp, player.maxHp, xpProgress(player.exp));
+  }
   gameUI.openNpc(npc, questLog, player.level, {
     questsForNpc: (id) => questsForNpc(id),
-    accept: (qid) => { if (questLog.accept(qid)) { audio.sfx.click(); onQuestProgress(); } },
+    accept: (qid) => { if (questLog.accept(qid)) { audio.sfx.click(); onQuestProgress(); maybeFirstQuestHint(); } },
     complete: (qid) => completeQuest(qid),
   });
   onQuestProgress();
+}
+
+// One-time hint the first time a quest is accepted, pointing to the quest box.
+function maybeFirstQuestHint() {
+  if (questLog.activeList().length === 1 && !firstQuestHintShown) {
+    firstQuestHintShown = true;
+    gameUI.toast('📜 ' + t('firstQuestHint'));
+  }
 }
 
 function completeQuest(qid) {
@@ -509,8 +522,8 @@ function completeQuest(qid) {
       if (item) inv.addToBackpack(item, player.level);
     }
   }
-  audio.sfx.levelUp();
-  gameUI.toast(t('looted', t('questBoard')), 'levelup');
+  audio.sfx.questComplete();
+  gameUI.toast('🎉 ' + t('questDone'), 'levelup');
   onQuestProgress();
   recompute();
 }
@@ -590,6 +603,11 @@ function updateCamera() {
     camera.position.set(cx, cy, cz);
     camera.lookAt(player.pos.x, eyeY - 0.15, player.pos.z);
   }
+  if (shakeAmount > 0.001) {
+    camera.position.x += (combat.rngFloat() - 0.5) * shakeAmount;
+    camera.position.y += (combat.rngFloat() - 0.5) * shakeAmount;
+    shakeAmount *= 0.82;
+  }
   player.char.group.visible = !firstPerson;
   player.shadow.visible = !firstPerson;
 }
@@ -597,16 +615,19 @@ function updateCamera() {
 let createT = 0.6;
 function updateCreationCamera(dt) {
   createT += dt * 0.5;
-  player.char.group.rotation.y = Math.sin(createT) * 0.7 + 0.2;
+  // Model faces +Z; the camera sits on +Z, so face the hero toward it.
+  player.char.group.rotation.y = Math.PI + Math.sin(createT) * 0.6;
   player.char.animate(0, 0, true);
   const px = player.pos.x, pz = player.pos.z;
   const portrait = camera.aspect < 0.85;
-  // Look toward -z, away from the shop/depot which sit on the x axis.
-  const cx = px, cz = pz - (portrait ? 4.6 : 2.9);
-  const cy = player.pos.y + (portrait ? 1.5 : 1.2);
-  camera.position.set(cx, cy, cz);
-  camera.lookAt(px, player.pos.y + (portrait ? 0.2 : 0.95), pz);
-  fillLight.position.set(cx, cy + 1.2, cz + 0.5);
+  // Stay inside the temple pillar ring (radius ~3.4) so no pillar blocks the
+  // hero. Wide screens have a narrow vertical fov, so back off a bit more and
+  // aim low so feet and head both fit.
+  const cz = pz + (portrait ? 3.2 : 3.3);
+  const cy = player.pos.y + 1.05;
+  camera.position.set(px, cy, cz);
+  camera.lookAt(px, player.pos.y + 0.55, pz);
+  fillLight.position.set(px, player.pos.y + 3.2, cz - 0.3);
 }
 
 const camDir = new THREE.Vector3();
@@ -656,11 +677,19 @@ function tick() {
     peers.tick(dt);
     worldNpcs.tick(dt);
     updateDungeons(dt, dungeonChests);
+    floatText.update(dt);
+    updateWandBolt(dt);
     sendNetState();
 
     updateCamera();
     minimap.draw(player, peers.list(), combat.creatures);
     gameUI.setVitals(player.hp, player.maxHp, xpProgress(player.exp));
+
+    const danger = player.alive && player.hp / player.maxHp < 0.3;
+    if (danger !== lowHpActive) {
+      lowHpActive = danger;
+      lowHpVignette.classList.toggle('active', danger);
+    }
   } else {
     updateCreationCamera(dt);
   }
@@ -675,6 +704,38 @@ function doAttack() {
   audio.sfx.attack();
   camDir.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   combat.attack(player, camDir);
+  if (player.weapon.type === 'wand') castWandBolt();
+}
+
+const wandBolt = (() => {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xb89bff, transparent: true }));
+  const light = new THREE.PointLight(0xb89bff, 10, 4);
+  mesh.add(light);
+  mesh.visible = false;
+  scene.add(mesh);
+  return { mesh, light, t: 0, active: false };
+})();
+
+function castWandBolt() {
+  const color = player.weapon.color || 0xb89bff;
+  wandBolt.mesh.material.color.setHex(color);
+  wandBolt.light.color.setHex(color);
+  wandBolt.mesh.position.set(player.pos.x, player.pos.y + 1.3, player.pos.z);
+  wandBolt.dir = { x: camDir.x, z: camDir.z };
+  wandBolt.t = 0.35;
+  wandBolt.active = true;
+  wandBolt.mesh.visible = true;
+}
+
+function updateWandBolt(dt) {
+  if (!wandBolt.active) return;
+  wandBolt.t -= dt;
+  if (wandBolt.t <= 0) { wandBolt.active = false; wandBolt.mesh.visible = false; return; }
+  wandBolt.mesh.position.x += wandBolt.dir.x * dt * 22;
+  wandBolt.mesh.position.z += wandBolt.dir.z * dt * 22;
+  wandBolt.mesh.material.opacity = wandBolt.t / 0.35;
 }
 
 let lastNetSend = 0;
