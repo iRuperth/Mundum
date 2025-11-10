@@ -14,7 +14,7 @@ const STRINGS = {
     hairBald: 'Calvo',
     phaseTag: 'Fase 2 · Combate, criaturas e items',
 
-    hintDesktop: 'WASD moverse · Espacio saltar · Shift correr · Clic atacar · C cámara · E interactuar · I mochila · Enter chat',
+    hintDesktop: 'WASD moverse · Espacio saltar · Shift correr · Clic derecho atacar · Q habilidad · C cámara · E interactuar · I mochila · Enter chat',
     level: 'Nivel',
     hp: 'Vida',
     xp: 'Exp',
@@ -63,7 +63,7 @@ const STRINGS = {
     gold: 'Oro',
     full: 'No puedes cargar más',
     needLevel: 'Necesitas nivel {0}',
-    tooHeavy: 'Demasiado pesado',
+    tooHeavy: 'No tienes capacidad para llevarlo',
 
     event2xp: '¡Evento: Experiencia x2!',
     event2drop: '¡Evento: Botín x2!',
@@ -112,7 +112,7 @@ const STRINGS = {
     hairBald: 'Bald',
     phaseTag: 'Phase 2 · Combat, creatures and items',
 
-    hintDesktop: 'WASD move · Space jump · Shift run · Click attack · C camera · E interact · I backpack · Enter chat',
+    hintDesktop: 'WASD move · Space jump · Shift run · Right click attack · Q skill · C camera · E interact · I backpack · Enter chat',
     level: 'Level',
     hp: 'HP',
     xp: 'Exp',
@@ -161,7 +161,7 @@ const STRINGS = {
     gold: 'Gold',
     full: 'You can\'t carry more',
     needLevel: 'You need level {0}',
-    tooHeavy: 'Too heavy',
+    tooHeavy: 'Not enough capacity to carry it',
 
     event2xp: 'Event: Double experience!',
     event2drop: 'Event: Double loot!',

@@ -9,6 +9,7 @@ export class EquipVisuals {
     this.weaponMesh = null;
     this.shieldMesh = null;
     this.helmetMesh = null;
+    this.bagMesh = null;
     this.armorTintActive = false;
     this._origColors = {
       shirt: char.mats.shirt.color.clone(),
@@ -23,6 +24,15 @@ export class EquipVisuals {
     this.setArmor(equip.armor);
     this.setLegs(equip.legs);
     this.setBoots(equip.boots);
+    this.setBag(equip.bag);
+  }
+
+  // A backpack worn on the back, Minecraft-style, so it shows in third person.
+  setBag(item) {
+    if (this.bagMesh) { this.char.parts.body.remove(this.bagMesh); disposeTree(this.bagMesh); this.bagMesh = null; }
+    if (!item) return;
+    this.bagMesh = buildBackpackMesh(item.color || 0x8a5a2b);
+    this.char.parts.body.add(this.bagMesh);
   }
 
   setWeapon(item, level) {
@@ -73,7 +83,7 @@ export class EquipVisuals {
 
 function mat(color) { return new THREE.MeshLambertMaterial({ color }); }
 
-function buildWeaponMesh(type, color) {
+export function buildWeaponMesh(type, color) {
   const g = new THREE.Group();
   if (type === 'bow') {
     const arc = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.022, 6, 16, Math.PI * 1.3), mat(0x6a4a2a));
@@ -137,6 +147,25 @@ function buildHelmetMesh(color) {
   rim.position.y = 0.02;
   g.add(dome, rim);
   return g;
+}
+
+function buildBackpackMesh(color) {
+  const g = new THREE.Group();
+  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.36, 0.16), mat(color));
+  pack.position.set(0, -0.04, -0.26);
+  const flap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.04), mat(shade(color, 0.8)));
+  flap.position.set(0, 0.08, -0.34);
+  const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.04), mat(shade(color, 0.7)));
+  strapL.position.set(-0.12, 0, -0.12);
+  const strapR = strapL.clone();
+  strapR.position.x = 0.12;
+  g.add(pack, flap, strapL, strapR);
+  return g;
+}
+
+function shade(hex, f) {
+  const c = new THREE.Color(hex);
+  return c.multiplyScalar(f).getHex();
 }
 
 function disposeTree(obj) {
