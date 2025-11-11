@@ -202,6 +202,7 @@ export function shopStock() {
 // Normalize a def/instance to a coarse kind: 'weapon' | 'shield' | 'armor' |
 // 'potion' | 'container'. Weapons have an attack type; armors have a slot.
 function itemKind(it) {
+  if (it.kind === 'trophy' || it.type === 'trophy') return 'trophy';
   if (it.kind === 'potion' || it.restoreType) return 'potion';
   if (it.type === 'shield') return 'shield';
   if (it.type === 'container' || it.capacity != null) return 'container';
