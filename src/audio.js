@@ -17,23 +17,66 @@ let stepIndex = 0;
 let schedulerTimer = null;
 
 // Music data
-// C major pentatonic vibe. MIDI note numbers; 0 = rest.
-const BPM = 120;
-const STEP = 60 / BPM / 2; // eighth notes
+// MIDI note numbers; 0 = rest. Each "mood" is a self-contained theme: a 64-step
+// lead phrase, a per-bar bass root progression, a pad triad shape, lead timbre,
+// and tempo. Moods are crossfaded so entering a dungeon shifts the score.
 const LOOKAHEAD = 0.1;     // seconds of audio to schedule ahead
 const TICK = 25;           // scheduler poll interval (ms)
 
-// 16-step lead phrase, repeated/varied over an 8-bar (64-step) loop.
-const LEAD = [
-  72, 0, 76, 79, 81, 0, 79, 76, 74, 0, 72, 74, 76, 0, 74, 72,
-  72, 0, 76, 79, 84, 0, 81, 79, 76, 0, 74, 76, 79, 0, 76, 72,
-  77, 0, 81, 84, 86, 0, 84, 81, 79, 0, 77, 79, 81, 0, 79, 76,
-  72, 0, 74, 76, 79, 0, 81, 79, 76, 0, 74, 72, 71, 0, 74, 0,
-];
-// Bass root per bar (one note every 8 steps): I vi IV V over the loop.
-const BASS = [48, 45, 53, 55, 48, 45, 50, 55];
-// Triad offsets above bass root for a soft pad.
-const PAD = [0, 4, 7];
+// --- Overworld: bright C major pentatonic, the original cheerful theme. ---
+const THEME_OVERWORLD = {
+  bpm: 120,
+  leadType: 'triangle',
+  pad: [0, 4, 7],          // major triad
+  lead: [
+    72, 0, 76, 79, 81, 0, 79, 76, 74, 0, 72, 74, 76, 0, 74, 72,
+    72, 0, 76, 79, 84, 0, 81, 79, 76, 0, 74, 76, 79, 0, 76, 72,
+    77, 0, 81, 84, 86, 0, 84, 81, 79, 0, 77, 79, 81, 0, 79, 76,
+    72, 0, 74, 76, 79, 0, 81, 79, 76, 0, 74, 72, 71, 0, 74, 0,
+  ],
+  bass: [48, 45, 53, 55, 48, 45, 50, 55], // I vi IV V
+};
+
+// --- Dungeon: slower, A natural minor, sparser phrase, darker square lead. ---
+const THEME_DUNGEON = {
+  bpm: 96,
+  leadType: 'square',
+  pad: [0, 3, 7],          // minor triad
+  lead: [
+    69, 0, 0, 72, 71, 0, 69, 0, 67, 0, 69, 0, 0, 67, 65, 0,
+    69, 0, 0, 72, 74, 0, 72, 0, 71, 0, 69, 0, 67, 0, 0, 0,
+    65, 0, 0, 67, 67, 0, 65, 0, 64, 0, 65, 0, 0, 64, 62, 0,
+    69, 0, 72, 0, 71, 0, 69, 67, 0, 65, 64, 0, 65, 0, 0, 0,
+  ],
+  bass: [33, 33, 41, 40, 36, 36, 41, 40], // a minor, brooding roots
+  drone: 0.06, // subtle bed of tension under the sparse phrase
+};
+
+// --- Deep dungeon: heavy, low, dissonant phrygian, sawtooth lead, ominous. ---
+const THEME_ABYSS = {
+  bpm: 84,
+  leadType: 'sawtooth',
+  pad: [0, 3, 6],          // diminished-ish, tense
+  lead: [
+    57, 0, 0, 0, 58, 0, 57, 0, 55, 0, 0, 57, 53, 0, 0, 0,
+    57, 0, 0, 58, 0, 0, 60, 0, 58, 0, 57, 0, 0, 0, 53, 0,
+    50, 0, 0, 0, 50, 0, 50, 0, 48, 0, 0, 50, 0, 0, 0, 0,
+    57, 0, 55, 0, 55, 0, 53, 0, 51, 0, 50, 0, 0, 0, 0, 0,
+  ],
+  // Low A, phrygian b2 (Bb) menace. One octave up from cellar-floor so it still
+  // reads on laptop/phone speakers instead of vanishing under ~30 Hz.
+  bass: [33, 33, 34, 33, 38, 38, 34, 33],
+  drone: 0.085, // heavier, ever-present growl for the deepest dungeons
+};
+
+const THEMES = {
+  overworld: THEME_OVERWORLD,
+  dungeon: THEME_DUNGEON,
+  abyss: THEME_ABYSS,
+};
+
+let currentMood = 'overworld';
+let theme = THEME_OVERWORLD;
 
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -41,7 +84,7 @@ const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 function lead(freq, t, dur, vel) {
   const o = ctx.createOscillator();
   const g = ctx.createGain();
-  o.type = "triangle";
+  o.type = theme.leadType;
   o.frequency.value = freq;
   // Slight detuned variation so it isn't robotic.
   o.detune.value = (Math.random() - 0.5) * 6;
@@ -68,7 +111,7 @@ function bass(freq, t, dur) {
 }
 
 function pad(root, t, dur) {
-  for (const off of PAD) {
+  for (const off of theme.pad) {
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.type = "sine";
@@ -82,28 +125,59 @@ function pad(root, t, dur) {
   }
 }
 
-// Scheduler
-function scheduleStep(step, t) {
-  const note = LEAD[step % LEAD.length];
+// A sustained low drone, renewed each bar, that gives dungeon themes a constant
+// bed of tension so the sparse phrases never feel like the music dropped out.
+// Slightly detuned dual-saw through a lowpass for a warm, ominous growl.
+function drone(midi, t, dur, peak) {
+  for (const det of [-4, 4]) {
+    const o = ctx.createOscillator();
+    o.type = "sawtooth";
+    o.frequency.value = mtof(midi);
+    o.detune.value = det;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 320;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + dur * 0.25);
+    g.gain.setValueAtTime(peak, t + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(lp).connect(g).connect(musicGain);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+}
+
+// Scheduler. STEP depends on the current theme's tempo, so it is read live.
+function stepDur() {
+  return 60 / theme.bpm / 2; // eighth notes at the active BPM
+}
+
+function scheduleStep(step, t, step1) {
+  const lead2 = theme.lead;
+  const note = lead2[step % lead2.length];
   if (note) {
     // Velocity shaping: accent downbeats, soften offbeats.
     const vel = step % 4 === 0 ? 1 : step % 2 === 0 ? 0.85 : 0.7;
-    const dur = step % 2 === 0 ? STEP * 1.7 : STEP * 0.9;
+    const dur = step % 2 === 0 ? step1 * 1.7 : step1 * 0.9;
     lead(mtof(note), t, dur, vel);
   }
   if (step % 8 === 0) {
-    const root = BASS[(step / 8) % BASS.length];
-    bass(mtof(root), t, STEP * 7.5);
-    pad(root, t, STEP * 7.5);
+    const root = theme.bass[(step / 8) % theme.bass.length];
+    bass(mtof(root), t, step1 * 7.5);
+    pad(root, t, step1 * 7.5);
+    // Optional per-theme drone: one octave below the bar's bass root.
+    if (theme.drone) drone(root - 12, t, step1 * 8, theme.drone);
   }
 }
 
 function scheduler() {
   if (!ctx) return;
   while (nextNoteTime < ctx.currentTime + LOOKAHEAD) {
-    scheduleStep(stepIndex, nextNoteTime);
-    nextNoteTime += STEP;
-    stepIndex = (stepIndex + 1) % LEAD.length; // 64-step loop = seamless
+    const step1 = stepDur();
+    scheduleStep(stepIndex, nextNoteTime, step1);
+    nextNoteTime += step1;
+    stepIndex = (stepIndex + 1) % theme.lead.length; // 64-step loop = seamless
   }
 }
 
@@ -215,9 +289,35 @@ export const audio = {
     stopScheduler();
   },
 
+  // Switch the active musical theme by mood, with a short duck-and-swap so the
+  // transition reads as a new track rather than a hard cut. Moods:
+  //   'overworld' | 'dungeon' | 'abyss'  (unknown names fall back to overworld)
+  setMood(mood) {
+    if (!THEMES[mood]) mood = 'overworld';
+    if (mood === currentMood) return;
+    currentMood = mood;
+
+    // If audio isn't live yet, just stage the theme for when music starts.
+    if (!ctx || !musicGain) { theme = THEMES[mood]; return; }
+
+    const now = ctx.currentTime;
+    const g = musicGain.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    // Duck down over 0.35s, swap the theme at the trough, swell back over 0.7s.
+    g.linearRampToValueAtTime(0.0001, now + 0.35);
+    g.linearRampToValueAtTime(musicVol, now + 1.05);
+    setTimeout(() => { theme = THEMES[currentMood]; }, 360);
+  },
+
+  getMood() {
+    return currentMood;
+  },
+
   setMusicVolume(v) {
     musicVol = Math.max(0, Math.min(1, v));
-    if (musicGain) musicGain.gain.value = musicVol;
+    // Don't stomp an in-flight crossfade ramp; only set when not transitioning.
+    if (musicGain && theme === THEMES[currentMood]) musicGain.gain.value = musicVol;
   },
 
   setSfxVolume(v) {
