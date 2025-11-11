@@ -18,6 +18,8 @@ export class Controls {
     this.chatting = false;
     this._jumpQueued = false;
     this._attackQueued = false;
+    this._leftQueued = false;
+    this._rightQueued = false;
     this._lookDX = 0;
     this._lookDY = 0;
 
@@ -46,9 +48,11 @@ export class Controls {
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled || this.isTouch) return;
       if (document.pointerLockElement === canvas) {
-        if (e.button === 2) this._attackQueued = true;
+        if (e.button === 0) this._leftQueued = true;
+        if (e.button === 2) this._rightQueued = true;
       } else {
-        canvas.requestPointerLock();
+        // Pointer lock can throw under some browser policies; ignore failures.
+        try { canvas.requestPointerLock(); } catch (_) { /* ignore */ }
       }
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -130,9 +134,15 @@ export class Controls {
     });
   }
 
-  consumeAttack() {
-    const a = this._attackQueued;
+  // Attack fires on the left button in third person and the right button in
+  // first person. The touch button and the spacebar-free attack button always
+  // count. main.js passes which mouse button is active for the current camera.
+  consumeAttack(useLeft) {
+    const mouse = useLeft ? this._leftQueued : this._rightQueued;
+    const a = this._attackQueued || mouse;
     this._attackQueued = false;
+    this._leftQueued = false;
+    this._rightQueued = false;
     return a;
   }
 
