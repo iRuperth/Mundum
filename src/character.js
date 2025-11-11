@@ -6,11 +6,15 @@ import * as THREE from 'three';
 const BOOT_COLOR = 0x4a3526;
 
 const HAIR_STYLES = ['short', 'long', 'spiky', 'bald'];
+const NOSE_STYLES = ['small', 'round', 'pointy'];
+const MOUTH_STYLES = ['smile', 'neutral', 'open'];
 
 export function buildCharacter(profile) {
   const colors = profile.colors;
   const sex = profile.sex || 'male';
   const hairStyle = profile.hair || 'short';
+  const noseStyle = NOSE_STYLES.includes(profile.nose) ? profile.nose : 'small';
+  const mouthStyle = MOUTH_STYLES.includes(profile.mouth) ? profile.mouth : 'smile';
 
   const mats = {
     skin:  new THREE.MeshLambertMaterial({ color: colors.skin }),
@@ -65,15 +69,8 @@ export function buildCharacter(profile) {
     pupil.position.set(0.09 * side, 0.11, 0.252);
     head.add(pupil);
   }
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), mats.skin);
-  nose.position.set(0, 0.03, 0.255);
-  head.add(nose);
-
-  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.018, 6, 12, Math.PI), mats.mouth);
-  mouth.rotation.x = Math.PI / 2;
-  mouth.rotation.z = Math.PI;
-  mouth.position.set(0, -0.05, 0.24);
-  head.add(mouth);
+  buildNose(head, noseStyle, mats.skin);
+  buildMouth(head, mouthStyle, mats.mouth);
 
   // helmet equip anchor
   const helmet = new THREE.Group();
@@ -82,10 +79,12 @@ export function buildCharacter(profile) {
 
   model.add(head);
 
-  // arms (shoulder pivot for animation)
+  // arms (shoulder pivot for animation). The shoulder sits closer in for the
+  // narrower female torso so the arms don't float away from the body.
+  const shoulderX = female ? 0.275 : 0.315;
   function makeArm(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(0.315 * side, 1.18, 0);
+    pivot.position.set(shoulderX * side, 1.18, 0);
     const sleeve = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), mats.shirt);
     sleeve.position.y = -0.02;
     pivot.add(sleeve);
@@ -153,8 +152,16 @@ export function buildCharacter(profile) {
   function updateAttack(dt) {
     if (swingT <= 0) return;
     swingT = Math.max(0, swingT - dt);
-    const k = Math.sin((1 - swingT / 0.32) * Math.PI);
-    armR.pivot.rotation.x = -k * 2.1;
+    const p = 1 - swingT / 0.32;
+    const k = Math.sin(p * Math.PI);
+    // Overhand swing of the weapon arm: raise back then chop forward.
+    armR.pivot.rotation.x = -k * 2.4;
+    armR.pivot.rotation.z = -0.08 - k * 0.3;
+  }
+
+  // Returns true while a swing is playing (so viewmodels can mirror it).
+  function attackProgress() {
+    return swingT > 0 ? 1 - swingT / 0.32 : -1;
   }
 
   return {
@@ -165,35 +172,36 @@ export function buildCharacter(profile) {
     animate,
     triggerAttack,
     updateAttack,
+    attackProgress,
   };
 }
 
+// Hair sits as a cap on TOP of the head and is pushed back so it never falls
+// over the eyes or the face. The crown is a shallow dome; longer styles add
+// hair only on the back and sides, leaving the face clear.
 function buildHair(head, style, mat) {
   if (style === 'bald') return;
-  if (style === 'short') {
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(0.288, 22, 18, 0, Math.PI * 2, 0, Math.PI * 0.5), mat);
-    cap.scale.set(0.96, 1, 0.98);
-    cap.position.set(0, 0.105, -0.01);
-    head.add(cap);
-  } else if (style === 'long') {
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(0.292, 22, 18, 0, Math.PI * 2, 0, Math.PI * 0.62), mat);
-    cap.scale.set(0.98, 1, 1);
-    cap.position.set(0, 0.1, -0.01);
-    head.add(cap);
-    const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.24, 6, 12), mat);
-    back.scale.set(1.4, 1, 0.55);
-    back.position.set(0, -0.04, -0.18);
+
+  // Shallow top dome (phi ~0.34) lifted above the eyes so the forehead shows.
+  const cap = new THREE.Mesh(
+    new THREE.SphereGeometry(0.29, 22, 18, 0, Math.PI * 2, 0, Math.PI * 0.4), mat);
+  cap.scale.set(0.97, 0.9, 1);
+  cap.position.set(0, 0.16, -0.02);
+  head.add(cap);
+
+  if (style === 'long') {
+    const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.26, 6, 12), mat);
+    back.scale.set(1.5, 1, 0.5);
+    back.position.set(0, -0.02, -0.2);
     head.add(back);
+    for (const s of [-1, 1]) {
+      const side = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.2, 5, 10), mat);
+      side.position.set(0.24 * s, 0.0, -0.05);
+      head.add(side);
+    }
   } else if (style === 'spiky') {
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(0.286, 22, 18, 0, Math.PI * 2, 0, Math.PI * 0.46), mat);
-    cap.scale.set(0.96, 1, 0.98);
-    cap.position.set(0, 0.115, -0.01);
-    head.add(cap);
-    const rnd = [[-0.1, 0.32, 0.06], [0.08, 0.34, 0.04], [0, 0.33, -0.08], [-0.14, 0.3, -0.04], [0.14, 0.3, -0.02]];
-    for (const [x, y, z] of rnd) {
+    const spikes = [[-0.1, 0.34, 0.04], [0.09, 0.36, 0.02], [0, 0.37, -0.06], [-0.15, 0.33, -0.03], [0.15, 0.33, -0.02]];
+    for (const [x, y, z] of spikes) {
       const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 6), mat);
       spike.position.set(x, y, z);
       head.add(spike);
@@ -201,4 +209,31 @@ function buildHair(head, style, mat) {
   }
 }
 
-export { HAIR_STYLES };
+function buildNose(head, style, mat) {
+  let geo;
+  if (style === 'round') geo = new THREE.SphereGeometry(0.042, 8, 6);
+  else if (style === 'pointy') geo = new THREE.ConeGeometry(0.03, 0.08, 6);
+  else geo = new THREE.SphereGeometry(0.03, 8, 6);
+  const nose = new THREE.Mesh(geo, mat);
+  if (style === 'pointy') nose.rotation.x = Math.PI / 2;
+  nose.position.set(0, 0.03, 0.255);
+  head.add(nose);
+}
+
+function buildMouth(head, style, mat) {
+  let mouth;
+  if (style === 'neutral') {
+    mouth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.016, 0.02), mat);
+  } else if (style === 'open') {
+    mouth = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), mat);
+    mouth.scale.set(1, 0.7, 0.5);
+  } else {
+    mouth = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.018, 6, 12, Math.PI), mat);
+    mouth.rotation.x = Math.PI / 2;
+    mouth.rotation.z = Math.PI;
+  }
+  mouth.position.set(0, -0.05, 0.24);
+  head.add(mouth);
+}
+
+export { HAIR_STYLES, NOSE_STYLES, MOUTH_STYLES };
