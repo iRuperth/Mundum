@@ -53,7 +53,7 @@ export class EquipVisuals {
   setHelmet(item) {
     if (this.helmetMesh) { this.char.parts.helmet.remove(this.helmetMesh); disposeTree(this.helmetMesh); this.helmetMesh = null; }
     if (!item) return;
-    this.helmetMesh = buildHelmetMesh(item.color || 0x9aa0a6);
+    this.helmetMesh = buildHelmetMesh(item.color || 0x9aa0a6, item.coverage || 'open');
     this.char.parts.helmet.add(this.helmetMesh);
   }
 
@@ -137,15 +137,34 @@ function buildShieldMesh(color) {
   return g;
 }
 
-function buildHelmetMesh(color) {
+// coverage: 'open' (cap on top, face clear), 'half' (adds a nose guard),
+// 'full' (a closed great helm covering the face).
+function buildHelmetMesh(color, coverage = 'open') {
   const g = new THREE.Group();
+  const steel = mat(0xb8bcc0);
+  if (coverage === 'full') {
+    const helm = new THREE.Mesh(new THREE.SphereGeometry(0.305, 16, 14), mat(color));
+    helm.scale.set(1, 1.05, 1.02);
+    helm.position.y = 0.0;
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.03, 0.05), mat(0x222222));
+    slit.position.set(0, -0.02, 0.27);
+    g.add(helm, slit);
+    return g;
+  }
+  // Open helmet: a dome that rests on top, lifted so it never covers the eyes.
   const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(0.29, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), mat(color));
-  dome.scale.set(1, 1, 1.02);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.025, 6, 18), mat(0xb8bcc0));
+    new THREE.SphereGeometry(0.29, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.42), mat(color));
+  dome.scale.set(1, 0.95, 1.02);
+  dome.position.y = 0.12;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.275, 0.028, 6, 18), steel);
   rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.02;
+  rim.position.y = 0.12;
   g.add(dome, rim);
+  if (coverage === 'half') {
+    const noseGuard = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.05), steel);
+    noseGuard.position.set(0, 0.0, 0.27);
+    g.add(noseGuard);
+  }
   return g;
 }
 
