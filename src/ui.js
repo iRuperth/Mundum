@@ -39,10 +39,12 @@ export class UI {
     });
   }
 
+  // Returns true when the inventory panel is now open (expanded).
   togglePanel() {
     this.collapsed = !this.collapsed;
     this.refs.sidePanel.classList.toggle('collapsed', this.collapsed);
     this.refs.panelToggle.textContent = this.collapsed ? '‹' : '›';
+    return !this.collapsed;
   }
 
   setVitals(hp, maxHp, xpInfo) {

@@ -36,6 +36,11 @@ class Creature {
     this.model.group.add(this.bar.group);
     this.bar.group.position.y = 1.5 * def.variantScale + 0.4;
 
+    // Floating name above the head: red for aggressive creatures, white otherwise.
+    this.nameTag = makeNameTag(def.name, def.aggressive);
+    this.nameTag.position.y = 1.5 * def.variantScale + 0.62;
+    this.model.group.add(this.nameTag);
+
     this.baseScale = this.model.group.scale.x;
     this.dying = false;
     this.deathT = 0;
@@ -58,6 +63,7 @@ class Creature {
       for (const m of this._mats) m.emissive.setRGB(k, k, k);
     }
     if (this.dying) {
+      this.nameTag.visible = false;
       this.deathT += dt;
       const e = this.deathT / 0.35;
       const s = this.baseScale * Math.max(0.01, 1 - e);
@@ -115,6 +121,10 @@ class Creature {
   }
 
   dispose() {
+    if (this.nameTag) {
+      if (this.nameTag.material.map) this.nameTag.material.map.dispose();
+      this.nameTag.material.dispose();
+    }
     this.scene.remove(this.model.group);
     this.model.dispose();
   }
@@ -131,6 +141,35 @@ function makeHealthBar() {
   fill.position.z = 0.001;
   group.add(bg, fill);
   return { group, fill };
+}
+
+// A camera-facing text sprite for the creature's name. Aggressive creatures are
+// drawn in red so threats read at a glance.
+function makeNameTag(text, aggressive) {
+  const pad = 12, fontPx = 44;
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
+  const w = Math.ceil(ctx.measureText(text).width) + pad * 2;
+  const h = fontPx + pad * 2;
+  c.width = w; c.height = h;
+  // Re-set font after resizing the canvas (resizing clears the context state).
+  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(text, w / 2, h / 2);
+  ctx.fillStyle = aggressive ? '#ff5a4d' : '#ffffff';
+  ctx.fillText(text, w / 2, h / 2);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sprite.renderOrder = 1000;
+  const scale = 0.55;
+  sprite.scale.set((w / h) * scale, scale, 1);
+  return sprite;
 }
 
 export class CombatSystem {
