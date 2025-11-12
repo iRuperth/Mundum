@@ -194,11 +194,22 @@ const gameUI = new UI(panelRefs, inv, depot, {
 
 const minimapCanvas = document.getElementById('minimap');
 const mapOverlay = document.getElementById('map-overlay');
+
+// Map markers: shop, depot, temple per city plus dungeon entrances.
+const mapPois = [];
+for (const p of cityProps) {
+  mapPois.push({ x: p.shop.x, z: p.shop.z, icon: '🛒' });
+  mapPois.push({ x: p.depot.x, z: p.depot.z, icon: '🏦' });
+  mapPois.push({ x: p.temple.x, z: p.temple.z, icon: '🏛️' });
+}
+for (const d of dungeonEntrances) mapPois.push({ x: d.x, z: d.z, icon: '🕳️' });
+
 const minimap = new Minimap(minimapCanvas, world, document.getElementById('city-name'), {
   coords: document.getElementById('coords'),
   big: document.getElementById('bigmap'),
   bigCoords: document.getElementById('bigmap-coords'),
   overlay: mapOverlay,
+  pois: mapPois,
 });
 
 // Tap the minimap to open the full-screen map; tap the backdrop or ✕ to close.

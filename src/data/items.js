@@ -104,6 +104,77 @@ export const CONTAINERS = [
   { id: 'backpack', name: 'Backpack', slot: 'bag', capacity: 20, weight: 30, value: 250, color: 0x6a4a2b },
 ];
 
+// --- Potions & consumables -------------------------------------------------
+// Two parallel rank ladders (health and mana) plus special % restores. Each:
+//   id, name {es,en}, kind:'potion', restoreType:'hp'|'mana'|'both',
+//   restore (flat amount) OR restorePct (0..1), levelReq, value (shop price),
+//   weight, tier (drop bucket), color (mesh/icon tint), icon (emoji).
+// tier buckets drive creature drops: 'fruit' (weak foes), 'low'/'mid'/'high'
+// (progressively stronger foes), 'elite' (% restores & elixirs, strong foes).
+export const POTIONS = [
+  // Health ladder
+  { id: 'apple',          name: { es: 'Manzana', en: 'Apple' },               kind: 'potion', restoreType: 'hp', restore: 30,   levelReq: 1,  value: 8,    weight: 2, tier: 'fruit', color: 0xe23b3b, icon: '🍎' },
+  { id: 'grapes',         name: { es: 'Uvas', en: 'Grapes' },                 kind: 'potion', restoreType: 'hp', restore: 50,   levelReq: 3,  value: 18,   weight: 2, tier: 'fruit', color: 0x8e44ad, icon: '🍇' },
+  { id: 'pear',           name: { es: 'Pera', en: 'Pear' },                   kind: 'potion', restoreType: 'hp', restore: 80,   levelReq: 6,  value: 35,   weight: 2, tier: 'fruit', color: 0x9bbf3b, icon: '🍐' },
+  { id: 'melon',          name: { es: 'Sandía', en: 'Melon' },                kind: 'potion', restoreType: 'hp', restore: 120,  levelReq: 10, value: 70,   weight: 3, tier: 'low',   color: 0x4caf50, icon: '🍉' },
+  { id: 'minor_health',   name: { es: 'Poción Menor de Vida', en: 'Minor Health Potion' },   kind: 'potion', restoreType: 'hp', restore: 150,  levelReq: 14, value: 120,  weight: 3, tier: 'low',   color: 0xff6b6b, icon: '🧪' },
+  { id: 'health_potion',  name: { es: 'Poción de Vida', en: 'Health Potion' },               kind: 'potion', restoreType: 'hp', restore: 200,  levelReq: 20, value: 200,  weight: 3, tier: 'mid',   color: 0xff4d4d, icon: '🧪' },
+  { id: 'strong_health',  name: { es: 'Poción Fuerte de Vida', en: 'Strong Health Potion' },  kind: 'potion', restoreType: 'hp', restore: 300,  levelReq: 28, value: 350,  weight: 4, tier: 'mid',   color: 0xe63333, icon: '🧪' },
+  { id: 'great_health',   name: { es: 'Gran Poción de Vida', en: 'Great Health Potion' },     kind: 'potion', restoreType: 'hp', restore: 500,  levelReq: 36, value: 600,  weight: 4, tier: 'high',  color: 0xcc2222, icon: '🧪' },
+  { id: 'mega_health',    name: { es: 'Mega Poción de Vida', en: 'Mega Health Potion' },      kind: 'potion', restoreType: 'hp', restore: 800,  levelReq: 45, value: 1000, weight: 5, tier: 'high',  color: 0xb31a1a, icon: '🧪' },
+  { id: 'super_health',   name: { es: 'Súper Poción de Vida', en: 'Super Health Potion' },    kind: 'potion', restoreType: 'hp', restore: 1000, levelReq: 55, value: 1600, weight: 5, tier: 'high',  color: 0x991111, icon: '🧪' },
+  { id: 'ultra_health',   name: { es: 'Ultra Poción de Vida', en: 'Ultra Health Potion' },    kind: 'potion', restoreType: 'hp', restore: 1500, levelReq: 70, value: 2600, weight: 6, tier: 'elite', color: 0x800808, icon: '🧪' },
+  { id: 'supreme_health', name: { es: 'Poción Suprema de Vida', en: 'Supreme Health Potion' }, kind: 'potion', restoreType: 'hp', restore: 2000, levelReq: 85, value: 4000, weight: 6, tier: 'elite', color: 0x660000, icon: '🧪' },
+  { id: 'divine_health',  name: { es: 'Poción Divina de Vida', en: 'Divine Health Potion' },  kind: 'potion', restoreType: 'hp', restore: 3000, levelReq: 100, value: 6500, weight: 7, tier: 'elite', color: 0xff9a9a, icon: '🧪' },
+
+  // Mana ladder
+  { id: 'berry',          name: { es: 'Baya', en: 'Berry' },                  kind: 'potion', restoreType: 'mana', restore: 30,   levelReq: 1,  value: 8,    weight: 2, tier: 'fruit', color: 0x3b6be2, icon: '🫐' },
+  { id: 'blueberries',    name: { es: 'Arándanos', en: 'Blueberries' },       kind: 'potion', restoreType: 'mana', restore: 50,   levelReq: 3,  value: 18,   weight: 2, tier: 'fruit', color: 0x4a78d8, icon: '🫐' },
+  { id: 'mango',          name: { es: 'Mango', en: 'Mango' },                 kind: 'potion', restoreType: 'mana', restore: 80,   levelReq: 6,  value: 35,   weight: 2, tier: 'fruit', color: 0xf0a030, icon: '🥭' },
+  { id: 'minor_mana',     name: { es: 'Poción Menor de Maná', en: 'Minor Mana Potion' },      kind: 'potion', restoreType: 'mana', restore: 120,  levelReq: 10, value: 70,   weight: 3, tier: 'low',   color: 0x5b8bff, icon: '🧫' },
+  { id: 'mana_potion',    name: { es: 'Poción de Maná', en: 'Mana Potion' },                  kind: 'potion', restoreType: 'mana', restore: 150,  levelReq: 14, value: 120,  weight: 3, tier: 'low',   color: 0x4d7dff, icon: '🧫' },
+  { id: 'strong_mana',    name: { es: 'Poción Fuerte de Maná', en: 'Strong Mana Potion' },    kind: 'potion', restoreType: 'mana', restore: 200,  levelReq: 20, value: 200,  weight: 3, tier: 'mid',   color: 0x3366ff, icon: '🧫' },
+  { id: 'great_mana',     name: { es: 'Gran Poción de Maná', en: 'Great Mana Potion' },       kind: 'potion', restoreType: 'mana', restore: 300,  levelReq: 28, value: 350,  weight: 4, tier: 'mid',   color: 0x2a55e6, icon: '🧫' },
+  { id: 'mega_mana',      name: { es: 'Mega Poción de Maná', en: 'Mega Mana Potion' },        kind: 'potion', restoreType: 'mana', restore: 500,  levelReq: 36, value: 600,  weight: 4, tier: 'high',  color: 0x1a44cc, icon: '🧫' },
+  { id: 'super_mana',     name: { es: 'Súper Poción de Maná', en: 'Super Mana Potion' },      kind: 'potion', restoreType: 'mana', restore: 800,  levelReq: 45, value: 1000, weight: 5, tier: 'high',  color: 0x1133b3, icon: '🧫' },
+  { id: 'ultra_mana',     name: { es: 'Ultra Poción de Maná', en: 'Ultra Mana Potion' },      kind: 'potion', restoreType: 'mana', restore: 1000, levelReq: 55, value: 1600, weight: 5, tier: 'high',  color: 0x0d2899, icon: '🧫' },
+  { id: 'supreme_mana',   name: { es: 'Poción Suprema de Maná', en: 'Supreme Mana Potion' },  kind: 'potion', restoreType: 'mana', restore: 1500, levelReq: 70, value: 2600, weight: 6, tier: 'elite', color: 0x081d80, icon: '🧫' },
+  { id: 'divine_mana',    name: { es: 'Poción Divina de Maná', en: 'Divine Mana Potion' },    kind: 'potion', restoreType: 'mana', restore: 2000, levelReq: 85, value: 4000, weight: 6, tier: 'elite', color: 0x9ab2ff, icon: '🧫' },
+  { id: 'cosmic_mana',    name: { es: 'Poción Cósmica de Maná', en: 'Cosmic Mana Potion' },   kind: 'potion', restoreType: 'mana', restore: 3000, levelReq: 100, value: 6500, weight: 7, tier: 'elite', color: 0xc0d0ff, icon: '🧫' },
+
+  // Specials — percentage / full restores. Drop rarely from strong foes.
+  { id: 'half_life',    name: { es: 'Vial de Vida (50%)', en: 'Life Vial (50%)' },        kind: 'potion', restoreType: 'hp',   restorePct: 0.5, levelReq: 25, value: 800,  weight: 4, tier: 'elite', color: 0xff5577, icon: '❤️' },
+  { id: 'half_mana',    name: { es: 'Vial de Maná (50%)', en: 'Mana Vial (50%)' },        kind: 'potion', restoreType: 'mana', restorePct: 0.5, levelReq: 25, value: 800,  weight: 4, tier: 'elite', color: 0x5577ff, icon: '💙' },
+  { id: 'half_both',    name: { es: 'Vial Mixto (50%)', en: 'Mixed Vial (50%)' },         kind: 'potion', restoreType: 'both', restorePct: 0.5, levelReq: 30, value: 1400, weight: 5, tier: 'elite', color: 0xb15bff, icon: '💜' },
+  { id: 'elixir_life',  name: { es: 'Elixir de Vida', en: 'Elixir of Life' },             kind: 'potion', restoreType: 'hp',   restorePct: 1,   levelReq: 40, value: 3000, weight: 5, tier: 'elite', color: 0xff2244, icon: '🩸' },
+  { id: 'elixir_mana',  name: { es: 'Elixir de Maná', en: 'Elixir of Mana' },             kind: 'potion', restoreType: 'mana', restorePct: 1,   levelReq: 40, value: 3000, weight: 5, tier: 'elite', color: 0x2244ff, icon: '🔵' },
+  { id: 'full_restore', name: { es: 'Restauración Total', en: 'Full Restore' },           kind: 'potion', restoreType: 'both', restorePct: 1,   levelReq: 50, value: 5500, weight: 6, tier: 'elite', color: 0xffffff, icon: '✨' },
+];
+
+const POTION_MAP = new Map(POTIONS.map((p) => [p.id, p]));
+export function getPotion(id) { return POTION_MAP.get(String(id || '').toLowerCase().replace(/-/g, '_')); }
+
+// Build a backpack instance for a potion in the given language.
+export function instanceFromPotion(p, lang = 'es') {
+  return {
+    baseId: p.id, kind: 'potion', type: 'potion',
+    name: (p.name && (p.name[lang] || p.name.es)) || p.id,
+    restoreType: p.restoreType, restore: p.restore || 0, restorePct: p.restorePct || 0,
+    levelReq: p.levelReq || 1, value: p.value || 0, weight: p.weight || 1,
+    color: p.color, icon: p.icon || '🧪', rarity: RARITY.NORMAL,
+  };
+}
+
+// How much a potion restores for a player, by stat. Returns { hp, mana }.
+export function potionRestore(potion, player) {
+  const out = { hp: 0, mana: 0 };
+  const wantHp = potion.restoreType === 'hp' || potion.restoreType === 'both';
+  const wantMana = potion.restoreType === 'mana' || potion.restoreType === 'both';
+  if (wantHp) out.hp = potion.restorePct ? Math.round(player.maxHp * potion.restorePct) : potion.restore;
+  if (wantMana) out.mana = potion.restorePct ? Math.round((player.maxMana || 0) * potion.restorePct) : potion.restore;
+  return out;
+}
+
 export const LEGENDARY_ABILITIES = [
   { id: 'ember', name: 'Ember', desc: 'Adds a burst of fire damage on hit.', element: 'fire' },
   { id: 'tide', name: 'Tide', desc: 'Adds a burst of water damage on hit.', element: 'water' },
