@@ -190,15 +190,13 @@ function buildHair(head, style, mat) {
   head.add(cap);
 
   if (style === 'long') {
-    const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.26, 6, 12), mat);
-    back.scale.set(1.5, 1, 0.5);
-    back.position.set(0, -0.02, -0.2);
+    // A single sheet of hair down the BACK of the head only, never over the face.
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.1), mat);
+    back.position.set(0, -0.08, -0.22);
     head.add(back);
-    for (const s of [-1, 1]) {
-      const side = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.2, 5, 10), mat);
-      side.position.set(0.24 * s, 0.0, -0.05);
-      head.add(side);
-    }
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.08), mat);
+    tip.position.set(0, -0.3, -0.21);
+    head.add(tip);
   } else if (style === 'spiky') {
     const spikes = [[-0.1, 0.34, 0.04], [0.09, 0.36, 0.02], [0, 0.37, -0.06], [-0.15, 0.33, -0.03], [0.15, 0.33, -0.02]];
     for (const [x, y, z] of spikes) {
