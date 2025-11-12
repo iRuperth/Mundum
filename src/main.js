@@ -138,6 +138,7 @@ const floatText = new FloatText(scene);
 
 let firstPerson = true;
 let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
+let introHold = 0;  // seconds the front view is held before it can swing behind
 let state = 'create';
 
 const fillLight = new THREE.PointLight(0xffeedd, 9, 9);
@@ -401,6 +402,7 @@ async function startGame() {
   // the moment you move (or to first person if that camera is chosen).
   firstPerson = false;
   introCam = 1;
+  introHold = 2.5;
   scene.remove(fillLight);
   ui.creation.classList.add('hidden');
   ui.hud.classList.remove('hidden');
@@ -830,10 +832,12 @@ function tick() {
       player.update(dt, controls);
       if (wasGrounded && !player.grounded && player.vel.y > 1) audio.sfx.jump();
 
-      // The welcome front-view swings behind once you start moving or looking.
+      // The welcome front-view holds, then swings behind only once you actually
+      // walk (looking around with the mouse does not cancel it).
       if (introCam > 0) {
-        const moved = Math.hypot(player.vel.x, player.vel.z) > 0.2 || Math.abs(look.x) > 0.001;
-        if (moved) introCam = Math.max(0, introCam - dt * 1.6);
+        introHold = Math.max(0, introHold - dt);
+        const moving = Math.hypot(player.vel.x, player.vel.z) > 0.5;
+        if (introHold <= 0 || moving) introCam = Math.max(0, introCam - dt * 1.6);
       }
 
       if (controls.consumeAttack(!firstPerson)) doAttack();
