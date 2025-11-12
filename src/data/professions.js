@@ -16,11 +16,13 @@ export const PROFESSIONS = [
     },
     color: 0x6a3fb0,
     allowedWeapons: ['wand'],
-    baseHp: 80,
-    baseMana: 60,
+    baseHp: 100,
+    baseMana: 20,
     hpPerLevel: 5,
-    manaPerLevel: 30,
+    manaPerLevel: 25,
     attackRange: 14,
+    // Regen: +3 mana every 2s, +1 hp every 5s.
+    regen: { hp: { amount: 1, every: 5 }, mana: { amount: 3, every: 2 } },
     skills: [
       {
         id: 'fireball',
@@ -54,11 +56,13 @@ export const PROFESSIONS = [
     },
     color: 0xb04a2f,
     allowedWeapons: ['sword', 'axe', 'shield'],
-    baseHp: 160,
-    baseMana: 30,
-    hpPerLevel: 18,
+    baseHp: 100,
+    baseMana: 20,
+    hpPerLevel: 25,
     manaPerLevel: 5,
     attackRange: 3,
+    // Regen: +3 hp every 2s, +1 mana every 5s.
+    regen: { hp: { amount: 3, every: 2 }, mana: { amount: 1, every: 5 } },
     skills: [
       {
         id: 'power_strike',
@@ -85,11 +89,13 @@ export const PROFESSIONS = [
     },
     color: 0x2f8fb0,
     allowedWeapons: ['bow'],
-    baseHp: 120,
-    baseMana: 45,
-    hpPerLevel: 11,
-    manaPerLevel: 14,
+    baseHp: 100,
+    baseMana: 20,
+    hpPerLevel: 15,
+    manaPerLevel: 15,
     attackRange: 20,
+    // Regen: +2 mana and +2 hp every 4s.
+    regen: { hp: { amount: 2, every: 4 }, mana: { amount: 2, every: 4 } },
     skills: [
       {
         id: 'piercing_shot',
@@ -117,10 +123,12 @@ export const PROFESSIONS = [
     color: 0x3faa6a,
     allowedWeapons: ['wand'],
     baseHp: 100,
-    baseMana: 70,
-    hpPerLevel: 7,
-    manaPerLevel: 26,
+    baseMana: 20,
+    hpPerLevel: 5,
+    manaPerLevel: 25,
     attackRange: 14,
+    // Same caster rhythm as the mage: +3 mana every 2s, +1 hp every 5s.
+    regen: { hp: { amount: 1, every: 5 }, mana: { amount: 3, every: 2 } },
     skills: [
       {
         id: 'heal_self',
@@ -178,6 +186,21 @@ export function professionStats(professionId, level) {
     maxMana: Math.round(p.baseMana + p.manaPerLevel * (lv - 1)),
     attackRange: p.attackRange,
   };
+}
+
+// Regen rhythm for a profession: { hp:{amount,every}, mana:{amount,every} } in
+// seconds. Falls back to a gentle balanced default for unknown ids.
+export function professionRegen(professionId) {
+  const p = BY_ID.get(professionId);
+  return (p && p.regen) || { hp: { amount: 2, every: 4 }, mana: { amount: 2, every: 4 } };
+}
+
+// HP/mana gained on level-up for a profession (one level), derived from the
+// per-level growth fields so it stays in sync with professionStats().
+export function professionLevelGain(professionId) {
+  const p = BY_ID.get(professionId);
+  if (!p) return { hp: 10, mana: 10 };
+  return { hp: p.hpPerLevel, mana: p.manaPerLevel };
 }
 
 // Effective power (damage or heal) of a skill for a character of `level`.

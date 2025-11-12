@@ -1,4 +1,4 @@
-import { getWeapon, getArmor, getContainer, rollWeaponInstance, RARITY } from './data/items.js';
+import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, rollWeaponInstance, RARITY } from './data/items.js';
 
 export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag'];
 const BASE_CAPACITY = 400;
@@ -8,8 +8,8 @@ function norm(id) {
   return String(id || '').toLowerCase().replace(/-/g, '_');
 }
 
-// Resolve a loot itemId leniently against weapons, armors and containers.
-export function resolveItem(itemId, rng, level) {
+// Resolve a loot itemId leniently against weapons, armors, containers, potions.
+export function resolveItem(itemId, rng, level, lang) {
   const id = norm(itemId);
   if (id === 'gold') return null;
   if (getWeapon(id)) return rollWeaponInstance(id, rng || (() => 0.5));
@@ -17,6 +17,8 @@ export function resolveItem(itemId, rng, level) {
   if (armor) return instanceFromArmor(armor);
   const cont = getContainer(id);
   if (cont) return instanceFromContainer(cont);
+  const potion = getPotion(id);
+  if (potion) return instanceFromPotion(potion, lang || 'es');
   return null;
 }
 

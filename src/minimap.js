@@ -26,6 +26,9 @@ export class Minimap {
     // the map's center; null means "follow the player".
     this.bigCenter = null;
     this.bigRange = BIG_RANGE;
+
+    // Points of interest drawn as emoji on the map: { x, z, icon }.
+    this.pois = opts.pois || [];
   }
 
   toggle(force) {
@@ -94,6 +97,17 @@ export class Minimap {
       if (p) {
         ctx.fillStyle = '#f1c40f';
         ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+      }
+    }
+
+    // Points of interest as emoji (shop, weapons, potions, depot, dungeons...).
+    if (this.pois.length) {
+      ctx.font = (legend ? 11 : 14) + 'px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const poi of this.pois) {
+        const p = this.worldToMap(poi, cx, cz, half, range);
+        if (p) ctx.fillText(poi.icon, p.x, p.y);
       }
     }
 
