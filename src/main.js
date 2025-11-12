@@ -32,6 +32,13 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 if (isTouch) document.body.classList.add('touch');
 
 const canvas = document.getElementById('game');
+
+// requestPointerLock can throw (e.g. WrongDocumentError) under some browser
+// policies; never let a failed lock crash the game flow.
+function lockPointer() {
+  try { canvas.requestPointerLock(); } catch (_) { /* lock unavailable; ignore */ }
+}
+
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isTouch, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -48,6 +55,8 @@ viewModel.position.set(0.32, -0.32, -0.7);
 viewModel.rotation.set(0.1, -0.3, 0);
 camera.add(viewModel);
 let viewModelMesh = null;
+let viewSwingT = 0;
+const VIEW_REST = new THREE.Euler(0.1, -0.3, 0);
 function setViewModel(item, level) {
   if (viewModelMesh) { viewModel.remove(viewModelMesh); viewModelMesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); viewModelMesh = null; }
   if (!item) return;
@@ -55,6 +64,20 @@ function setViewModel(item, level) {
   viewModelMesh = buildWeaponMesh(item.type, color);
   viewModelMesh.scale.setScalar(1.1);
   viewModel.add(viewModelMesh);
+}
+
+// Animate the first-person weapon: a quick swing/bob when attacking.
+function updateViewModel(dt) {
+  if (viewSwingT > 0) {
+    viewSwingT = Math.max(0, viewSwingT - dt);
+    const k = Math.sin((1 - viewSwingT / 0.3) * Math.PI);
+    viewModel.rotation.x = VIEW_REST.x - k * 0.9;
+    viewModel.rotation.z = VIEW_REST.z + k * 0.5;
+    viewModel.position.y = -0.32 - k * 0.08;
+  } else {
+    viewModel.rotation.copy(VIEW_REST);
+    viewModel.position.y = -0.32;
+  }
 }
 
 addEventListener('resize', () => {
@@ -114,6 +137,7 @@ const lowHpVignette = document.getElementById('low-hp-vignette');
 const floatText = new FloatText(scene);
 
 let firstPerson = true;
+let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
 let state = 'create';
 
 const fillLight = new THREE.PointLight(0xffeedd, 9, 9);
@@ -221,12 +245,18 @@ function twoFingerDist() {
 }
 
 const controls = new Controls(canvas, ui, {
-  onToggleCamera: () => { firstPerson = !firstPerson; },
+  onToggleCamera: () => { firstPerson = !firstPerson; introCam = 0; },
   onLockChange: (locked) => {
     ui.hint.classList.toggle('hidden', locked);
     document.getElementById('crosshair').classList.toggle('hidden', !locked || state !== 'play');
   },
-  onToggleBag: () => gameUI.togglePanel(),
+  onToggleBag: () => {
+    const opened = gameUI.togglePanel();
+    // Free the cursor when the inventory opens so you can click items; recapture
+    // it (on desktop) when it closes so you can keep playing.
+    if (opened) { if (document.pointerLockElement) document.exitPointerLock(); }
+    else if (!isTouch && state === 'play' && player.alive) lockPointer();
+  },
   onChat: () => openChat(),
 });
 
@@ -310,6 +340,8 @@ function setupCreation() {
 
   bindSeg('sex-seg', 'sex', () => rebuildCharacter());
   bindSeg('hair-seg', 'hair', () => rebuildCharacter());
+  bindSeg('nose-seg', 'nose', () => rebuildCharacter());
+  bindSeg('mouth-seg', 'mouth', () => rebuildCharacter());
 
   ui.nameInput.value = profile.name;
   ui.btnPlay.addEventListener('click', startGame);
@@ -362,6 +394,13 @@ async function startGame() {
 
   state = 'play';
   controls.enabled = true;
+  // Reset the head pose set during creation so the hero looks ahead in-game.
+  const head = player.char.parts.head;
+  if (head) { head.rotation.set(0, 0, 0); }
+  // Start in a third-person front view so you see your hero, then swing behind
+  // the moment you move (or to first person if that camera is chosen).
+  firstPerson = false;
+  introCam = 1;
   scene.remove(fillLight);
   ui.creation.classList.add('hidden');
   ui.hud.classList.remove('hidden');
@@ -371,7 +410,7 @@ async function startGame() {
   if (isTouch) document.getElementById('crosshair').classList.remove('hidden');
   audio.unlock();
   audio.startMusic();
-  if (!isTouch) canvas.requestPointerLock();
+  if (!isTouch) lockPointer();
 
   if (!localStorage.getItem('mundum.onboarded')) {
     localStorage.setItem('mundum.onboarded', '1');
@@ -410,7 +449,7 @@ function setupChat() {
       input.value = '';
       input.classList.add('hidden');
       controls.chatting = false;
-      if (!isTouch) canvas.requestPointerLock();
+      if (!isTouch) lockPointer();
     } else if (e.code === 'Escape') {
       input.value = '';
       input.classList.add('hidden');
@@ -545,7 +584,7 @@ function respawn() {
   player.hp = player.maxHp;
   player.alive = true;
   combat.clear();
-  if (!isTouch) canvas.requestPointerLock();
+  if (!isTouch) lockPointer();
 }
 
 function spawnFloatText(pos, text, color) {
@@ -654,7 +693,7 @@ function teleportTo(city) {
   combat.clear();
   gameUI.closeContext();
   audio.sfx.pickup();
-  if (!isTouch) canvas.requestPointerLock();
+  if (!isTouch) lockPointer();
 }
 
 function updateClock() {
@@ -683,9 +722,12 @@ function updateCamera() {
   } else {
     const d = 4.4;
     const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
-    const cx = player.pos.x + Math.sin(player.yaw) * cp * d;
-    const cz = player.pos.z + Math.cos(player.yaw) * cp * d;
-    let cy = eyeY - sp * d + 0.35;
+    // introCam swings the camera from in front of the hero (welcome view, you
+    // see your face) to behind as you start moving.
+    const side = 1 - 2 * introCam; // +1 behind, -1 front
+    const cx = player.pos.x + Math.sin(player.yaw) * cp * d * side;
+    const cz = player.pos.z + Math.cos(player.yaw) * cp * d * side;
+    let cy = eyeY - sp * d + 0.35 + introCam * 0.4;
     cy = Math.max(cy, world.heightAt(cx, cz) + 0.35, WATER_LEVEL + 0.25);
     camera.position.set(cx, cy, cz);
     camera.lookAt(player.pos.x, eyeY - 0.15, player.pos.z);
@@ -700,21 +742,71 @@ function updateCamera() {
   viewModel.visible = firstPerson && player.alive;
 }
 
+// Arrow keys aim the hero's head during creation (left/right/up/down), so you
+// can pose the face before starting. Captured here because Controls is disabled
+// until the game begins.
 let createT = 0.6;
+let headYaw = 0, headPitch = 0;
+let createSpin = 0;        // body rotation set by dragging in the creation screen
+let createZoom = 0;        // camera distance offset set by the scroll wheel
+let dragging = false, dragLastX = 0;
+const arrowKeys = new Set();
+addEventListener('keydown', (e) => {
+  if (state !== 'create') return;
+  if (e.code.startsWith('Arrow')) { arrowKeys.add(e.code); e.preventDefault(); }
+});
+addEventListener('keyup', (e) => arrowKeys.delete(e.code));
+
+// Drag on the 3D view to turn the hero while creating it.
+canvas.addEventListener('pointerdown', (e) => {
+  if (state !== 'create') return;
+  dragging = true; dragLastX = e.clientX;
+});
+addEventListener('pointermove', (e) => {
+  if (!dragging || state !== 'create') return;
+  createSpin -= (e.clientX - dragLastX) * 0.01;
+  dragLastX = e.clientX;
+});
+addEventListener('pointerup', () => { dragging = false; });
+
+// Scroll wheel zooms the creation camera in and out to inspect details.
+canvas.addEventListener('wheel', (e) => {
+  if (state !== 'create') return;
+  e.preventDefault();
+  createZoom = THREE.MathUtils.clamp(createZoom + Math.sign(e.deltaY) * 0.25, -1.4, 1.6);
+}, { passive: false });
+
 function updateCreationCamera(dt) {
   createT += dt * 0.5;
-  // Model faces +Z; the camera sits on +Z, so face the hero toward it.
-  player.char.group.rotation.y = Math.PI + Math.sin(createT) * 0.6;
+
+  // Steer the head with the arrow keys; spring back toward center when released.
+  const rate = 1.8 * dt;
+  if (arrowKeys.has('ArrowLeft')) headYaw += rate;
+  if (arrowKeys.has('ArrowRight')) headYaw -= rate;
+  if (arrowKeys.has('ArrowUp')) headPitch -= rate;
+  if (arrowKeys.has('ArrowDown')) headPitch += rate;
+  if (!arrowKeys.size) { headYaw *= 0.9; headPitch *= 0.9; }
+  headYaw = THREE.MathUtils.clamp(headYaw, -1.1, 1.1);
+  headPitch = THREE.MathUtils.clamp(headPitch, -0.7, 0.7);
+  const head = player.char.parts.head;
+  if (head) { head.rotation.y = headYaw; head.rotation.x = headPitch; }
+
+  // Model faces +Z and the camera sits on +Z, so the hero faces the camera by
+  // default (Math.PI). Dragging adds createSpin to turn the whole body.
+  player.char.group.rotation.y = Math.PI + createSpin;
   player.char.animate(0, 0, true);
   const px = player.pos.x, pz = player.pos.z;
   const portrait = camera.aspect < 0.85;
   // Stay inside the temple pillar ring (radius ~3.4) so no pillar blocks the
   // hero. Wide screens have a narrow vertical fov, so back off a bit more and
-  // aim low so feet and head both fit.
-  const cz = pz + (portrait ? 3.2 : 3.3);
-  const cy = player.pos.y + 1.05;
+  // aim low so feet and head both fit. createZoom moves the camera nearer to
+  // inspect the face (negative) or farther for the full body (positive).
+  const cz = pz + (portrait ? 3.2 : 3.3) + createZoom;
+  const cy = player.pos.y + 1.05 - createZoom * 0.18;
+  // Aim toward the face as you zoom in, toward the body when zoomed out.
+  const lookY = player.pos.y + 0.55 - Math.min(0, createZoom) * 0.42;
   camera.position.set(px, cy, cz);
-  camera.lookAt(px, player.pos.y + 0.55, pz);
+  camera.lookAt(px, lookY, pz);
   fillLight.position.set(px, player.pos.y + 3.2, cz - 0.3);
 }
 
@@ -738,7 +830,13 @@ function tick() {
       player.update(dt, controls);
       if (wasGrounded && !player.grounded && player.vel.y > 1) audio.sfx.jump();
 
-      if (controls.consumeAttack()) doAttack();
+      // The welcome front-view swings behind once you start moving or looking.
+      if (introCam > 0) {
+        const moved = Math.hypot(player.vel.x, player.vel.z) > 0.2 || Math.abs(look.x) > 0.001;
+        if (moved) introCam = Math.max(0, introCam - dt * 1.6);
+      }
+
+      if (controls.consumeAttack(!firstPerson)) doAttack();
 
       const isNight = daynight.isNight();
       const ev = eventMultipliers(new Date());
@@ -770,6 +868,7 @@ function tick() {
     updateDungeons(dt, dungeonChests);
     floatText.update(dt);
     updateWandBolt(dt);
+    updateViewModel(dt);
     sendNetState();
 
     updateCamera();
@@ -792,12 +891,16 @@ tick();
 function doAttack() {
   if (!player.weapon) return;
   equipVisuals.triggerSwing();
+  viewSwingT = 0.3;
   audio.sfx.attack();
-  camDir.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  combat.attack(player, camDir);
-  if (player.weapon.type === 'wand') castWandBolt();
+  // Aim where you're actually looking: full camera direction (yaw + pitch), not
+  // just the horizontal heading. combat.attack picks the creature in that cone.
+  camera.getWorldDirection(camDir);
+  const result = combat.attack(player, camDir);
+  if (player.weapon.type === 'wand') castWandBolt(camDir, result && result.creature);
 }
 
+const BOLT_SPEED = 26;
 const wandBolt = (() => {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.16, 10, 8),
@@ -806,16 +909,37 @@ const wandBolt = (() => {
   mesh.add(light);
   mesh.visible = false;
   scene.add(mesh);
-  return { mesh, light, t: 0, active: false };
+  return {
+    mesh, light, t: 0, active: false, target: null,
+    pos: new THREE.Vector3(), vel: new THREE.Vector3(), _hand: new THREE.Vector3(),
+  };
 })();
 
-function castWandBolt() {
+// Fire the bolt from the right hand, heading toward `target` if the swing locked
+// onto one (so it curves to the enemy), otherwise straight along the aim ray.
+function castWandBolt(aimDir, target) {
   const color = player.weapon.color || 0xb89bff;
   wandBolt.mesh.material.color.setHex(color);
   wandBolt.light.color.setHex(color);
-  wandBolt.mesh.position.set(player.pos.x, player.pos.y + 1.3, player.pos.z);
-  wandBolt.dir = { x: camDir.x, z: camDir.z };
-  wandBolt.t = 0.35;
+
+  // Origin: the actual right-hand position, falling back to chest height.
+  const hand = player.char.parts.armR.hand;
+  if (hand) hand.getWorldPosition(wandBolt._hand);
+  else wandBolt._hand.set(player.pos.x, player.pos.y + 1.3, player.pos.z);
+  wandBolt.pos.copy(wandBolt._hand);
+
+  // Initial velocity: toward the target's torso, else along the look direction.
+  if (target) {
+    wandBolt.vel.set(target.pos.x - wandBolt.pos.x, (target.pos.y + 0.8) - wandBolt.pos.y, target.pos.z - wandBolt.pos.z);
+  } else {
+    wandBolt.vel.copy(aimDir);
+  }
+  if (wandBolt.vel.lengthSq() < 1e-4) wandBolt.vel.set(aimDir.x, aimDir.y, aimDir.z);
+  wandBolt.vel.normalize().multiplyScalar(BOLT_SPEED);
+
+  wandBolt.target = target || null;
+  wandBolt.mesh.position.copy(wandBolt.pos);
+  wandBolt.t = 0.6;
   wandBolt.active = true;
   wandBolt.mesh.visible = true;
 }
@@ -823,10 +947,24 @@ function castWandBolt() {
 function updateWandBolt(dt) {
   if (!wandBolt.active) return;
   wandBolt.t -= dt;
-  if (wandBolt.t <= 0) { wandBolt.active = false; wandBolt.mesh.visible = false; return; }
-  wandBolt.mesh.position.x += wandBolt.dir.x * dt * 22;
-  wandBolt.mesh.position.z += wandBolt.dir.z * dt * 22;
-  wandBolt.mesh.material.opacity = wandBolt.t / 0.35;
+  const tgt = wandBolt.target;
+  const alive = tgt && !tgt.dead && !tgt.dying;
+  if (wandBolt.t <= 0 || (tgt && !alive)) { wandBolt.active = false; wandBolt.mesh.visible = false; return; }
+
+  // Gently steer toward a live target so the path reads as "homing in", not a
+  // straight line that misses once the enemy has moved.
+  if (alive) {
+    const want = wandBolt._hand.set(tgt.pos.x - wandBolt.pos.x, (tgt.pos.y + 0.8) - wandBolt.pos.y, tgt.pos.z - wandBolt.pos.z);
+    if (want.lengthSq() > 1e-4) {
+      want.normalize().multiplyScalar(BOLT_SPEED);
+      wandBolt.vel.lerp(want, Math.min(1, dt * 8));
+    }
+    if (wandBolt.pos.distanceTo(tgt.pos) < 0.8) { wandBolt.active = false; wandBolt.mesh.visible = false; return; }
+  }
+
+  wandBolt.pos.addScaledVector(wandBolt.vel, dt);
+  wandBolt.mesh.position.copy(wandBolt.pos);
+  wandBolt.mesh.material.opacity = Math.min(1, wandBolt.t / 0.35);
 }
 
 let lastNetSend = 0;
@@ -864,9 +1002,9 @@ function applyCloudSave(data) {
 function loadProfile() {
   try {
     const p = JSON.parse(localStorage.getItem(PROFILE_KEY));
-    if (p && p.colors) return { name: p.name || '', colors: { ...DEFAULT_COLORS, ...p.colors }, sex: p.sex === 'female' ? 'female' : 'male', hair: HAIR_STYLES.includes(p.hair) ? p.hair : 'short' };
+    if (p && p.colors) return { name: p.name || '', colors: { ...DEFAULT_COLORS, ...p.colors }, sex: p.sex === 'female' ? 'female' : 'male', hair: HAIR_STYLES.includes(p.hair) ? p.hair : 'short', nose: p.nose || 'small', mouth: p.mouth || 'smile' };
   } catch (_) { /* corrupt profile is regenerated */ }
-  return { name: '', colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short' };
+  return { name: '', colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' };
 }
 
 function saveProfile() { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }
