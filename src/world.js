@@ -9,9 +9,9 @@ const RES = 32;     // subdivisions per chunk
 // WORLD_RADIUS the land falls away into open ocean so the map has real borders
 // you can see on the minimap and sail/walk up to. COAST_FALLOFF is how wide the
 // shoreline band is where the continent eases down into the sea.
-export const WORLD_RADIUS = 1700;   // continent half-extent (meters from origin)
-const COAST_FALLOFF = 320;          // width of the shore where land sinks to sea
-export const WORLD_BOUND = WORLD_RADIUS + 120;  // hard wall just past the beach
+export const WORLD_RADIUS = 2400;   // continent half-extent (meters from origin) — enlarged peninsula
+const COAST_FALLOFF = 360;          // width of the shore where land sinks to sea
+export const WORLD_BOUND = WORLD_RADIUS + 140;  // hard wall just past the beach
 
 // Climate uses TWO independent axes, each changing GRADUALLY as you walk so the
 // frost/sand creep in long before the true biome:
@@ -26,8 +26,8 @@ const REGION_EDGE = 820;      // past this (east): full desert
 // Snow band along the north (-Z). SNOW_EDGE is where frost begins to creep in,
 // SNOW_FULL is where it's solid white. Set high/far-north and steep so the whole
 // top of the map is snow and the middle stays temperate forest.
-const SNOW_EDGE = 600;        // north distance where snow starts
-const SNOW_FULL = 880;        // north distance where it's fully snow
+const SNOW_EDGE = 820;        // north distance where snow starts (pushed out for the bigger map)
+const SNOW_FULL = 1180;       // north distance where it's fully snow
 
 const C_SAND      = new THREE.Color(0xd5c382);
 const C_SAND_DEEP = new THREE.Color(0x8f9a66);
@@ -140,9 +140,17 @@ export class World {
   // not a perfect circle. Cached-free; cheap enough to call per vertex.
   landMask(x, z) {
     const n = this.noise;
-    // Ragged coastline: push the effective radius in/out by a slow noise.
-    const wob = (n.fbm(x * 0.0009 + 401, z * 0.0009 - 88, 3) - 0.5) * 520;
-    const r = Math.hypot(x, z) - wob;
+    // Ragged coastline: push the effective radius in/out by layered noise so the
+    // shore reads as a real PENINSULA — deep bays and jutting capes, not a circle.
+    const wob = (n.fbm(x * 0.0009 + 401, z * 0.0009 - 88, 3) - 0.5) * 900   // big lobes
+              + (n.fbm(x * 0.0022 + 13, z * 0.0022 + 211, 4) - 0.5) * 420;  // finer inlets
+    // Directional bias breaks the radial symmetry: the continent reaches further
+    // south/east and pinches in the north-west, so it isn't a centred disc. The
+    // angle term carves a couple of large gulfs.
+    const ang = Math.atan2(z, x);
+    const lobes = Math.cos(ang * 2.0 + 0.6) * 220 + Math.cos(ang * 3.0 - 1.2) * 140;
+    const bias = z * 0.10 + x * 0.06;   // stretch toward +Z/+X
+    const r = Math.hypot(x, z) - wob - lobes - bias;
     const inner = WORLD_RADIUS - COAST_FALLOFF;
     if (r <= inner) return 1;
     if (r >= WORLD_RADIUS) return 0;
@@ -201,9 +209,11 @@ export class World {
   // turns cold.
   coldFactor(x, z, h) {
     if (h === undefined) h = this.heightAt(x, z);
-    // Small wobble (was 480) so the snow line is a near-horizontal northern band,
-    // not a ragged edge that dips deep into the middle of the map.
-    const wobble = (this.noise.fbm(x * 0.0014 + 9, z * 0.0014, 3) - 0.5) * 160;
+    // Jagged northern snow line: a strong layered wobble so the cold edge weaves
+    // in and out (frozen capes reaching south, thawed gulfs poking north) instead
+    // of a near-straight band — the user wanted the ice border irregular.
+    const wobble = (this.noise.fbm(x * 0.0012 + 9, z * 0.0012, 3) - 0.5) * 420
+                 + (this.noise.fbm(x * 0.0035 + 51, z * 0.0035, 4) - 0.5) * 200;
     const north = -z + wobble;               // grows toward the north (-Z)
     if (north <= SNOW_EDGE) return 0;
     return Math.min(1, (north - SNOW_EDGE) / (SNOW_FULL - SNOW_EDGE));
@@ -227,7 +237,8 @@ export class World {
   // The raw cold factor without the heat subtraction, used to let cold win ties.
   // Mirrors coldFactor exactly (north-only, gentle wobble, no altitude chill).
   _coldRaw(x, z, h) {
-    const wobble = (this.noise.fbm(x * 0.0014 + 9, z * 0.0014, 3) - 0.5) * 160;
+    const wobble = (this.noise.fbm(x * 0.0012 + 9, z * 0.0012, 3) - 0.5) * 420
+                 + (this.noise.fbm(x * 0.0035 + 51, z * 0.0035, 4) - 0.5) * 200;
     const north = -z + wobble;
     if (north <= SNOW_EDGE) return 0;
     return Math.min(1, (north - SNOW_EDGE) / (SNOW_FULL - SNOW_EDGE));
