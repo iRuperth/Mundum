@@ -160,8 +160,28 @@ export class Auth {
     }
   }
 
+  // Whether a character name is free (case-insensitive). Returns true when the
+  // backend is offline so the UI doesn't block; the DB unique index is the real
+  // guard at insert time.
+  async nameAvailable(name) {
+    if (!this.isAvailable() || !name) return true;
+    try {
+      const { data, error } = await this.client
+        .from('characters')
+        .select('id')
+        .ilike('name', name.trim())
+        .limit(1);
+      if (error) { console.warn('[auth] nameAvailable:', error.message); return true; }
+      return !(data && data.length);
+    } catch (err) {
+      console.warn('[auth] nameAvailable:', errMsg(err));
+      return true;
+    }
+  }
+
   // Insert a new character for the current user. Enforces the 3-character cap
-  // client-side (the DB also has a unique(user_id, slot) guard).
+  // client-side (the DB also has a unique(user_id, slot) guard) and rejects a
+  // name already taken by anyone (DB unique index on lower(name)).
   // Returns { ok, error?, character? }.
   async createCharacter(fields) {
     if (!this.isAvailable()) return { ok: false, error: 'offline' };
@@ -175,6 +195,10 @@ export class Auth {
       }
 
       const f = fields || {};
+      if (!(await this.nameAvailable(f.name))) {
+        return { ok: false, error: 'name taken' };
+      }
+
       const slot = f.slot != null ? clampSlot(f.slot) : firstFreeSlot(existing);
       if (slot == null) return { ok: false, error: 'no free slot' };
 
@@ -184,7 +208,11 @@ export class Auth {
         .insert(row)
         .select()
         .single();
-      if (error) return { ok: false, error: error.message };
+      // A unique-violation on the name index means someone took it concurrently.
+      if (error) {
+        const taken = /duplicate key|unique/i.test(error.message || '');
+        return { ok: false, error: taken ? 'name taken' : error.message };
+      }
       return { ok: true, character: data };
     } catch (err) {
       return { ok: false, error: errMsg(err) };

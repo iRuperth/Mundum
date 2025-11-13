@@ -61,6 +61,11 @@ alter table public.characters add column if not exists profession text;
 create index if not exists characters_user_slot_idx
   on public.characters (user_id, slot);
 
+-- Character names are globally unique (case-insensitive): once a name is taken,
+-- no one else can use it. Insert/update fails with a unique-violation otherwise.
+create unique index if not exists characters_name_unique_idx
+  on public.characters (lower(name));
+
 
 -- Row Level Security
 alter table public.characters enable row level security;
