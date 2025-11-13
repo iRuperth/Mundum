@@ -24,6 +24,8 @@ import { questsForNpc } from './data/quests.js';
 import { buildDungeonEntrances, dungeonEntranceAt, chestAt, openChestVisual, update as updateDungeons } from './dungeons.js';
 import { resolveItem } from './inventory.js';
 import { FloatText } from './floatText.js';
+import { Auth } from './auth.js';
+import { AuthUI } from './authui.js';
 
 const SEED = 20260612;
 const PROFILE_KEY = 'mundum.profile';
@@ -181,6 +183,7 @@ let firstPerson = true;
 let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
 let introHold = 0;  // seconds the front view is held before it can swing behind
 let state = 'create';
+let authCharacterId = null;  // the Supabase character row id for cloud saves
 
 const fillLight = new THREE.PointLight(0xffeedd, 9, 9);
 scene.add(fillLight);
@@ -193,6 +196,7 @@ const ui = {
   stickKnob: document.getElementById('stick-knob'),
   btnJump: document.getElementById('btn-jump'),
   btnCam: document.getElementById('btn-cam'),
+  btnRange: document.getElementById('btn-range'),
   btnAttack: document.getElementById('btn-attack'),
   btnBag: document.getElementById('btn-bag'),
   creation: document.getElementById('creation'),
@@ -212,9 +216,12 @@ const panelRefs = {
   capText: document.getElementById('cap-text'),
   hpFill: document.getElementById('hp-fill'),
   hpText: document.getElementById('hp-text'),
+  manaFill: document.getElementById('mana-fill'),
+  manaText: document.getElementById('mana-text'),
   xpFill: document.getElementById('xp-fill'),
   xpText: document.getElementById('xp-text'),
   levelBadge: document.getElementById('level-badge'),
+  hudTitle: document.getElementById('hud-title'),
   toastStack: document.getElementById('toast-stack'),
   contextCard: document.getElementById('context-card'),
   questBox: document.getElementById('quest-box'),
@@ -224,6 +231,7 @@ const gameUI = new UI(panelRefs, inv, depot, {
   equip: (i) => doEquip(i),
   unequip: (slot) => doUnequip(slot),
   dropItem: (i) => doDropItem(i),
+  usePotion: (i) => doUsePotion(i),
   buy: (def, refresh) => doBuy(def, refresh),
   depositItem: (city, i) => { const it = inv.removeFromBackpack(i); if (it) depot.deposit(city, it); recompute(); },
   withdrawItem: (city, i) => {
@@ -310,6 +318,7 @@ const controls = new Controls(canvas, ui, {
     if (opened) { if (document.pointerLockElement) document.exitPointerLock(); }
     else if (!isTouch && state === 'play' && player.alive) lockPointer();
   },
+  onToggleRange: () => toggleRangeRing(),
   onChat: () => openChat(),
 });
 
@@ -346,10 +355,46 @@ setupLangButtons();
 applyStaticDom();
 ui.hint.textContent = t('hintDesktop');
 
+// An account is required to play: the auth/character-select overlay gates the
+// game so progress (position, depot, items, level) is always tied to a login.
+const auth = new Auth();
+const authUI = new AuthUI(auth, {
+  onPlay: (character) => enterWithCharacter(character),
+  getProfileDefaults: () => ({ colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' }),
+});
+ui.creation.classList.add('hidden');
+authUI.show();
+
+// Apply a chosen/created character then start the world. The character object
+// carries its appearance, profession, and (for returning players) saved state.
+function enterWithCharacter(character) {
+  authUI.hide();
+  authCharacterId = character && character.id ? character.id : null;
+  profile = {
+    name: character.name || 'Aventurero',
+    colors: { ...DEFAULT_COLORS, ...(character.colors || {}) },
+    sex: character.sex || 'male',
+    hair: character.hair || 'short',
+    nose: character.nose || 'small',
+    mouth: character.mouth || 'smile',
+    profession: getProfession(character.profession) ? character.profession : 'knight',
+  };
+  saveProfile();
+  player.profession = profile.profession;
+  player.rebuildCharacter(profile);
+  equipVisuals = new EquipVisuals(player.char);
+  // Returning character: hydrate level/exp/gold/equipment/depot/pos from the row.
+  if (character.exp != null || character.equipment) applyCharacterRow(character);
+  ui.nameInput.value = profile.name;
+  startGame();
+}
+
 addEventListener('pointerdown', () => audio.unlock(), { once: true });
 addEventListener('keydown', () => audio.unlock(), { once: true });
 addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyE' && !controls.chatting) tryInteract(); });
-addEventListener('beforeunload', () => { saveLocal(); net.disconnect(); });
+addEventListener('beforeunload', () => { saveLocal(); saveToAccount(); net.disconnect(); });
+// Periodic save so position is persisted to the account even while just walking.
+setInterval(() => { if (state === 'play') { saveLocal(); saveToAccount(); } }, 15000);
 
 document.getElementById('hud-mute').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -395,9 +440,35 @@ function setupCreation() {
   bindSeg('hair-seg', 'hair', () => rebuildCharacter());
   bindSeg('nose-seg', 'nose', () => rebuildCharacter());
   bindSeg('mouth-seg', 'mouth', () => rebuildCharacter());
+  setupProfPicker();
 
   ui.nameInput.value = profile.name;
   ui.btnPlay.addEventListener('click', startGame);
+}
+
+// Vocation picker: maps data-prof buttons onto profile.profession and shows the
+// chosen vocation's localized description beneath the row.
+function setupProfPicker() {
+  const seg = document.getElementById('prof-seg');
+  const descEl = document.getElementById('prof-desc');
+  if (!seg) return;
+  const showDesc = (id) => {
+    const p = getProfession(id);
+    descEl.textContent = p ? (p.desc[getLang()] || p.desc.es) : '';
+  };
+  seg.querySelectorAll('button').forEach((b) => {
+    const id = b.dataset.prof;
+    b.classList.toggle('selected', id === profile.profession);
+    b.addEventListener('click', () => {
+      profile.profession = id;
+      seg.querySelectorAll('button').forEach((x) => x.classList.remove('selected'));
+      b.classList.add('selected');
+      saveProfile();
+      showDesc(id);
+      audio.sfx.click();
+    });
+  });
+  showDesc(profile.profession);
 }
 
 function bindSeg(id, key, onChange) {
@@ -437,12 +508,16 @@ function setupLangButtons() {
 
 async function startGame() {
   profile.name = ui.nameInput.value.trim() || t('namePlaceholder');
+  // Lock in the chosen vocation and (re)derive maxHp/maxMana from it.
+  player.profession = getProfession(profile.profession) ? profile.profession : 'knight';
+  applyVocationStats(true);
   saveProfile();
   loadSave();
 
   if (!inv.equip.bag) inv.equip.bag = instanceFromContainer(getContainer('backpack'));
   if (!inv.equip.weapon) inv.equip.weapon = makeStarterWand(() => 0.5);
   recompute();
+  gameUI.setName(profile.name);
   onQuestProgress();
 
   state = 'play';
@@ -551,6 +626,29 @@ function doDropItem(i) {
   if (item) { combat.spawnDrop(player.pos, item); recompute(); }
 }
 
+// Drink a potion from the backpack: restore hp/mana, then consume it. Refuses if
+// it would heal nothing (already full), so the player doesn't waste it.
+function doUsePotion(i) {
+  const item = inv.backpack[i];
+  if (!item || item.kind !== 'potion') return;
+  const r = potionRestore(item, player);
+  const hpRoom = player.maxHp - player.hp;
+  const manaRoom = player.maxMana - player.mana;
+  const willHeal = (r.hp > 0 && hpRoom > 0) || (r.mana > 0 && manaRoom > 0);
+  if (!willHeal) { gameUI.toast(t('alreadyFull'), 'bad'); return; }
+
+  if (r.hp) player.hp = Math.min(player.maxHp, player.hp + r.hp);
+  if (r.mana) player.mana = Math.min(player.maxMana, player.mana + r.mana);
+  inv.removeFromBackpack(i);
+  audio.sfx.pickup();
+  const parts = [];
+  if (r.hp && hpRoom > 0) parts.push(`+${Math.min(r.hp, hpRoom)} HP`);
+  if (r.mana && manaRoom > 0) parts.push(`+${Math.min(r.mana, manaRoom)} ${t('mana')}`);
+  gameUI.toast(`${item.icon || '🧪'} ${parts.join(' · ')}`, 'loot');
+  recompute();
+  gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+}
+
 function doBuy(def, refresh) {
   if (inv.gold < def.value) { gameUI.toast(t('full'), 'bad'); return; }
   let item;
@@ -587,7 +685,7 @@ function recompute() {
   gameUI.renderAll();
   gameUI.setCapacity(player.level);
   saveLocal();
-  net.saveCharacter(serializeSave());
+  saveToAccount();
 }
 
 function gainXp(xp) {
@@ -926,6 +1024,7 @@ function tick() {
     updateDungeons(dt, dungeonChests);
     floatText.update(dt);
     updateWandBolt(dt);
+    updateRangeRing(dt);
     updateViewModel(dt);
     sendNetState();
 
@@ -969,6 +1068,53 @@ function doAttack() {
     player.mana = Math.max(0, (player.mana || 0) - WAND_MANA_COST);
     castWandBolt(camDir, result && result.creature);
   }
+}
+
+// --- Attack-range ring ----------------------------------------------------
+// A flat ground ring of radius = the vocation's attackRange, so the player can
+// see whether a creature is within reach. Shown two ways: a brief flash on each
+// swing, and a pinned toggle (R / on-screen button). Turns green when at least
+// one live creature sits inside the radius, grey otherwise.
+const rangeRing = (() => {
+  const geo = new THREE.RingGeometry(0.94, 1, 48); // unit ring, scaled to range
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x9aa0a6, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2; // lay flat on the ground
+  mesh.renderOrder = 2;
+  mesh.visible = false;
+  scene.add(mesh);
+  return mesh;
+})();
+let rangeRingPinned = false; // toggled by button / R key
+let rangeRingFlash = 0;      // seconds of remaining auto-flash from a swing
+
+function flashRangeRing() { rangeRingFlash = 0.6; }
+function toggleRangeRing() {
+  rangeRingPinned = !rangeRingPinned;
+  audio.sfx.click();
+}
+
+function updateRangeRing(dt) {
+  if (rangeRingFlash > 0) rangeRingFlash = Math.max(0, rangeRingFlash - dt);
+  const showing = rangeRingPinned || rangeRingFlash > 0;
+  rangeRing.visible = showing && state === 'play';
+  if (!rangeRing.visible) return;
+
+  const range = player.attackRange || 3;
+  rangeRing.scale.set(range, range, range);
+  rangeRing.position.set(player.pos.x, world.heightAt(player.pos.x, player.pos.z) + 0.06, player.pos.z);
+
+  // Green when a live creature is within reach, grey otherwise.
+  let inRange = false;
+  for (const c of combat.creatures) {
+    if (c.dead || c.dying) continue;
+    if (Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z) <= range) { inRange = true; break; }
+  }
+  rangeRing.material.color.setHex(inRange ? 0x6ee06e : 0x9aa0a6);
+  // Pinned: steady; flash: fade out over its lifetime.
+  rangeRing.material.opacity = rangeRingPinned ? 0.5 : Math.min(0.6, rangeRingFlash / 0.6 * 0.7);
 }
 
 const BOLT_SPEED = 26;
@@ -1047,6 +1193,7 @@ function sendNetState() {
   net.sendState({
     x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw,
     level: player.level, name: profile.name, sex: profile.sex, hair: profile.hair, colors: profile.colors,
+    profession: player.profession,
   });
 }
 
@@ -1067,6 +1214,34 @@ function applyCloudSave(data) {
   if (data.quests) questLog.load(data.quests);
   applyVocationStats(true);
   recompute();
+}
+
+// Hydrate a returning character from its Supabase row: level/exp, gold, gear,
+// per-city depot and last position (so you resume where you logged off).
+function applyCharacterRow(row) {
+  player.exp = row.exp || 0;
+  player.level = xpProgress(player.exp).level;
+  inv.gold = row.gold || 0;
+  if (row.equipment) inv.load(row.equipment);
+  if (row.backpack && Array.isArray(row.backpack)) inv.backpack = row.backpack;
+  if (row.depot) depot.load(row.depot);
+  applyVocationStats(true);
+  if (row.pos && typeof row.pos.x === 'number') {
+    player.spawnAt(row.pos.x, row.pos.z);
+  }
+  recompute();
+}
+
+// Persist the current character to the signed-in account (position, depot,
+// items, level, gold). Debounced by the caller (recompute / periodic save).
+function saveToAccount() {
+  if (!authCharacterId || !auth.isAvailable()) return;
+  auth.saveCharacter(authCharacterId, {
+    level: player.level, exp: player.exp, gold: inv.gold,
+    equipment: inv.serialize(), backpack: inv.backpack,
+    depot: depot.serialize(),
+    pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+  });
 }
 
 function loadProfile() {
