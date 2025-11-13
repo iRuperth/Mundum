@@ -37,6 +37,7 @@ export class Controls {
       }
       if (e.code === 'KeyC' && !e.repeat) opts.onToggleCamera();
       if (e.code === 'KeyI' && !e.repeat) opts.onToggleBag?.();
+      if (e.code === 'KeyR' && !e.repeat) opts.onToggleRange?.();
       this.keys.add(e.code);
     });
     addEventListener('keyup', (e) => {
@@ -131,6 +132,10 @@ export class Controls {
     if (ui.btnBag) ui.btnBag.addEventListener('click', (e) => {
       e.stopPropagation();
       opts.onToggleBag?.();
+    });
+    if (ui.btnRange) ui.btnRange.addEventListener('click', (e) => {
+      e.stopPropagation();
+      opts.onToggleRange?.();
     });
   }
 

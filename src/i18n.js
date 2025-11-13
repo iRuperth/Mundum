@@ -23,7 +23,16 @@ const STRINGS = {
     hintDesktop: 'WASD moverse · Espacio saltar · Shift correr · Clic derecho atacar · Q habilidad · C cámara · E interactuar · I mochila · Enter chat',
     level: 'Nivel',
     hp: 'Vida',
+    mana: 'Maná',
     xp: 'Exp',
+    restores: 'Restaura',
+    noMana: 'Sin maná',
+    alreadyFull: 'Ya estás al máximo',
+    profKnight: 'Caballero',
+    profMage: 'Mago',
+    profPaladin: 'Paladín',
+    profDruid: 'Druida',
+    rangeTitle: 'Ver alcance (R)',
     capacity: 'Capacidad',
     city: 'Ciudad',
     enemy: 'Enemigo',
@@ -127,7 +136,16 @@ const STRINGS = {
     hintDesktop: 'WASD move · Space jump · Shift run · Right click attack · Q skill · C camera · E interact · I backpack · Enter chat',
     level: 'Level',
     hp: 'HP',
+    mana: 'Mana',
     xp: 'Exp',
+    restores: 'Restores',
+    noMana: 'Out of mana',
+    alreadyFull: 'Already at full',
+    profKnight: 'Knight',
+    profMage: 'Sorcerer',
+    profPaladin: 'Paladin',
+    profDruid: 'Druid',
+    rangeTitle: 'Show range (R)',
     capacity: 'Capacity',
     city: 'City',
     enemy: 'Enemy',
@@ -266,6 +284,8 @@ export function applyStaticDom() {
     const map = { amulet: 'slotAmulet', helmet: 'slotHelmet', weapon: 'slotWeapon', armor: 'slotArmor', shield: 'slotShield', legs: 'slotLegs', boots: 'slotBoots', bag: 'slotBag' };
     if (map[slot]) el.title = t(map[slot]);
   });
+  const btnRange = document.getElementById('btn-range');
+  if (btnRange) btnRange.title = t('rangeTitle');
   const nameInput = document.getElementById('name-input');
   if (nameInput) nameInput.placeholder = t('namePlaceholder');
   const chatInput = document.getElementById('chat-input');
