@@ -49,6 +49,50 @@ function baseStats(level, role) {
 // Loot helpers. 'gold' always present with a per-creature amount range.
 function gold(min, max) { return { itemId: 'gold', min, max, chance: 1 }; }
 function drop(itemId, chance) { return { itemId, chance }; }
+// A potion drop is flagged so the combat roller can cap it at one per creature.
+function potionDrop(itemId, chance) { return { itemId, chance, potion: true }; }
+
+// Level-banded potion tables: a creature of `level` drops a level-appropriate
+// health and mana potion at 5%, plus a rare percentage/elixir at 10% for strong
+// foes. Picked deterministically by level so it scales with the difficulty curve.
+const POTION_TIERS_HP = [
+  [1, 'apple'], [4, 'grapes'], [8, 'pear'], [12, 'melon'], [16, 'minor_health'],
+  [22, 'health_potion'], [30, 'strong_health'], [38, 'great_health'],
+  [48, 'mega_health'], [58, 'super_health'], [72, 'ultra_health'],
+  [88, 'supreme_health'], [105, 'divine_health'],
+];
+const POTION_TIERS_MANA = [
+  [1, 'berry'], [4, 'blueberries'], [8, 'mango'], [12, 'minor_mana'], [16, 'mana_potion'],
+  [22, 'strong_mana'], [30, 'great_mana'], [38, 'mega_mana'],
+  [48, 'super_mana'], [58, 'ultra_mana'], [72, 'supreme_mana'],
+  [88, 'divine_mana'], [105, 'cosmic_mana'],
+];
+const POTION_SPECIALS = [
+  [25, 'half_life'], [25, 'half_mana'], [35, 'half_both'],
+  [45, 'elixir_life'], [45, 'elixir_mana'], [55, 'full_restore'],
+];
+
+function tierFor(table, level) {
+  let pick = table[0][1];
+  for (const [minLv, id] of table) { if (level >= minLv) pick = id; else break; }
+  return pick;
+}
+
+// The potion drop entries appended to a creature at the given level/role.
+function potionDropsForLevel(level, role) {
+  const out = [
+    potionDrop(tierFor(POTION_TIERS_HP, level), 0.05),
+    potionDrop(tierFor(POTION_TIERS_MANA, level), 0.05),
+  ];
+  // Strong foes (tanks/bosses, or anything deep) may yield a % restore / elixir.
+  if (role === 'boss' || role === 'tank' || level >= 25) {
+    // highest special the level qualifies for
+    let special = null;
+    for (const [minLv, id] of POTION_SPECIALS) { if (level >= minLv) special = id; }
+    if (special) out.push(potionDrop(special, 0.10));
+  }
+  return out;
+}
 
 // Family definitions. Each family lists:
 //   key, biome, element, aggressive default, aggroRange, speed, baseLevel,
@@ -680,6 +724,8 @@ function pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, sta
   while (seenIds.has(id)) id = `${id}-${idxRef.i}`;
   seenIds.add(id);
   const base = baseStats(level, role);
+  // Append level-appropriate potion drops (5% basics, 10% rare specials).
+  const lootWithPotions = [...loot, ...potionDropsForLevel(level, role)];
   out.push({
     id,
     name,
@@ -696,7 +742,7 @@ function pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, sta
     aggroRange: fam.aggressive ? fam.aggroRange : 0,
     speed: fam.speed,
     spawnBiome: fam.biome,
-    loot,
+    loot: lootWithPotions,
   });
   idxRef.i++;
 }

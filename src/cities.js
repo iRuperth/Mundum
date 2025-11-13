@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WEAPONS, ARMORS, CONTAINERS } from './data/items.js';
+import { WEAPONS, ARMORS, CONTAINERS, POTIONS } from './data/items.js';
 import { WATER_LEVEL } from './world.js';
 
 // A prop counts as "on dry land" only this far above the waterline, so nothing
@@ -64,7 +64,9 @@ function liftToLand(world, cx, cz, x, z) {
 export function shopStock() {
   const weapons = WEAPONS.filter((w) => w.shopTier === 'shop');
   const armors = ARMORS.filter((a) => a.shopTier === 'shop');
-  return [...weapons, ...armors, ...CONTAINERS];
+  // Shops sell the flat-amount potions (not the rare % restores / elixirs).
+  const potions = POTIONS.filter((p) => !p.restorePct);
+  return [...weapons, ...armors, ...CONTAINERS, ...potions];
 }
 
 export function cityAt(x, z) {

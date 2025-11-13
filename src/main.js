@@ -15,7 +15,8 @@ import { UI } from './ui.js';
 import { Peers } from './peers.js';
 import { Net } from './net.js';
 import { audio } from './audio.js';
-import { makeStarterWand, getContainer, getWeapon, getArmor } from './data/items.js';
+import { makeStarterWand, getContainer, getWeapon, getArmor, instanceFromPotion, potionRestore } from './data/items.js';
+import { professionStats, professionRegen, professionLevelGain, getProfession } from './data/professions.js';
 import { xpProgress, eventMultipliers } from './progression.js';
 import { QuestLog } from './questlog.js';
 import { WorldNpcs } from './worldNpcs.js';
@@ -114,13 +115,53 @@ function spawnInCity(city) {
 
 player.level = 1;
 player.exp = 0;
-player.maxHp = 200;
-player.hp = player.maxHp;
+player.profession = getProfession(profile.profession) ? profile.profession : 'knight';
+applyVocationStats(true);
 player.defense = 0;
 player.weapon = null;
 player.speedBonus = 0;
 player.gold = 0;
 player.alive = true;
+
+// Recompute maxHp/maxMana from the current vocation + level. When `fill` is
+// true (creation, level-up, respawn) HP/mana are topped to full; otherwise the
+// current values are clamped to the new maxima (e.g. loading a save).
+function applyVocationStats(fill) {
+  const s = professionStats(player.profession, player.level);
+  player.maxHp = s.maxHp;
+  player.maxMana = s.maxMana;
+  player.attackRange = s.attackRange;
+  if (fill || player.hp == null) player.hp = player.maxHp;
+  else player.hp = Math.min(player.hp, player.maxHp);
+  if (fill || player.mana == null) player.mana = player.maxMana;
+  else player.mana = Math.min(player.mana, player.maxMana);
+}
+
+// Vocation-based regeneration. Each stat ticks on its own interval (e.g. mage
+// gains +3 mana every 2s and +1 hp every 5s). Accumulators carry leftover dt
+// so the cadence stays accurate regardless of frame rate.
+let regenHpAcc = 0;
+let regenManaAcc = 0;
+function regenVitals(dt) {
+  if (!player.alive) return;
+  const r = professionRegen(player.profession);
+  regenHpAcc += dt;
+  regenManaAcc += dt;
+  if (player.hp < player.maxHp && regenHpAcc >= r.hp.every) {
+    const ticks = Math.floor(regenHpAcc / r.hp.every);
+    player.hp = Math.min(player.maxHp, player.hp + ticks * r.hp.amount);
+    regenHpAcc -= ticks * r.hp.every;
+  } else if (player.hp >= player.maxHp) {
+    regenHpAcc = 0;
+  }
+  if (player.mana < player.maxMana && regenManaAcc >= r.mana.every) {
+    const ticks = Math.floor(regenManaAcc / r.mana.every);
+    player.mana = Math.min(player.maxMana, player.mana + ticks * r.mana.amount);
+    regenManaAcc -= ticks * r.mana.every;
+  } else if (player.mana >= player.maxMana) {
+    regenManaAcc = 0;
+  }
+}
 
 const inv = new Inventory();
 const depot = new DepotStore();
@@ -516,6 +557,7 @@ function doBuy(def, refresh) {
   if (getWeapon(def.id)) item = rollShopWeapon(def.id);
   else if (getArmor(def.id)) item = instanceFromArmor(getArmor(def.id));
   else if (getContainer(def.id)) item = instanceFromContainer(def);
+  else if (def.kind === 'potion') item = instanceFromPotion(def, getLang());
   if (!item) return;
   const r = inv.addToBackpack(item, player.level);
   if (r !== 'ok') { gameUI.toast(t(r === 'heavy' ? 'tooHeavy' : 'full'), 'bad'); return; }
@@ -554,13 +596,15 @@ function gainXp(xp) {
   const info = xpProgress(player.exp);
   player.level = info.level;
   if (player.level > before) {
-    player.maxHp = 200 + (player.level - 1) * 40;
-    player.hp = player.maxHp;
+    // Vocation-driven growth: recompute maxHp/maxMana and top both to full.
+    const gain = professionLevelGain(player.profession);
+    applyVocationStats(true);
     audio.sfx.levelUp();
     gameUI.toast(t('levelUp', player.level), 'levelup');
+    gameUI.toast(`+${gain.hp * (player.level - before)} HP · +${gain.mana * (player.level - before)} ${t('mana')}`, 'levelup');
     equipVisuals.refresh(inv.equip, player.level);
   }
-  gameUI.setVitals(player.hp, player.maxHp, info);
+  gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, info);
 }
 
 function onPlayerDeath() {
@@ -595,6 +639,7 @@ function showDeathScreen(msg) {
 function respawn() {
   spawnInCity(homeCity);
   player.hp = player.maxHp;
+  player.mana = player.maxMana;
   player.alive = true;
   combat.clear();
   if (!isTouch) lockPointer();
@@ -622,11 +667,12 @@ function tryInteract() {
 function openNpcDialog(npc) {
   if (document.pointerLockElement) document.exitPointerLock();
   questLog.onEvent('talk', npc.id);
-  if (npc.role === 'priest' && player.hp < player.maxHp) {
+  if (npc.role === 'priest' && (player.hp < player.maxHp || player.mana < player.maxMana)) {
     player.hp = player.maxHp;
+    player.mana = player.maxMana;
     audio.sfx.levelUp();
     gameUI.toast('✨ ' + t('healed'), 'levelup');
-    gameUI.setVitals(player.hp, player.maxHp, xpProgress(player.exp));
+    gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
   }
   gameUI.openNpc(npc, questLog, player.level, {
     questsForNpc: (id) => questsForNpc(id),
@@ -872,10 +918,7 @@ function tick() {
       }
 
       checkDungeon();
-
-      if (player.hp < player.maxHp) {
-        player.hp = Math.min(player.maxHp, player.hp + dt * (4 + player.level * 0.5));
-      }
+      regenVitals(dt);
     }
 
     peers.tick(dt);
@@ -888,7 +931,7 @@ function tick() {
 
     updateCamera();
     minimap.draw(player, peers.list(), combat.creatures);
-    gameUI.setVitals(player.hp, player.maxHp, xpProgress(player.exp));
+    gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
 
     const danger = player.alive && player.hp / player.maxHp < 0.3;
     if (danger !== lowHpActive) {
@@ -903,16 +946,29 @@ function tick() {
 }
 tick();
 
+const WAND_MANA_COST = 5; // mana spent per wand bolt
+let lastNoManaToast = 0;
 function doAttack() {
   if (!player.weapon) return;
+  const isWand = player.weapon.type === 'wand';
+  // Wands cost mana; melee/bow are free. No mana → no shot, with a throttled hint.
+  if (isWand && (player.mana || 0) < WAND_MANA_COST) {
+    const now = performance.now();
+    if (now - lastNoManaToast > 1200) { gameUI.toast('💧 ' + t('noMana'), 'bad'); lastNoManaToast = now; }
+    return;
+  }
   equipVisuals.triggerSwing();
   viewSwingT = 0.3;
   audio.sfx.attack();
+  flashRangeRing(); // show the reach briefly on every swing
   // Aim where you're actually looking: full camera direction (yaw + pitch), not
   // just the horizontal heading. combat.attack picks the creature in that cone.
   camera.getWorldDirection(camDir);
   const result = combat.attack(player, camDir);
-  if (player.weapon.type === 'wand') castWandBolt(camDir, result && result.creature);
+  if (isWand) {
+    player.mana = Math.max(0, (player.mana || 0) - WAND_MANA_COST);
+    castWandBolt(camDir, result && result.creature);
+  }
 }
 
 const BOLT_SPEED = 26;
@@ -1009,17 +1065,16 @@ function applyCloudSave(data) {
   if (data.equipment) inv.load(data.equipment);
   if (data.depot) depot.load(data.depot);
   if (data.quests) questLog.load(data.quests);
-  player.maxHp = 200 + (player.level - 1) * 40;
-  player.hp = player.maxHp;
+  applyVocationStats(true);
   recompute();
 }
 
 function loadProfile() {
   try {
     const p = JSON.parse(localStorage.getItem(PROFILE_KEY));
-    if (p && p.colors) return { name: p.name || '', colors: { ...DEFAULT_COLORS, ...p.colors }, sex: p.sex === 'female' ? 'female' : 'male', hair: HAIR_STYLES.includes(p.hair) ? p.hair : 'short', nose: p.nose || 'small', mouth: p.mouth || 'smile' };
+    if (p && p.colors) return { name: p.name || '', colors: { ...DEFAULT_COLORS, ...p.colors }, sex: p.sex === 'female' ? 'female' : 'male', hair: HAIR_STYLES.includes(p.hair) ? p.hair : 'short', nose: p.nose || 'small', mouth: p.mouth || 'smile', profession: getProfession(p.profession) ? p.profession : 'knight' };
   } catch (_) { /* corrupt profile is regenerated */ }
-  return { name: '', colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' };
+  return { name: '', colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile', profession: 'knight' };
 }
 
 function saveProfile() { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }

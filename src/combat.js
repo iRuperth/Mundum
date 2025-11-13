@@ -3,6 +3,7 @@ import { buildCreatureModel } from './creatureModels.js';
 import { creaturesForLevel } from './data/creatures.js';
 import { elementMultiplier } from './data/items.js';
 import { resolveItem } from './inventory.js';
+import { getLang } from './i18n.js';
 
 const MAX_ALIVE = 22;
 const SPAWN_RADIUS = 42;
@@ -278,16 +279,22 @@ export class CombatSystem {
     const xp = Math.round(c.def.exp * eventMult.xp);
     this.hooks.onKill(c, xp);
     const dropMult = eventMult.drop;
+    const lang = getLang();
+    let potionDropped = false; // cap potions at one per creature
     for (const entry of c.def.loot) {
       if (entry.itemId === 'gold') {
         const amount = entry.min + Math.floor(this.rng() * (entry.max - entry.min + 1));
         if (amount > 0) this.hooks.onLoot({ gold: amount });
         continue;
       }
+      if (entry.potion && potionDropped) continue;
       const chance = Math.min(1, (entry.chance || 0) * dropMult);
       if (this.rng() < chance) {
-        const item = resolveItem(entry.itemId, () => this.rng(), c.def.level);
-        if (item) this.spawnDrop(c.pos, item);
+        const item = resolveItem(entry.itemId, () => this.rng(), c.def.level, lang);
+        if (item) {
+          this.spawnDrop(c.pos, item);
+          if (entry.potion) potionDropped = true;
+        }
       }
     }
   }
