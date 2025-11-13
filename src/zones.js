@@ -98,7 +98,8 @@ export const ZONES = [
   {
     id: 'dragon-mountains', name: { es: 'Montañas de Dragones', en: 'Dragon Mountains' },
     center: { x: 200, z: -760 }, radius: 300, levelMin: 16, levelMax: 72,
-    families: ['dragon', 'wyvern'], ids: ['lizardman'],
+    // Elves guard the dragon foothills (the user's pairing: elves near dragons).
+    families: ['dragon', 'wyvern', 'elf'], ids: ['lizardman'],
     boss: 'dragon-dragon-lord', bossNear: { x: 200, z: -760 }, bossRadius: 22,
     caveIds: ['dragonlair'], camps: [], decor: 'scorched',
   },
@@ -111,10 +112,20 @@ export const ZONES = [
   },
   {
     id: 'demon-abyss', name: { es: 'Abismo Demoníaco', en: 'Demon Abyss' },
-    center: { x: -780, z: -680 }, radius: 260, levelMin: 18, levelMax: 110,
-    families: ['demon', 'imp', 'cultist'], ids: [],
+    center: { x: -780, z: -680 }, radius: 260, levelMin: 18, levelMax: 130,
+    // Fire elementals/devils gather as you near the abyss (the user's pairing).
+    families: ['demon', 'imp', 'cultist', 'elemental', 'fire_elemental', 'fire_devil', 'hellhound'], ids: [],
     boss: 'demon-demon-lord', bossNear: { x: -780, z: -680 }, bossRadius: 22,
     caveIds: ['demonabyss'], camps: [], decor: 'scorched',
+  },
+  {
+    // Desert tombs: mummies (zombie family) raised alongside skeletons — the
+    // user's pairing of skeletons accompanying mummies.
+    id: 'desert-tombs', name: { es: 'Tumbas del Desierto', en: 'Desert Tombs' },
+    center: { x: 1100, z: 620 }, radius: 240, levelMin: 14, levelMax: 60,
+    families: ['skeleton', 'zombie', 'scarab'], ids: [],
+    boss: 'zombie-ancient-mummy', bossNear: { x: 1100, z: 620 }, bossRadius: 20,
+    caveIds: [], camps: [], decor: 'bones',
   },
 ];
 
