@@ -20,6 +20,7 @@ function rarityClass(item) {
 }
 
 function itemIcon(item) {
+  if (item.kind === 'potion' && item.icon) return item.icon;
   if (item.slot && SLOT_ICON[item.slot]) return SLOT_ICON[item.slot];
   return TYPE_ICON[item.type] || '❔';
 }
@@ -47,13 +48,22 @@ export class UI {
     return !this.collapsed;
   }
 
-  setVitals(hp, maxHp, xpInfo) {
+  setVitals(hp, maxHp, mana, maxMana, xpInfo) {
     this.level = xpInfo.level;
     this.refs.hpFill.style.width = Math.max(0, (hp / maxHp) * 100) + '%';
     this.refs.hpText.textContent = `${Math.max(0, Math.ceil(hp))}/${maxHp}`;
+    if (this.refs.manaFill && maxMana) {
+      this.refs.manaFill.style.width = Math.max(0, (mana / maxMana) * 100) + '%';
+      this.refs.manaText.textContent = `${Math.max(0, Math.floor(mana))}/${maxMana}`;
+    }
     this.refs.xpFill.style.width = (xpInfo.frac * 100) + '%';
     this.refs.xpText.textContent = `${t('xp')} ${Math.floor(xpInfo.frac * 100)}%`;
     this.refs.levelBadge.textContent = xpInfo.level;
+  }
+
+  // Show the hero's name in the top-left HUD title (replacing "MUNDUM").
+  setName(name) {
+    if (this.refs.hudTitle) this.refs.hudTitle.textContent = name;
   }
 
   setCapacity(level) {
@@ -105,8 +115,12 @@ export class UI {
   onBackpackClick(i) {
     const item = this.inv.backpack[i];
     if (!item) return;
+    // Potions get a "Use" action instead of "Equip".
+    const primary = item.kind === 'potion'
+      ? { label: t('use'), fn: () => this.hooks.usePotion(i) }
+      : { label: t('equip'), fn: () => this.hooks.equip(i) };
     this.openContext(item, [
-      { label: t('equip'), fn: () => this.hooks.equip(i) },
+      primary,
       { label: t('drop'), fn: () => this.hooks.dropItem(i) },
     ]);
   }
@@ -125,7 +139,13 @@ export class UI {
   }
 
   itemDetails(item) {
-    const lines = [`<b class="${rarityClass(item)}">${item.name}</b>`];
+    const icon = item.kind === 'potion' && item.icon ? item.icon + ' ' : '';
+    const lines = [`<b class="${rarityClass(item)}">${icon}${item.name}</b>`];
+    if (item.kind === 'potion') {
+      const tgt = item.restoreType === 'hp' ? t('hp') : item.restoreType === 'mana' ? t('mana') : `${t('hp')} + ${t('mana')}`;
+      const amount = item.restorePct ? `${Math.round(item.restorePct * 100)}%` : item.restore;
+      lines.push(`✚ ${t('restores')} ${amount} ${tgt}`);
+    }
     if (item.atk != null) lines.push(`${t('attack')}: ${item.atk}`);
     if (item.defense) lines.push(`${t('defense')}: ${item.defense}`);
     if (item.element && item.element !== 'none') lines.push(`${t('element')}: ${elementName(item.element)}`);
