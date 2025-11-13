@@ -197,10 +197,14 @@ export class UI {
       <div class="ctx-gold">💰 ${this.inv.gold}</div>`;
     const list = document.createElement('div');
     list.className = 'shop-list';
+    const lang = getLang();
     for (const def of stock) {
       const row = document.createElement('div');
       row.className = 'shop-row';
-      row.innerHTML = `<span>${def.name}</span><span class="price">${def.value} 💰</span>`;
+      // Potions carry a bilingual {es,en} name and an icon; gear uses a string.
+      const label = typeof def.name === 'string' ? def.name : (def.name[lang] || def.name.es);
+      const icon = def.icon ? def.icon + ' ' : '';
+      row.innerHTML = `<span>${icon}${label}</span><span class="price">${def.value} 💰</span>`;
       const buy = document.createElement('button');
       buy.textContent = t('buy');
       buy.addEventListener('click', () => this.hooks.buy(def, () => this.openShop(city)));
