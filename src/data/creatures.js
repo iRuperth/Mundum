@@ -3,7 +3,8 @@
 // Stats scale with level + role so the game gets progressively harder.
 // Everything is expanded deterministically at module load (no Math.random).
 
-import { getWeapon, getArmor, getContainer } from './items.js';
+import { getWeapon, getArmor, getContainer, WEAPONS, ARMORS } from './items.js';
+import { trophyForFamily } from './trophies.js';
 
 // Family model keys. The renderer builds one procedural mesh per key; every
 // creature variant reuses its family's model with a different scale/tint.
@@ -960,8 +961,86 @@ function rebalanceLoot(creatures) {
   }
 }
 
+// NON-THEMATIC gear drops. The user's rule: loot is NOT class-themed — a cyclops
+// can drop an axe, boots, or a bow purely by chance. Every creature gets a small
+// pool of LEVEL-APPROPRIATE equipment (any type/slot) seeded into its loot, with
+// chances that scale to the creature's level. Deterministic (hash-seeded), so the
+// same creature always offers the same pool.
+const GEAR_POOL = [
+  ...WEAPONS.filter((w) => w.shopTier !== 'legendary-tier'),
+  ...ARMORS.filter((a) => a.shopTier !== 'legendary-tier'),
+];
+
+function seededShuffle(arr, seed) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const r = ((Math.sin(seed + i) * 43758.5453) % 1 + 1) % 1;
+    const j = Math.floor(r * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function addNonThematicGear(creatures) {
+  for (const c of creatures) {
+    const lv = c.level || 1;
+    // gear within a band around the creature's level (can't drop gear far above it)
+    const lo = Math.max(1, Math.floor(lv * 0.5));
+    const hi = lv + 6;
+    const pool = GEAR_POOL.filter((g) => (g.levelReq || 1) >= lo && (g.levelReq || 1) <= hi);
+    if (!pool.length) continue;
+    // how many distinct gear rolls this creature offers: tougher foes drop more
+    const slots = (c.boss || c.supreme) ? 5 : lv >= 40 ? 3 : lv >= 15 ? 2 : 1;
+    const picks = seededShuffle(pool, hashStr(c.id) >>> 0).slice(0, slots);
+    for (const g of picks) {
+      if (c.loot.some((l) => l.itemId === g.id)) continue;
+      // base chance by tier, lifted a touch for bosses; capped low so gear stays
+      // a treat, not a flood. Epic gear rarer than common.
+      const tierBase = g.shopTier === 'epic' ? 0.012 : 0.035;
+      const chance = +(tierBase * ((c.boss || c.supreme) ? 1.8 : 1)).toFixed(4);
+      c.loot.push({ itemId: g.id, chance });
+    }
+  }
+}
+
 export const CREATURES = buildCreatures();
 rebalanceLoot(CREATURES);
+
+// Every creature drops its family TROPHY (rat tail, demon horn, dragon claw…) at
+// a high chance — the always-available remains a "remains buyer" NPC pays small
+// money for, so players have a steady grind-and-sell income loop. Bosses drop it
+// for sure. (See data/trophies.js for the per-family item + value.)
+for (const c of CREATURES) {
+  const tr = trophyForFamily(c.family);
+  if (!tr) continue;
+  if (c.loot.some((l) => l.itemId === tr.id)) continue;
+  c.loot.push({ itemId: tr.id, chance: (c.boss || c.supreme) ? 1 : 0.6, trophy: true });
+}
+
+// Spread level-appropriate, non-class gear across every creature.
+addNonThematicGear(CREATURES);
+
+// Behaviour flags read by combat.js: which families FLEE at low HP, which FLY,
+// and which inflict a status. Applied per family so the AI/status systems light
+// up without hand-editing every variant.
+const FLYING_FAMILIES = new Set(['bat', 'wasp', 'fairy', 'harpy', 'ghost', 'wraith', 'wyvern', 'dragon', 'gargoyle', 'bird', 'pigeon', 'seagull']);
+const BURN_FAMILIES = new Set(['dragon', 'demon', 'imp', 'elemental', 'fire_elemental', 'fire_devil', 'hellhound']);
+const SLOW_FAMILIES = new Set([]);   // ice variants flagged by element below
+for (const c of CREATURES) {
+  // Flee: small/passive critters (level ≤5) flee at 20%; many others flee 8–30%.
+  if (!c.aggressive || c.level <= 5) {
+    c.fleeBelowHpPct = 0.2;
+  } else if (/rat|cave_rat|goblin|orc$|orc-|troll|scarab|spider|wolf|bear|deer/.test(c.id) && !c.boss) {
+    c.fleeBelowHpPct = c.level <= 20 ? 0.15 : 0.1;
+  }
+  // Dragons/wyverns kite away when low so knights struggle and archers thrive.
+  if ((c.family === 'dragon' || c.family === 'wyvern') && !c.supreme) c.fleeBelowHpPct = 0.3;
+  // Fly: airborne families ignore terrain and swoop to attack.
+  if (FLYING_FAMILIES.has(c.family)) { c.flying = true; c.flyHeight = c.family === 'dragon' ? 4 : 3; }
+  // Status: burn for fiery foes, poison/ice already carried via element; flag burn.
+  if (BURN_FAMILIES.has(c.family) && c.element === 'fire') c.burns = true;
+  if (c.element === 'water' && /frost|ice|winter|glacial/.test(c.id)) c.slows = true;
+}
 
 // Fast id lookup.
 const BY_ID = new Map(CREATURES.map((c) => [c.id, c]));
