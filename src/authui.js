@@ -77,6 +77,9 @@ const FALLBACK = {
     working: 'Un momento…',
     authFailed: 'No se pudo completar. Inténtalo de nuevo',
     slotFull: 'No hay espacio para más personajes',
+    nameTaken: 'Ese nombre ya está en uso, elige otro',
+    needAccount: 'Necesitas una cuenta para jugar y guardar tu progreso',
+    reconnect: 'Sin conexión con el servidor. Reconéctate para jugar',
   },
   en: {
     signIn: 'Sign in',
@@ -107,6 +110,9 @@ const FALLBACK = {
     working: 'One moment…',
     authFailed: 'Could not complete. Please try again',
     slotFull: 'No room for more characters',
+    nameTaken: 'That name is already taken, pick another',
+    needAccount: 'You need an account to play and save your progress',
+    reconnect: 'No connection to the server. Reconnect to play',
   },
 };
 
@@ -198,11 +204,14 @@ export class AuthUI {
     card.appendChild(el('h1', { text: 'MUNDUM' }));
 
     if (offline) {
-      card.appendChild(el('p', { class: 'auth-sub', text: tt('offline') }));
+      // An account is required to play, so without a backend we cannot proceed.
+      // Show a reconnect notice and a retry button instead of an offline mode.
+      card.appendChild(el('p', { class: 'auth-sub', text: tt('reconnect') }));
       card.appendChild(el('button', {
-        class: 'auth-primary', text: tt('playOffline'),
-        on: { click: () => this._renderCreate(0) },
+        class: 'auth-primary', text: tt('signIn'),
+        on: { click: () => this._renderLogin('signin') },
       }));
+      card.appendChild(this._langRow());
       this._mount(card);
       return;
     }
@@ -452,7 +461,9 @@ export class AuthUI {
     const res = await this.auth.createCharacter(fields);
     this._setBusy(btn, false);
     if (!res || !res.ok) {
-      err.textContent = res && res.error === 'character limit reached' ? tt('slotFull') : tt('authFailed');
+      if (res && res.error === 'character limit reached') err.textContent = tt('slotFull');
+      else if (res && res.error === 'name taken') err.textContent = tt('nameTaken');
+      else err.textContent = tt('authFailed');
       return;
     }
     this._play(res.character || { ...fields, level: 1, exp: 0 });
