@@ -230,8 +230,10 @@ const panelRefs = {
 const gameUI = new UI(panelRefs, inv, depot, {
   equip: (i) => doEquip(i),
   unequip: (slot) => doUnequip(slot),
-  dropItem: (i) => doDropItem(i),
+  dropItem: (i, bagIndex) => doDropItem(i, bagIndex),
   usePotion: (i) => doUsePotion(i),
+  moveIntoBag: (from, bag) => { inv.moveIntoBag(from, bag); recompute(); },
+  takeFromBag: (bag, inner) => { if (!inv.takeFromBag(bag, inner)) gameUI.toast(t('full'), 'bad'); recompute(); },
   buy: (def, refresh) => doBuy(def, refresh),
   depositItem: (city, i) => { const it = inv.removeFromBackpack(i); if (it) depot.deposit(city, it); recompute(); },
   withdrawItem: (city, i) => {
@@ -312,11 +314,17 @@ const controls = new Controls(canvas, ui, {
     document.getElementById('crosshair').classList.toggle('hidden', !locked || state !== 'play');
   },
   onToggleBag: () => {
-    const opened = gameUI.togglePanel();
-    // Free the cursor when the inventory opens so you can click items; recapture
-    // it (on desktop) when it closes so you can keep playing.
-    if (opened) { if (document.pointerLockElement) document.exitPointerLock(); }
-    else if (!isTouch && state === 'play' && player.alive) lockPointer();
+    // Toggle the floating 20-slot backpack window. Free the cursor while it is
+    // open so items are clickable; recapture it on desktop when it closes.
+    const card = panelRefs.contextCard;
+    const open = card.classList.contains('hidden');
+    if (open) {
+      gameUI.openBackpack(null);
+      if (document.pointerLockElement) document.exitPointerLock();
+    } else {
+      gameUI.closeContext();
+      if (!isTouch && state === 'play' && player.alive) lockPointer();
+    }
   },
   onToggleRange: () => toggleRangeRing(),
   onChat: () => openChat(),
@@ -621,8 +629,14 @@ function doUnequip(slot) {
   else gameUI.toast(t('full'), 'bad');
 }
 
-function doDropItem(i) {
-  const item = inv.removeFromBackpack(i);
+function doDropItem(i, bagIndex) {
+  let item;
+  if (bagIndex != null) {
+    const bag = inv.backpack[bagIndex];
+    item = bag && bag.contents ? bag.contents.splice(i, 1)[0] : null;
+  } else {
+    item = inv.removeFromBackpack(i);
+  }
   if (item) { combat.spawnDrop(player.pos, item); recompute(); }
 }
 
