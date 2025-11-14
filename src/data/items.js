@@ -99,9 +99,28 @@ export const ARMORS = [
   { id: 'swift_boots', name: 'Swift Boots', slot: 'boots', defense: 8, weight: 18, levelReq: 45, shopTier: 'epic', value: 0, color: 0x66ddaa, speedBonus: 0.5 },
 ];
 
+// Color table for collectible/buyable bags and backpacks (Tibia-style).
+const CONTAINER_COLORS = [
+  { key: 'red', name: 'Red', color: 0xc0392b },
+  { key: 'blue', name: 'Blue', color: 0x2980b9 },
+  { key: 'green', name: 'Green', color: 0x27ae60 },
+  { key: 'yellow', name: 'Yellow', color: 0xf1c40f },
+  { key: 'purple', name: 'Purple', color: 0x8e44ad },
+  { key: 'orange', name: 'Orange', color: 0xe67e22 },
+  { key: 'pink', name: 'Pink', color: 0xff6fa5 },
+  { key: 'grey', name: 'Grey', color: 0xecf0f1 },
+];
+
+// Build colored variants: a small bag (cap 8) and a backpack (cap 20) per color.
+const COLORED_CONTAINERS = CONTAINER_COLORS.flatMap((c) => [
+  { id: `${c.key}_bag`, name: `${c.name} Bag`, slot: 'bag', capacity: 8, weight: 18, value: 60, color: c.color, shopTier: 'shop' },
+  { id: `${c.key}_backpack`, name: `${c.name} Backpack`, slot: 'bag', capacity: 20, weight: 30, value: 300, color: c.color, shopTier: 'shop' },
+]);
+
 export const CONTAINERS = [
   { id: 'bag', name: 'Bag', slot: 'bag', capacity: 8, weight: 18, value: 50, color: 0x8a6a3b },
   { id: 'backpack', name: 'Backpack', slot: 'bag', capacity: 20, weight: 30, value: 250, color: 0x6a4a2b },
+  ...COLORED_CONTAINERS,
 ];
 
 // --- Potions & consumables -------------------------------------------------
