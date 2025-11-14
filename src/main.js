@@ -15,7 +15,7 @@ import { UI } from './ui.js';
 import { Peers } from './peers.js';
 import { Net } from './net.js';
 import { audio } from './audio.js';
-import { makeStarterWand, getContainer, getWeapon, getArmor, instanceFromPotion, potionRestore } from './data/items.js';
+import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore } from './data/items.js';
 import { professionStats, professionRegen, professionLevelGain, getProfession } from './data/professions.js';
 import { xpProgress, eventMultipliers } from './progression.js';
 import { QuestLog } from './questlog.js';
@@ -63,7 +63,8 @@ const VIEW_REST = new THREE.Euler(0.1, -0.3, 0);
 function setViewModel(item, level) {
   if (viewModelMesh) { viewModel.remove(viewModelMesh); viewModelMesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); viewModelMesh = null; }
   if (!item) return;
-  const color = item.type === 'wand' ? wandColorForLevel(level) : (item.color || 0xb0b0b0);
+  // Wands glow with the vocation's magic color (sorcerer purple, druid green).
+  const color = item.type === 'wand' ? (player.spellColor || wandColorForLevel(level)) : (item.color || 0xb0b0b0);
   viewModelMesh = buildWeaponMesh(item.type, color);
   viewModelMesh.scale.setScalar(1.1);
   viewModel.add(viewModelMesh);
@@ -133,6 +134,8 @@ function applyVocationStats(fill) {
   player.maxHp = s.maxHp;
   player.maxMana = s.maxMana;
   player.attackRange = s.attackRange;
+  player.damageMul = s.damageMul;
+  player.spellColor = s.spellColor;
   if (fill || player.hp == null) player.hp = player.maxHp;
   else player.hp = Math.min(player.hp, player.maxHp);
   if (fill || player.mana == null) player.mana = player.maxMana;
@@ -522,8 +525,7 @@ async function startGame() {
   saveProfile();
   loadSave();
 
-  if (!inv.equip.bag) inv.equip.bag = instanceFromContainer(getContainer('backpack'));
-  if (!inv.equip.weapon) inv.equip.weapon = makeStarterWand(() => 0.5);
+  giveStarterGear();
   recompute();
   gameUI.setName(profile.name);
   onQuestProgress();
@@ -688,6 +690,24 @@ function rollShopWeapon(id) {
     element: w.element, atk: Math.round((w.atkMin + w.atkMax) / 2), rarity: 'normal',
     weight: w.weight, levelReq: w.levelReq, color: w.color, defense: w.defense || 0, ability: null,
   };
+}
+
+// The level-1 starter weapon for each vocation.
+const STARTER_WEAPON = { knight: 'wooden_sword', paladin: 'wooden_bow', mage: 'apprentice_wand', druid: 'apprentice_wand' };
+
+// Equip a fresh character: a level-1 weapon for their vocation and a small bag
+// (8 slots) holding a spare bag. The 20-slot backpack is NOT free; buy it at a
+// shop or get it from a level-20-ish creature.
+function giveStarterGear() {
+  if (!inv.equip.weapon) {
+    const wid = STARTER_WEAPON[player.profession] || 'wooden_sword';
+    inv.equip.weapon = rollWeaponInstance(wid, () => 0.5) || rollShopWeapon(wid);
+  }
+  if (!inv.equip.bag) {
+    inv.equip.bag = instanceFromContainer(getContainer('bag'));
+    const spare = instanceFromContainer(getContainer('bag'));
+    inv.backpack.push(spare);
+  }
 }
 
 function recompute() {
@@ -1149,7 +1169,7 @@ const wandBolt = (() => {
 // Fire the bolt from the right hand, heading toward `target` if the swing locked
 // onto one (so it curves to the enemy), otherwise straight along the aim ray.
 function castWandBolt(aimDir, target) {
-  const color = player.weapon.color || 0xb89bff;
+  const color = player.spellColor || player.weapon.color || 0xb89bff;
   wandBolt.mesh.material.color.setHex(color);
   wandBolt.light.color.setHex(color);
 
