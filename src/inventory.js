@@ -34,6 +34,9 @@ export function instanceFromContainer(c) {
   return {
     baseId: c.id, name: c.name, type: 'container', slot: 'bag',
     capacity: c.capacity, weight: c.weight, color: c.color, rarity: RARITY.NORMAL,
+    // A container carried in the backpack can hold items of its own (one nesting
+    // level). The equipped bag uses the top-level `backpack` array instead.
+    contents: [],
   };
 }
 
@@ -61,7 +64,10 @@ export class Inventory {
   carriedWeight() {
     let w = 0;
     for (const s of EQUIP_SLOTS) if (this.equip[s]) w += this.equip[s].weight || 0;
-    for (const it of this.backpack) w += it.weight || 0;
+    for (const it of this.backpack) {
+      w += it.weight || 0;
+      if (it.contents) for (const inner of it.contents) w += inner.weight || 0;
+    }
     return w;
   }
 
@@ -83,6 +89,30 @@ export class Inventory {
 
   removeFromBackpack(index) {
     return this.backpack.splice(index, 1)[0] || null;
+  }
+
+  // Nested bags: move an item from the main backpack INTO a container that is
+  // itself in the backpack (one nesting level; you can't put a bag in a bag).
+  moveIntoBag(fromIndex, bagIndex) {
+    const bag = this.backpack[bagIndex];
+    const item = this.backpack[fromIndex];
+    if (!bag || bag.type !== 'container' || !item || fromIndex === bagIndex) return false;
+    if (item.type === 'container') return false; // no bag-in-bag
+    if (bag.contents.length >= bag.capacity) return false;
+    this.backpack.splice(fromIndex, 1);
+    bag.contents.push(item);
+    return true;
+  }
+
+  // Take an item OUT of a nested bag back into the main backpack.
+  takeFromBag(bagIndex, innerIndex) {
+    const bag = this.backpack[bagIndex];
+    if (!bag || bag.type !== 'container') return false;
+    if (this.backpack.length >= this.bagCapacity) return false;
+    const item = bag.contents.splice(innerIndex, 1)[0];
+    if (!item) return false;
+    this.backpack.push(item);
+    return true;
   }
 
   // Equip an item from the backpack index. Returns { ok, reason }.
