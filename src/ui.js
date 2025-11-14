@@ -98,12 +98,80 @@ export class UI {
       const item = this.inv.backpack[i];
       if (item) {
         cell.classList.add('filled', rarityClass(item));
-        cell.innerHTML = `<span class="ico">${itemIcon(item)}</span>`;
+        if (item.type === 'container') cell.classList.add('is-bag');
+        cell.innerHTML = `<span class="ico" ${item.color ? `style="color:#${(item.color).toString(16).padStart(6, '0')}"` : ''}>${itemIcon(item)}</span>`;
         cell.addEventListener('click', () => this.onBackpackClick(i));
         this.attachTooltip(cell, item);
       }
       grid.appendChild(cell);
     }
+  }
+
+  // Open the backpack as a floating 20-slot window (Tibia style). Clicking a
+  // nested bag opens its own window. `bagIndex` null = the main backpack.
+  openBackpack(bagIndex = null) {
+    const card = this.refs.contextCard;
+    const isNested = bagIndex != null;
+    const bag = isNested ? this.inv.backpack[bagIndex] : null;
+    const cap = isNested ? (bag ? bag.capacity : 0) : this.inv.bagCapacity;
+    const items = isNested ? (bag ? bag.contents : []) : this.inv.backpack;
+    const title = isNested ? (bag ? bag.name : t('backpack')) : t('backpack');
+
+    card.innerHTML = `<div class="ctx-head">🎒 ${title} <span class="bp-count">${items.length}/${cap}</span></div>`;
+    const win = document.createElement('div');
+    win.className = 'bp-window';
+    for (let i = 0; i < cap; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'bp-cell';
+      const item = items[i];
+      if (item) {
+        cell.classList.add('filled', rarityClass(item));
+        if (item.type === 'container') cell.classList.add('is-bag');
+        cell.innerHTML = `<span class="ico" ${item.color ? `style="color:#${(item.color).toString(16).padStart(6, '0')}"` : ''}>${itemIcon(item)}</span>`;
+        cell.addEventListener('click', () => {
+          if (item.type === 'container' && !isNested) { this.openBackpack(i); return; }
+          this.onBackpackItemAction(item, i, bagIndex);
+        });
+        this.attachTooltip(cell, item);
+      }
+      win.appendChild(cell);
+    }
+    card.appendChild(win);
+
+    const row = document.createElement('div');
+    row.className = 'ctx-actions';
+    if (isNested) {
+      const backBtn = document.createElement('button');
+      backBtn.textContent = '‹ ' + t('backpack');
+      backBtn.addEventListener('click', () => this.openBackpack(null));
+      row.appendChild(backBtn);
+    }
+    const close = document.createElement('button');
+    close.textContent = t('close');
+    close.className = 'ctx-close';
+    close.addEventListener('click', () => this.closeContext());
+    row.appendChild(close);
+    card.appendChild(row);
+    card.classList.remove('hidden');
+  }
+
+  // Action menu for an item clicked inside the backpack window.
+  onBackpackItemAction(item, index, bagIndex) {
+    const actions = [];
+    if (bagIndex != null) {
+      // Inside a nested bag: take it out.
+      actions.push({ label: t('unequip'), fn: () => { this.hooks.takeFromBag(bagIndex, index); this.openBackpack(bagIndex); } });
+    } else {
+      if (item.kind === 'potion') actions.push({ label: t('use'), fn: () => { this.hooks.usePotion(index); this.openBackpack(null); } });
+      else if (item.type !== 'container') actions.push({ label: t('equip'), fn: () => { this.hooks.equip(index); this.openBackpack(null); } });
+      // Offer to stash into the first nested bag, if any.
+      const bagIdx = this.inv.backpack.findIndex((it, j) => it && it.type === 'container' && j !== index);
+      if (bagIdx >= 0 && item.type !== 'container') {
+        actions.push({ label: '🎒 ' + this.inv.backpack[bagIdx].name, fn: () => { this.hooks.moveIntoBag(index, bagIdx); this.openBackpack(null); } });
+      }
+    }
+    actions.push({ label: t('drop'), fn: () => { this.hooks.dropItem(index, bagIndex); this.openBackpack(bagIndex); } });
+    this.openContext(item, actions);
   }
 
   renderAll() {
