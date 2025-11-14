@@ -1050,6 +1050,47 @@ export const NPCS = [
   },
 ];
 
+// A "remains buyer" in EVERY city: buys creature trophies (rat tail, demon horn,
+// dragon claw…) for small money so players have a steady grind-and-sell income.
+// Generated for each city so we don't hand-write one per town.
+const REMAINS_CITIES = ['rivertown', 'oakvale', 'stonehaven', 'frostpeak', 'sandport', 'westharbor', 'dragonreach'];
+const REMAINS_NAMES = {
+  rivertown: 'Tanner Gus', oakvale: 'Old Wregg', stonehaven: 'Grizzla',
+  frostpeak: 'Frostpelt Yan', sandport: 'Bonepicker Sett', westharbor: 'Salty Mara',
+  dragonreach: 'Scaler Dorn',
+};
+for (let i = 0; i < REMAINS_CITIES.length; i++) {
+  const city = REMAINS_CITIES[i];
+  NPCS.push({
+    id: `${city}_remains_buyer`, name: REMAINS_NAMES[city] || 'Remains Buyer', city, role: 'vendor',
+    model: 'merchant', color: 0x7a6a4a, district: 'food',
+    offset: { x: 14 + (i % 3) * 3, z: -14 - (i % 2) * 3 },
+    // Buys ONLY trophies, pays the trophy's value × sellMult (small money).
+    shop: { buyMult: 1, sellMult: 0.5, sells: {}, buys: { kinds: ['trophy'] } },
+    greeting: { es: 'Compro restos de bestias. Trae colas, cuernos, escamas...', en: 'I buy beast remains. Bring tails, horns, scales...' },
+    lines: {
+      es: ['Todo resto tiene su precio, por humilde que sea.', 'Los cazadores listos venden hasta las colas de rata.'],
+      en: ['Every scrap has a price, however humble.', 'Smart hunters sell even rat tails.'],
+    },
+  });
+}
+
+// A loose RENEGADE ORC standing in the wild near the orc camp. Non-aggressive,
+// gives a quest, but speaks an INVENTED orc tongue the player can't read — its
+// lines are gibberish words (orcLang), so the player shrugs and moves on unless
+// they puzzle out the quest. worldPos places it out in the world (no city).
+NPCS.push({
+  id: 'renegade_orc', name: 'Grakûl', role: 'questgiver',
+  model: 'orc', color: 0x6a8a4a,
+  worldPos: { x: 470, z: -200 },   // just outside the orc-territory zone
+  orcLang: true,                   // dialog rendered in gibberish orc speech
+  greeting: { es: 'Gruk... zog mâ thrazak?', en: 'Gruk... zog mâ thrazak?' },
+  lines: {
+    es: ['Brakka thûm gûl-gûl. Zarrak!', 'Mog... mog uzdûk thar. Nazg brakk?', 'Wagh! Thrak-thrak ozûl.'],
+    en: ['Brakka thûm gûl-gûl. Zarrak!', 'Mog... mog uzdûk thar. Nazg brakk?', 'Wagh! Thrak-thrak ozûl.'],
+  },
+});
+
 const NPC_MAP = new Map(NPCS.map((n) => [n.id, n]));
 
 export function getNpc(id) { return NPC_MAP.get(id); }
