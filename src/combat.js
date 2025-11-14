@@ -255,7 +255,8 @@ export class CombatSystem {
       const dx = c.pos.x - player.pos.x;
       const dz = c.pos.z - player.pos.z;
       const dist = Math.hypot(dx, dz);
-      const reach = player.weapon && player.weapon.type === 'bow' ? 18 : 4;
+      const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
+      const reach = ranged ? (player.attackRange || 14) : 4;
       if (dist > reach) continue;
       const dot = (dx * camDir.x + dz * camDir.z) / (dist || 1);
       if (dot < 0.4) continue;
@@ -265,7 +266,7 @@ export class CombatSystem {
     if (!best) return null;
 
     const w = player.weapon;
-    const atk = w ? w.atk : 5;
+    const atk = (w ? w.atk : 5) * (player.damageMul || 1);
     const elem = w ? w.element : 'none';
     const mult = elementMultiplier(elem, best.def.element);
     let dmg = Math.max(0, Math.round((atk - best.def.defense * 0.3) * mult));

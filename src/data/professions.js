@@ -14,7 +14,9 @@ export const PROFESSIONS = [
       es: 'Maestro del daño mágico a distancia. Único que usa varitas ofensivas. Mucho maná, poca defensa.',
       en: 'Master of ranged magic damage. The only one who wields offensive wands. High mana, low defense.',
     },
-    color: 0x6a3fb0,
+    color: 0x9b30ff,
+    spellColor: 0x9b30ff, // sorcerer magic is purple
+    damageMul: 1.2,       // hits 20% harder than the druid
     allowedWeapons: ['wand'],
     baseHp: 100,
     baseMana: 20,
@@ -120,13 +122,15 @@ export const PROFESSIONS = [
       es: 'Apoyo y sanación. Cura a sí mismo y a aliados, invoca criaturas y usa varitas curativas.',
       en: 'Support and healing. Heals self and allies, summons creatures, and wields healing wands.',
     },
-    color: 0x3faa6a,
+    color: 0x2ecc71,
+    spellColor: 0x2ecc71, // druid magic is green
+    damageMul: 1.0,
     allowedWeapons: ['wand'],
     baseHp: 100,
     baseMana: 20,
     hpPerLevel: 5,
     manaPerLevel: 25,
-    attackRange: 14,
+    attackRange: 17,       // 20% more reach than the sorcerer
     // Same caster rhythm as the mage: +3 mana every 2s, +1 hp every 5s.
     regen: { hp: { amount: 1, every: 5 }, mana: { amount: 3, every: 2 } },
     skills: [
@@ -185,6 +189,8 @@ export function professionStats(professionId, level) {
     maxHp: Math.round(p.baseHp + p.hpPerLevel * (lv - 1)),
     maxMana: Math.round(p.baseMana + p.manaPerLevel * (lv - 1)),
     attackRange: p.attackRange,
+    damageMul: p.damageMul || 1,
+    spellColor: p.spellColor || p.color,
   };
 }
 
