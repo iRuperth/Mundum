@@ -244,7 +244,35 @@ export class CombatSystem {
       }
     }
 
+    this._updateAllies(dt);
     for (const d of this.drops) d.spin(dt);
+  }
+
+  _updateAllies(dt) {
+    if (!this.allies || !this.allies.length) return;
+    for (let i = this.allies.length - 1; i >= 0; i--) {
+      const a = this.allies[i];
+      a.life -= dt;
+      a.model.update(dt, false);
+      a.model.group.rotation.y += dt;
+      a.hitTimer -= dt;
+      if (a.hitTimer <= 0) {
+        a.hitTimer = 1;
+        for (const c of this.creatures) {
+          if (c.dead || c.dying) continue;
+          if (Math.hypot(c.pos.x - a.pos.x, c.pos.z - a.pos.z) < 5) {
+            c.takeDamage(Math.max(1, Math.round(a.power)));
+            this.hooks.onCreatureHit(c, Math.round(a.power), 1);
+            break;
+          }
+        }
+      }
+      if (a.life <= 0) {
+        this.scene.remove(a.model.group);
+        a.model.dispose();
+        this.allies.splice(i, 1);
+      }
+    }
   }
 
   // Find the creature the player is aiming at, within melee/aim range.
@@ -274,6 +302,37 @@ export class CombatSystem {
     const killed = best.takeDamage(dmg);
     this.hooks.onCreatureHit(best, dmg, mult);
     return { creature: best, dmg, killed, mult };
+  }
+
+  // A summoned ally: a friendly creature model that periodically damages nearby
+  // enemies and expires after a while. Kept simple (no pathing).
+  spawnAlly(family, pos, level) {
+    const ally = {
+      pos: pos.clone ? pos.clone() : { x: pos.x, y: pos.y, z: pos.z },
+      model: buildCreatureModel(family || 'imp', { color: 0x66ccaa, scale: 0.8 }),
+      life: 18, hitTimer: 0, power: 6 + level * 0.8,
+    };
+    ally.model.group.position.copy(this.scene.position).set(ally.pos.x, this.world.heightAt(ally.pos.x, ally.pos.z), ally.pos.z);
+    this.scene.add(ally.model.group);
+    if (!this.allies) this.allies = [];
+    this.allies.push(ally);
+  }
+
+  // Apply skill damage to every creature within `radius` of a world point.
+  // Returns how many were hit (for feedback). Used by area/ranged spells.
+  damageArea(center, radius, amount) {
+    let hits = 0;
+    const r2 = radius * radius;
+    for (const c of this.creatures) {
+      if (c.dead || c.dying) continue;
+      const dx = c.pos.x - center.x, dz = c.pos.z - center.z;
+      if (dx * dx + dz * dz > r2) continue;
+      const dmg = Math.max(1, Math.round(amount - c.def.defense * 0.3));
+      c.takeDamage(dmg);
+      this.hooks.onCreatureHit(c, dmg, 1);
+      hits++;
+    }
+    return hits;
   }
 
   onKill(c, eventMult) {
