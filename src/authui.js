@@ -11,6 +11,7 @@
 
 import { getLang, setLang, t } from './i18n.js';
 import { PROFESSIONS } from './data/professions.js';
+import { renderPortrait } from './portrait.js';
 
 const MAX_CHARACTERS = 3;
 
@@ -327,7 +328,18 @@ export class AuthUI {
     const prof = PROFESSIONS.find((p) => p.id === c.profession);
     const profName = prof ? loc(prof.name) : (c.profession || '');
     const meta = `${profName} · ${tt('level')} ${c.level != null ? c.level : 1}`;
+
+    // A front-facing thumbnail rendered from this character's look.
+    const thumb = el('img', { class: 'auth-thumb' });
+    try {
+      thumb.src = renderPortrait({
+        sex: c.sex || 'male', hair: c.hair || 'short', nose: c.nose || 'small',
+        mouth: c.mouth || 'smile', colors: { ...DEFAULT_COLORS, ...(c.colors || {}) },
+      }, 96);
+    } catch (_) { /* webgl unavailable */ }
+
     return el('div', { class: 'auth-slot filled' }, [
+      thumb,
       el('div', { class: 'auth-slot-main', on: { click: () => this._play(c) } }, [
         el('div', { class: 'auth-slot-name', text: c.name || '?' }),
         el('div', { class: 'auth-slot-meta', text: meta }),
@@ -375,18 +387,26 @@ export class AuthUI {
     card.appendChild(el('h1', { text: 'MUNDUM' }));
     card.appendChild(el('p', { class: 'auth-sub', text: tt('createCharacter') }));
 
+    // Live 2D preview of the character, refreshed whenever a look option changes.
+    const portrait = el('img', { class: 'auth-portrait' });
+    const updatePortrait = () => {
+      try { portrait.src = renderPortrait(state, 220); } catch (_) { /* webgl unavailable */ }
+    };
+    card.appendChild(portrait);
+    updatePortrait();
+
     const nameInput = this._input('text', tt('name'), 16);
     nameInput.value = state.name;
     nameInput.addEventListener('input', () => { state.name = nameInput.value; });
     card.appendChild(this._labeled(tt('name'), nameInput));
 
-    card.appendChild(this._seg(SEX_OPTS, state.sex, (id) => { state.sex = id; }));
-    card.appendChild(this._seg(HAIR_OPTS, state.hair, (id) => { state.hair = id; }));
-    card.appendChild(this._seg(NOSE_OPTS, state.nose, (id) => { state.nose = id; }));
-    card.appendChild(this._seg(MOUTH_OPTS, state.mouth, (id) => { state.mouth = id; }));
+    card.appendChild(this._seg(SEX_OPTS, state.sex, (id) => { state.sex = id; updatePortrait(); }));
+    card.appendChild(this._seg(HAIR_OPTS, state.hair, (id) => { state.hair = id; updatePortrait(); }));
+    card.appendChild(this._seg(NOSE_OPTS, state.nose, (id) => { state.nose = id; updatePortrait(); }));
+    card.appendChild(this._seg(MOUTH_OPTS, state.mouth, (id) => { state.mouth = id; updatePortrait(); }));
 
     for (const part of COLOR_PARTS) {
-      card.appendChild(this._swatchRow(part, state.colors[part.key], (color) => { state.colors[part.key] = color; }));
+      card.appendChild(this._swatchRow(part, state.colors[part.key], (color) => { state.colors[part.key] = color; updatePortrait(); }));
     }
 
     card.appendChild(el('div', { class: 'auth-section', text: tt('chooseProfession') }));
