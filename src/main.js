@@ -16,7 +16,9 @@ import { Peers } from './peers.js';
 import { Net } from './net.js';
 import { audio } from './audio.js';
 import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore } from './data/items.js';
-import { professionStats, professionRegen, professionLevelGain, getProfession } from './data/professions.js';
+import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel } from './data/professions.js';
+import { SkillSystem } from './skills.js';
+import { Hotbar } from './hotbar.js';
 import { xpProgress, eventMultipliers } from './progression.js';
 import { QuestLog } from './questlog.js';
 import { WorldNpcs } from './worldNpcs.js';
@@ -181,6 +183,9 @@ let shakeAmount = 0;
 let lowHpActive = false;
 const lowHpVignette = document.getElementById('low-hp-vignette');
 const floatText = new FloatText(scene);
+const skillSystem = new SkillSystem(scene, world);
+const cooldowns = {}; // skill id -> { until, total } absolute cooldown timing
+let nowSec = 0;       // running game clock in seconds, advanced each frame
 
 let firstPerson = true;
 let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
@@ -310,8 +315,19 @@ function twoFingerDist() {
   return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 }
 
+const hotbar = new Hotbar(document.getElementById('hotbar'), {
+  getOptions: () => hotbarOptions(),
+  getCooldown: (entry) => cooldownState(entry),
+  getMana: () => player.mana,
+  activate: (entry) => {
+    if (entry.kind === 'skill') castSkill(entry);
+    else if (entry.kind === 'potion') useHotbarPotion(entry);
+  },
+});
+
 const controls = new Controls(canvas, ui, {
   onToggleCamera: () => { firstPerson = !firstPerson; introCam = 0; },
+  onHotbarKey: (digit) => { if (state === 'play' && player.alive) hotbar.activateKey(digit); },
   onLockChange: (locked) => {
     ui.hint.classList.toggle('hidden', locked);
     document.getElementById('crosshair').classList.toggle('hidden', !locked || state !== 'play');
@@ -547,6 +563,7 @@ async function startGame() {
   panelRefs.sidePanel.classList.remove('hidden');
   document.getElementById('chat').classList.remove('hidden');
   if (isTouch) document.getElementById('crosshair').classList.remove('hidden');
+  prefillHotbar();
   audio.unlock();
   audio.startMusic();
   if (!isTouch) lockPointer();
@@ -663,6 +680,83 @@ function doUsePotion(i) {
   gameUI.toast(`${item.icon || '🧪'} ${parts.join(' · ')}`, 'loot');
   recompute();
   gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+}
+
+// Cooldown state for a hotbar entry: { frac (1..0), remain (seconds) }.
+function cooldownState(entry) {
+  if (entry.kind === 'skill') {
+    const c = cooldowns[entry.id];
+    if (!c || nowSec >= c.until) return { frac: 0, remain: 0 };
+    const remain = c.until - nowSec;
+    return { frac: Math.max(0, Math.min(1, remain / c.total)), remain };
+  }
+  return { frac: 0, remain: 0 };
+}
+
+// Cast a profession skill from a hotbar entry, checking mana and cooldown.
+function castSkill(skill) {
+  if (player.level < (skill.minLevel || 1)) { gameUI.toast(t('needLevel', skill.minLevel), 'bad'); return; }
+  const cd = cooldowns[skill.id];
+  if (cd && nowSec < cd.until) return; // still cooling down
+  if ((skill.manaCost || 0) > player.mana) { gameUI.toast(t('noMana'), 'bad'); return; }
+
+  player.mana -= (skill.manaCost || 0);
+  cooldowns[skill.id] = { until: nowSec + (skill.cooldown || 1), total: skill.cooldown || 1 };
+  audio.sfx.attack();
+
+  skillSystem.cast(skill, player.pos, player.yaw, player.level, {
+    damageArea: (center, radius, amount) => {
+      const hits = combat.damageArea(center, radius, amount);
+      if (hits) shakeAmount = Math.min(0.5, shakeAmount + 0.12);
+    },
+    healPlayer: (amount) => {
+      player.hp = Math.min(player.maxHp, player.hp + amount);
+      spawnFloatText(player.pos, `+${amount}`, '#7bed6f');
+    },
+    spawnSummon: (family, pos) => combat.spawnAlly(family, pos, player.level),
+  });
+  gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+}
+
+// Use a potion referenced by a hotbar entry: find a matching one in the backpack.
+function useHotbarPotion(entry) {
+  const idx = inv.backpack.findIndex((it) => it && it.kind === 'potion' && it.baseId === entry.baseId);
+  if (idx < 0) { gameUI.toast(t('full'), 'bad'); return; }
+  doUsePotion(idx);
+}
+
+// What the player can put on the hotbar right now: usable skills + held potions.
+function hotbarOptions() {
+  const skills = skillsForLevel(player.profession, player.level).map((s) => ({
+    id: s.id, name: (s.name && (s.name[getLang()] || s.name.es)) || s.id,
+    icon: SKILL_ICON[s.kind] || '✨', manaCost: s.manaCost || 0,
+    cooldown: s.cooldown || 1, minLevel: s.minLevel || 1, kind: s.kind,
+    power: s.power, powerPerLevel: s.powerPerLevel, radius: s.radius,
+    summonFamily: s.summonFamily, summonCount: s.summonCount,
+  }));
+  const seen = new Set();
+  const potions = [];
+  for (const it of inv.backpack) {
+    if (it && it.kind === 'potion' && !seen.has(it.baseId)) {
+      seen.add(it.baseId);
+      potions.push({ id: it.baseId, baseId: it.baseId, name: (it.name && (it.name[getLang()] || it.name.es)) || it.baseId, icon: it.icon || '🧪' });
+    }
+  }
+  return { skills, potions };
+}
+
+const SKILL_ICON = { area: '🔥', melee: '💥', ranged: '🎯', heal: '💚', summon: '🐾' };
+
+// Put the vocation's available skills on the first hotbar slots so a new player
+// has their powers ready without configuring anything. Only fills empty slots.
+function prefillHotbar() {
+  const opts = hotbarOptions();
+  let slot = 0;
+  for (const sk of opts.skills) {
+    if (slot >= 10) break;
+    if (!hotbar.slots[slot]) hotbar.setSlot(slot, { kind: 'skill', ...sk });
+    slot++;
+  }
 }
 
 function doBuy(def, refresh) {
@@ -1060,6 +1154,9 @@ function tick() {
     updateWandBolt(dt);
     updateRangeRing(dt);
     updateViewModel(dt);
+    nowSec += dt;
+    skillSystem.update(dt);
+    hotbar.update();
     sendNetState();
 
     updateCamera();
