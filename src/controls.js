@@ -38,6 +38,10 @@ export class Controls {
       if (e.code === 'KeyC' && !e.repeat) opts.onToggleCamera();
       if (e.code === 'KeyI' && !e.repeat) opts.onToggleBag?.();
       if (e.code === 'KeyR' && !e.repeat) opts.onToggleRange?.();
+      // Number keys 1-9 and 0 trigger the matching hotbar slot.
+      if (!e.repeat && /^(Digit|Numpad)[0-9]$/.test(e.code)) {
+        opts.onHotbarKey?.(parseInt(e.code.slice(-1), 10));
+      }
       this.keys.add(e.code);
     });
     addEventListener('keyup', (e) => {
