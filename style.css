@@ -663,3 +663,15 @@ body.touch #crosshair { display: none !important; }
   content: '▸'; position: absolute; right: 2px; bottom: 0; font-size: 10px; opacity: .7;
 }
 .bp-cell { position: relative; }
+
+/* Character preview in creation, and thumbnails in character select */
+#auth-root .auth-portrait {
+  display: block; width: 150px; height: 150px; margin: 0 auto 8px;
+  border-radius: 14px; background: radial-gradient(circle at 50% 35%, #2a3566, #11162e);
+  border: 1px solid rgba(255,255,255,.15); object-fit: contain;
+}
+#auth-root .auth-thumb {
+  width: 52px; height: 52px; flex: 0 0 52px; border-radius: 10px;
+  background: radial-gradient(circle at 50% 35%, #2a3566, #11162e);
+  border: 1px solid rgba(255,255,255,.14); object-fit: contain;
+}
