@@ -643,6 +643,40 @@ export const QUESTS = [
     rewards: { gold: 30000, exp: 150000, items: ['demon_shield', 'demon_helmet'] },
     next: null, repeatable: false, dungeon: 'demonabyss',
   },
+
+  // "Wipe out the invading orcs" — a guard-captain job; the renegade orc Grakûl
+  // later gives a wordless follow-up (his lines are orc gibberish; the objective
+  // text in the log is what guides the player).
+  {
+    id: 'stonehaven_orc_invasion',
+    title: { es: 'La Invasión Orca', en: 'The Orc Invasion' },
+    desc: {
+      es: 'Los orcos asaltan los caminos de Stonehaven. Rompe su avanzada.',
+      en: 'Orcs are raiding the Stonehaven roads. Break their advance.',
+    },
+    giverNpc: 'stonehaven_guard', city: 'stonehaven', minLevel: 12,
+    objectives: [
+      { type: 'kill', target: 'orc', count: 20, desc: { es: 'Mata 20 orcos', en: 'Kill 20 orcs' } },
+      { type: 'collect', target: 'trophy_orc', count: 10, desc: { es: 'Reúne 10 dientes de orco', en: 'Collect 10 orc teeth' } },
+    ],
+    rewards: { gold: 400, exp: 1500, items: ['plate_armor'] },
+    next: 'renegade_orc_truce', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'renegade_orc_truce',
+    title: { es: 'El Orco Renegado', en: 'The Renegade Orc' },
+    desc: {
+      es: 'Un orco solitario, Grakûl, no ataca. No entiendes su lengua, pero señala al jefe de guerra.',
+      en: 'A lone orc, Grakûl, does not attack. You cannot understand his tongue, but he points to the warlord.',
+    },
+    giverNpc: 'renegade_orc', city: null, minLevel: 14,
+    objectives: [
+      { type: 'kill', target: 'orc', count: 1, desc: { es: 'Derrota al Señor de la Guerra Orco', en: 'Defeat the Orc Warlord' } },
+      { type: 'talk', target: 'renegade_orc', count: 1, desc: { es: 'Vuelve con Grakûl', en: 'Return to Grakûl' } },
+    ],
+    rewards: { gold: 800, exp: 3000, items: ['battle_axe'] },
+    next: null, repeatable: false, dungeon: null,
+  },
 ];
 
 // Fast id lookup.
