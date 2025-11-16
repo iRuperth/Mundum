@@ -277,17 +277,26 @@ export class CombatSystem {
 
   // Find the creature the player is aiming at, within melee/aim range.
   attack(player, camDir) {
+    // Aim direction projected onto the horizontal plane and normalized, so
+    // looking up or down does not throw off who you're pointing at.
+    let aimX = camDir.x, aimZ = camDir.z;
+    const aimLen = Math.hypot(aimX, aimZ) || 1;
+    aimX /= aimLen; aimZ /= aimLen;
+
+    const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
+    const reach = ranged ? (player.attackRange || 14) : 4;
+
     let best = null, bestScore = -1;
     for (const c of this.creatures) {
       if (c.dead || c.dying) continue;
       const dx = c.pos.x - player.pos.x;
       const dz = c.pos.z - player.pos.z;
       const dist = Math.hypot(dx, dz);
-      const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
-      const reach = ranged ? (player.attackRange || 14) : 4;
       if (dist > reach) continue;
-      const dot = (dx * camDir.x + dz * camDir.z) / (dist || 1);
-      if (dot < 0.4) continue;
+      const dot = (dx * aimX + dz * aimZ) / (dist || 1);
+      // Wide aim cone (~70deg) and a generous melee auto-hit at point blank, so
+      // pointing roughly at a creature in range reliably connects.
+      if (dot < 0.3 && dist > 1.6) continue;
       const score = dot - dist * 0.02;
       if (score > bestScore) { bestScore = score; best = c; }
     }
