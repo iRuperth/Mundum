@@ -53,6 +53,8 @@ export class DayNight {
   }
 
   timeFraction() {
+    // forceDay pins the world to midday for now, regardless of real time.
+    if (this.forceDay) return 0.5;
     const d = new Date();
     return (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()) / 86400;
   }
