@@ -96,6 +96,7 @@ initLang();
 
 const world = new World(scene, SEED, isTouch ? 3 : 4);
 const daynight = new DayNight(scene);
+daynight.forceDay = true; // keep the world in daytime for now
 placeCities(world);
 const cityProps = buildCities(scene, world).props;
 const dungeonBuild = buildDungeonEntrances(scene, world);
@@ -242,6 +243,7 @@ const gameUI = new UI(panelRefs, inv, depot, {
   usePotion: (i) => doUsePotion(i),
   moveIntoBag: (from, bag) => { inv.moveIntoBag(from, bag); recompute(); },
   takeFromBag: (bag, inner) => { if (!inv.takeFromBag(bag, inner)) gameUI.toast(t('full'), 'bad'); recompute(); },
+  assignHotbar: (item) => assignPotionToHotbar(item),
   buy: (def, refresh) => doBuy(def, refresh),
   depositItem: (city, i) => { const it = inv.removeFromBackpack(i); if (it) depot.deposit(city, it); recompute(); },
   withdrawItem: (city, i) => {
@@ -736,13 +738,32 @@ function hotbarOptions() {
   }));
   const seen = new Set();
   const potions = [];
-  for (const it of inv.backpack) {
+  const addPotion = (it) => {
     if (it && it.kind === 'potion' && !seen.has(it.baseId)) {
       seen.add(it.baseId);
-      potions.push({ id: it.baseId, baseId: it.baseId, name: (it.name && (it.name[getLang()] || it.name.es)) || it.baseId, icon: it.icon || '🧪' });
+      potions.push({ id: it.baseId, baseId: it.baseId, name: potionName(it), icon: it.icon || '🧪' });
     }
+  };
+  for (const it of inv.backpack) {
+    addPotion(it);
+    if (it && it.contents) for (const inner of it.contents) addPotion(inner);
   }
   return { skills, potions };
+}
+
+// A potion's display name handles both string and {es,en} shapes.
+function potionName(it) {
+  if (!it) return '';
+  if (typeof it.name === 'string') return it.name;
+  return (it.name && (it.name[getLang()] || it.name.es)) || it.baseId || '';
+}
+
+// Assign a potion item to the first empty hotbar slot (used from the item menu).
+function assignPotionToHotbar(item) {
+  let slot = hotbar.slots.findIndex((e) => !e);
+  if (slot < 0) slot = 9; // all full: replace the last slot
+  hotbar.setSlot(slot, { kind: 'potion', id: item.baseId, baseId: item.baseId, name: potionName(item), icon: item.icon || '🧪' });
+  gameUI.toast(`${item.icon || '🧪'} → ${slot === 9 ? 0 : slot + 1}`, 'loot');
 }
 
 const SKILL_ICON = { area: '🔥', melee: '💥', ranged: '🎯', heal: '💚', summon: '🐾' };
@@ -1012,10 +1033,16 @@ function updateCamera() {
     const side = 1 - 2 * introCam; // +1 behind, -1 front
     const cx = player.pos.x + Math.sin(player.yaw) * cp * d * side;
     const cz = player.pos.z + Math.cos(player.yaw) * cp * d * side;
-    let cy = eyeY - sp * d + 0.35 + introCam * 0.4;
+    // Minecraft-style: raise the camera and aim past the hero's shoulder so the
+    // body sits low in frame and the crosshair points at clear ground ahead,
+    // not at the character's head.
+    let cy = eyeY - sp * d + 0.9 + introCam * 0.4;
     cy = Math.max(cy, world.heightAt(cx, cz) + 0.35, WATER_LEVEL + 0.25);
     camera.position.set(cx, cy, cz);
-    camera.lookAt(player.pos.x, eyeY - 0.15, player.pos.z);
+    const fwd = introCam > 0.5 ? 0 : 2.2; // look ahead once we're behind the hero
+    const lookX = player.pos.x - Math.sin(player.yaw) * fwd;
+    const lookZ = player.pos.z - Math.cos(player.yaw) * fwd;
+    camera.lookAt(lookX, eyeY + player.pitch * 2 - 0.2, lookZ);
   }
   if (shakeAmount > 0.001) {
     camera.position.x += (combat.rngFloat() - 0.5) * shakeAmount;
