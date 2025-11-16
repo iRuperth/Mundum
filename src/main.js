@@ -1218,10 +1218,9 @@ function doAttack() {
   viewSwingT = 0.3;
   audio.sfx.attack();
   flashRangeRing(); // show the reach briefly on every swing
-  // Aim where you're actually looking: full camera direction (yaw + pitch), not
-  // just the horizontal heading. combat.attack picks the creature in that cone.
+  // Raycast from the crosshair (camera center) so you hit exactly what you aim at.
   camera.getWorldDirection(camDir);
-  const result = combat.attack(player, camDir);
+  const result = combat.attack(player, camDir, camera.position);
   if (isWand) {
     player.mana = Math.max(0, (player.mana || 0) - WAND_MANA_COST);
     castWandBolt(camDir, result && result.creature);

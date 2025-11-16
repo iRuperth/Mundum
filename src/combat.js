@@ -276,29 +276,38 @@ export class CombatSystem {
   }
 
   // Find the creature the player is aiming at, within melee/aim range.
-  attack(player, camDir) {
-    // Aim direction projected onto the horizontal plane and normalized, so
-    // looking up or down does not throw off who you're pointing at.
-    let aimX = camDir.x, aimZ = camDir.z;
-    const aimLen = Math.hypot(aimX, aimZ) || 1;
-    aimX /= aimLen; aimZ /= aimLen;
-
+  attack(player, camDir, rayOrigin) {
     const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
     const reach = ranged ? (player.attackRange || 14) : 4;
 
-    let best = null, bestScore = -1;
+    // Raycast from the crosshair (camera center) and hit the creature whose body
+    // sphere the ray passes through, nearest first. This makes the attack hit
+    // exactly what's under the crosshair instead of "whoever is roughly ahead".
+    const ox = rayOrigin ? rayOrigin.x : player.pos.x;
+    const oy = rayOrigin ? rayOrigin.y : player.pos.y + 1.4;
+    const oz = rayOrigin ? rayOrigin.z : player.pos.z;
+    const dlen = Math.hypot(camDir.x, camDir.y, camDir.z) || 1;
+    const rx = camDir.x / dlen, ry = camDir.y / dlen, rz = camDir.z / dlen;
+
+    let best = null, bestT = Infinity;
     for (const c of this.creatures) {
       if (c.dead || c.dying) continue;
-      const dx = c.pos.x - player.pos.x;
-      const dz = c.pos.z - player.pos.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > reach) continue;
-      const dot = (dx * aimX + dz * aimZ) / (dist || 1);
-      // Wide aim cone (~70deg) and a generous melee auto-hit at point blank, so
-      // pointing roughly at a creature in range reliably connects.
-      if (dot < 0.3 && dist > 1.6) continue;
-      const score = dot - dist * 0.02;
-      if (score > bestScore) { bestScore = score; best = c; }
+      // Horizontal reach is measured from the player, not the camera.
+      const pdx = c.pos.x - player.pos.x, pdz = c.pos.z - player.pos.z;
+      if (Math.hypot(pdx, pdz) > reach) continue;
+
+      // Sphere centered on the creature's torso, radius scaled to its size.
+      const r = 0.7 * (c.def.variantScale || 1) + 0.35;
+      const cx = c.pos.x, cy = c.pos.y + 0.9 * (c.def.variantScale || 1), cz = c.pos.z;
+      const mx = ox - cx, my = oy - cy, mz = oz - cz;
+      const b = mx * rx + my * ry + mz * rz;
+      const cc = mx * mx + my * my + mz * mz - r * r;
+      if (cc > 0 && b > 0) continue;          // ray points away from the sphere
+      const disc = b * b - cc;
+      if (disc < 0) continue;                 // ray misses the sphere
+      const tHit = -b - Math.sqrt(disc);      // nearest intersection distance
+      const t = tHit < 0 ? 0 : tHit;
+      if (t < bestT) { bestT = t; best = c; }
     }
     if (!best) return null;
 
