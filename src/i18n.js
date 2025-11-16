@@ -20,7 +20,7 @@ const STRINGS = {
     mouthOpen: 'Abierta',
     phaseTag: 'Fase 2 · Combate, criaturas e items',
 
-    hintDesktop: 'WASD moverse · Espacio saltar · Shift correr · Clic derecho atacar · Q habilidad · C cámara · E interactuar · I mochila · Enter chat',
+    hintDesktop: 'WASD moverse · Espacio saltar · Shift correr · Clic derecho atacar · 1-0 habilidades · C cámara · E interactuar · I mochila · Enter chat',
     level: 'Nivel',
     hp: 'Vida',
     mana: 'Maná',
@@ -28,6 +28,7 @@ const STRINGS = {
     restores: 'Restaura',
     noMana: 'Sin maná',
     assignSlot: 'Asignar a esta tecla',
+    toHotbar: 'Poner en la barra',
     empty: 'Vacío',
     alreadyFull: 'Ya estás al máximo',
     profKnight: 'Caballero',
@@ -135,7 +136,7 @@ const STRINGS = {
     mouthOpen: 'Open',
     phaseTag: 'Phase 2 · Combat, creatures and items',
 
-    hintDesktop: 'WASD move · Space jump · Shift run · Right click attack · Q skill · C camera · E interact · I backpack · Enter chat',
+    hintDesktop: 'WASD move · Space jump · Shift run · Right click attack · 1-0 skills · C camera · E interact · I backpack · Enter chat',
     level: 'Level',
     hp: 'HP',
     mana: 'Mana',
@@ -143,6 +144,7 @@ const STRINGS = {
     restores: 'Restores',
     noMana: 'Out of mana',
     assignSlot: 'Assign to this key',
+    toHotbar: 'Add to action bar',
     empty: 'Empty',
     alreadyFull: 'Already at full',
     profKnight: 'Knight',

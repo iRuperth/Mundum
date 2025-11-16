@@ -162,8 +162,12 @@ export class UI {
       // Inside a nested bag: take it out.
       actions.push({ label: t('unequip'), fn: () => { this.hooks.takeFromBag(bagIndex, index); this.openBackpack(bagIndex); } });
     } else {
-      if (item.kind === 'potion') actions.push({ label: t('use'), fn: () => { this.hooks.usePotion(index); this.openBackpack(null); } });
-      else if (item.type !== 'container') actions.push({ label: t('equip'), fn: () => { this.hooks.equip(index); this.openBackpack(null); } });
+      if (item.kind === 'potion') {
+        actions.push({ label: t('use'), fn: () => { this.hooks.usePotion(index); this.openBackpack(null); } });
+        actions.push({ label: '⌨ ' + t('toHotbar'), fn: () => { this.hooks.assignHotbar(item); this.closeContext(); } });
+      } else if (item.type !== 'container') {
+        actions.push({ label: t('equip'), fn: () => { this.hooks.equip(index); this.openBackpack(null); } });
+      }
       // Offer to stash into the first nested bag, if any.
       const bagIdx = this.inv.backpack.findIndex((it, j) => it && it.type === 'container' && j !== index);
       if (bagIdx >= 0 && item.type !== 'container') {
@@ -187,10 +191,10 @@ export class UI {
     const primary = item.kind === 'potion'
       ? { label: t('use'), fn: () => this.hooks.usePotion(i) }
       : { label: t('equip'), fn: () => this.hooks.equip(i) };
-    this.openContext(item, [
-      primary,
-      { label: t('drop'), fn: () => this.hooks.dropItem(i) },
-    ]);
+    const actions = [primary];
+    if (item.kind === 'potion') actions.push({ label: '⌨ ' + t('toHotbar'), fn: () => this.hooks.assignHotbar(item) });
+    actions.push({ label: t('drop'), fn: () => this.hooks.dropItem(i) });
+    this.openContext(item, actions);
   }
 
   onSlotClick(slot) {
