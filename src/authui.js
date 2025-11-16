@@ -361,11 +361,29 @@ export class AuthUI {
   }
 
   async _deleteCharacter(c) {
-    if (!window.confirm(tt('confirmDelete'))) return;
+    const ok = await this._confirm(`${tt('confirmDelete')}\n${c.name || ''}`);
+    if (!ok) return;
     if (this.auth && this.auth.isAvailable() && c.id != null) {
       try { await this.auth.deleteCharacter(c.id); } catch (_) { /* ignore */ }
     }
     await this._renderSelect();
+  }
+
+  // An in-game confirmation dialog (resolves true/false), styled like the rest
+  // of the UI instead of the browser's native confirm popup.
+  _confirm(message) {
+    return new Promise((resolve) => {
+      const overlay = el('div', { class: 'auth-confirm' });
+      const box = el('div', { class: 'auth-confirm-box' });
+      box.appendChild(el('p', { class: 'auth-confirm-msg', text: message }));
+      const row = el('div', { class: 'auth-confirm-row' });
+      const done = (v) => { overlay.remove(); resolve(v); };
+      row.appendChild(el('button', { class: 'auth-confirm-yes', text: tt('deleteCharacter'), on: { click: () => done(true) } }));
+      row.appendChild(el('button', { class: 'auth-confirm-no', text: tt('back'), on: { click: () => done(false) } }));
+      box.appendChild(row);
+      overlay.appendChild(box);
+      (document.getElementById('auth-root') || document.body).appendChild(overlay);
+    });
   }
 
   // Screen: character create (look + profession).
