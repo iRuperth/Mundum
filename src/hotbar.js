@@ -32,6 +32,16 @@ export class Hotbar {
       cell.addEventListener('contextmenu', (e) => { e.preventDefault(); this.openAssign(i, e); });
       this._bindLongPress(cell, i);
 
+      // Accept items dragged from the backpack (desktop HTML5 drag).
+      cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drop-hover'); });
+      cell.addEventListener('dragleave', () => cell.classList.remove('drop-hover'));
+      cell.addEventListener('drop', (e) => {
+        e.preventDefault();
+        cell.classList.remove('drop-hover');
+        const item = this.hooks.getDragItem && this.hooks.getDragItem();
+        if (item) this.assignItem(i, item);
+      });
+
       this.root.appendChild(cell);
       this.cells.push({ cell, cd, cdText, icon });
     }
@@ -49,6 +59,16 @@ export class Hotbar {
   }
 
   setSlot(i, entry) { this.slots[i] = entry; this.render(); }
+
+  // Put a dragged potion item into slot i.
+  assignItem(i, item) {
+    if (!item) return;
+    this.setSlot(i, {
+      kind: 'potion', id: item.baseId, baseId: item.baseId,
+      name: this.hooks.itemName ? this.hooks.itemName(item) : (item.baseId || ''),
+      icon: item.icon || '🧪',
+    });
+  }
 
   activate(i) {
     const entry = this.slots[i];
