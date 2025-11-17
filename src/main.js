@@ -244,6 +244,7 @@ const gameUI = new UI(panelRefs, inv, depot, {
   moveIntoBag: (from, bag) => { inv.moveIntoBag(from, bag); recompute(); },
   takeFromBag: (bag, inner) => { if (!inv.takeFromBag(bag, inner)) gameUI.toast(t('full'), 'bad'); recompute(); },
   assignHotbar: (item) => assignPotionToHotbar(item),
+  assignDraggedToSlot: (slotIndex, item) => hotbar.assignItem(slotIndex, item),
   buy: (def, refresh) => doBuy(def, refresh),
   depositItem: (city, i) => { const it = inv.removeFromBackpack(i); if (it) depot.deposit(city, it); recompute(); },
   withdrawItem: (city, i) => {
@@ -321,6 +322,8 @@ const hotbar = new Hotbar(document.getElementById('hotbar'), {
   getOptions: () => hotbarOptions(),
   getCooldown: (entry) => cooldownState(entry),
   getMana: () => player.mana,
+  getDragItem: () => gameUI.dragItem,
+  itemName: (item) => potionName(item),
   activate: (entry) => {
     if (entry.kind === 'skill') castSkill(entry);
     else if (entry.kind === 'potion') useHotbarPotion(entry);

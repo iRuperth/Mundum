@@ -132,7 +132,16 @@ export class UI {
           if (item.type === 'container' && !isNested) { this.openBackpack(i); return; }
           this.onBackpackItemAction(item, i, bagIndex);
         });
+        // Double left click uses the item directly (drink a potion / equip gear).
+        cell.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          if (bagIndex != null) return;
+          if (item.kind === 'potion') { this.hooks.usePotion(i); this.openBackpack(null); }
+          else if (item.type !== 'container') { this.hooks.equip(i); this.openBackpack(null); }
+        });
         this.attachTooltip(cell, item);
+        // Potions can be dragged onto a hotbar slot.
+        if (item.kind === 'potion') this._makeDraggable(cell, item);
       }
       win.appendChild(cell);
     }
@@ -208,6 +217,51 @@ export class UI {
   attachTooltip(el, item) {
     el.addEventListener('pointerenter', () => this.showTooltip(item, el));
     el.addEventListener('pointerleave', () => this.hideTooltip());
+  }
+
+  // Make a backpack cell draggable onto the hotbar. Works with the native HTML5
+  // drag (desktop) and a touch fallback. The dragged item is read by the hotbar
+  // drop handlers via this.dragItem.
+  _makeDraggable(el, item) {
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('dragstart', (e) => {
+      this.dragItem = item;
+      try { e.dataTransfer.setData('text/plain', item.baseId || ''); e.dataTransfer.effectAllowed = 'copy'; } catch (_) { /* ignore */ }
+    });
+    el.addEventListener('dragend', () => { this.dragItem = null; });
+
+    // Touch fallback: long-touch starts a drag; dropping over a hotbar slot
+    // assigns it. A floating ghost follows the finger.
+    let ghost = null, dragging = false, startT = null;
+    el.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      startT = setTimeout(() => {
+        dragging = true; this.dragItem = item;
+        ghost = document.createElement('div');
+        ghost.className = 'drag-ghost'; ghost.textContent = itemIcon(item);
+        document.body.appendChild(ghost);
+        moveGhost(t.clientX, t.clientY);
+      }, 250);
+    }, { passive: true });
+    const moveGhost = (x, y) => { if (ghost) { ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; } };
+    el.addEventListener('touchmove', (e) => {
+      if (!dragging) { clearTimeout(startT); return; }
+      const t = e.touches[0]; moveGhost(t.clientX, t.clientY);
+    }, { passive: true });
+    el.addEventListener('touchend', (e) => {
+      clearTimeout(startT);
+      if (!dragging) return;
+      dragging = false;
+      const t = e.changedTouches[0];
+      const target = document.elementFromPoint(t.clientX, t.clientY);
+      const slotEl = target && target.closest && target.closest('.hb-slot');
+      if (slotEl && this.hooks.assignDraggedToSlot) {
+        const idx = [...slotEl.parentNode.children].indexOf(slotEl);
+        this.hooks.assignDraggedToSlot(idx, item);
+      }
+      if (ghost) { ghost.remove(); ghost = null; }
+      this.dragItem = null;
+    });
   }
 
   itemDetails(item) {
