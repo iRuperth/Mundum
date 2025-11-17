@@ -224,8 +224,12 @@ export class UI {
   // follows the cursor and the slot under it on release receives the item.
   _makeDraggable(el, item) {
     el.style.touchAction = 'none';
+    el.style.userSelect = 'none';
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault(); // stop text selection / native image drag
+      // Capture the pointer so moves keep firing even over the scrollable list.
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
       const startX = e.clientX, startY = e.clientY;
       let ghost = null, dragging = false;
 
@@ -249,8 +253,10 @@ export class UI {
       };
 
       const onUp = (ev) => {
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+        el.removeEventListener('pointercancel', onUp);
+        try { el.releasePointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
         document.querySelectorAll('#hotbar .hb-slot.drop-hover').forEach((s) => s.classList.remove('drop-hover'));
         if (dragging) {
           const over = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -264,8 +270,10 @@ export class UI {
         this.dragItem = null;
       };
 
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
+      // With pointer capture the move/up events fire on the capturing element.
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointercancel', onUp);
     });
   }
 
