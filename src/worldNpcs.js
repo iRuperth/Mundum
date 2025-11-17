@@ -5,7 +5,8 @@ import { CITIES } from './cities.js';
 import { WATER_LEVEL } from './world.js';
 
 const NPC_RADIUS = 2.6;
-const DRY_MARGIN = 0.8; // keep NPCs this far above the waterline
+const DRY_MARGIN = 0.8;        // keep NPCs this far above the waterline
+const CITY_PLAZA_RADIUS = 26; // matches CITY_RADIUS in cities.js
 
 // Places every NPC on its city plaza and shows a floating '!' over quest
 // givers that have something available.
@@ -30,7 +31,12 @@ export class WorldNpcs {
         x += (city.x - x) * 0.2;
         z += (city.z - z) * 0.2;
       }
-      const y = this.world.heightAt(x, z);
+      // The city plaza is a flat disc at the center height; NPCs standing on it
+      // must use the plaza top, not the lower natural ground beneath, or they
+      // sink into it. Plaza top = centerHeight - 0.1 + 0.15 (half its 0.3 thick).
+      const plazaTop = this.world.heightAt(city.x, city.z) + 0.05;
+      const onPlaza = Math.hypot(x - city.x, z - city.z) < CITY_PLAZA_RADIUS;
+      const y = onPlaza ? plazaTop : this.world.heightAt(x, z);
       const model = buildNpcModel(npc.model, { color: npc.color, scale: 1 });
       model.group.position.set(x, y, z);
       model.group.rotation.y = Math.atan2(city.x - x, city.z - z);
@@ -41,7 +47,7 @@ export class WorldNpcs {
       mark.visible = false;
       this.scene.add(mark);
 
-      this.entries.push({ npc, model, x, z, mark });
+      this.entries.push({ npc, model, x, z, y, mark });
     }
   }
 
@@ -61,7 +67,8 @@ export class WorldNpcs {
     for (const e of this.entries) {
       e.model.update(dt);
       e.mark.rotation.y += dt * 2;
-      e.mark.position.y = this.world.heightAt(e.x, e.z) + 2.2 + Math.sin(performance.now() * 0.004) * 0.12;
+      // Float the marker above the NPC's actual standing height (plaza or ground).
+      e.mark.position.y = e.y + 2.2 + Math.sin(performance.now() * 0.004) * 0.12;
     }
   }
 }
