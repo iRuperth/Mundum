@@ -60,14 +60,16 @@ export class Hotbar {
 
   setSlot(i, entry) { this.slots[i] = entry; this.render(); }
 
-  // Put a dragged potion item into slot i.
+  // Put a dragged item into slot i. The action bar holds usable items: only
+  // potions/food go here (equipment is used from the inventory, not a hotkey).
   assignItem(i, item) {
-    if (!item) return;
+    if (!item || item.kind !== 'potion') return false;
     this.setSlot(i, {
       kind: 'potion', id: item.baseId, baseId: item.baseId,
       name: this.hooks.itemName ? this.hooks.itemName(item) : (item.baseId || ''),
       icon: item.icon || '🧪',
     });
+    return true;
   }
 
   activate(i) {

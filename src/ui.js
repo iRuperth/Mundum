@@ -140,8 +140,8 @@ export class UI {
           else if (item.type !== 'container') { this.hooks.equip(i); this.openBackpack(null); }
         });
         this.attachTooltip(cell, item);
-        // Potions can be dragged onto a hotbar slot.
-        if (item.kind === 'potion') this._makeDraggable(cell, item);
+        // Any item can be dragged from the backpack onto a hotbar slot.
+        this._makeDraggable(cell, item);
       }
       win.appendChild(cell);
     }
@@ -219,48 +219,53 @@ export class UI {
     el.addEventListener('pointerleave', () => this.hideTooltip());
   }
 
-  // Make a backpack cell draggable onto the hotbar. Works with the native HTML5
-  // drag (desktop) and a touch fallback. The dragged item is read by the hotbar
-  // drop handlers via this.dragItem.
+  // Make a backpack cell draggable onto the hotbar. Uses pointer events (works
+  // for mouse and touch alike) rather than the flaky native HTML5 drag: a ghost
+  // follows the cursor and the slot under it on release receives the item.
   _makeDraggable(el, item) {
-    el.setAttribute('draggable', 'true');
-    el.addEventListener('dragstart', (e) => {
-      this.dragItem = item;
-      try { e.dataTransfer.setData('text/plain', item.baseId || ''); e.dataTransfer.effectAllowed = 'copy'; } catch (_) { /* ignore */ }
-    });
-    el.addEventListener('dragend', () => { this.dragItem = null; });
+    el.style.touchAction = 'none';
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      const startX = e.clientX, startY = e.clientY;
+      let ghost = null, dragging = false;
 
-    // Touch fallback: long-touch starts a drag; dropping over a hotbar slot
-    // assigns it. A floating ghost follows the finger.
-    let ghost = null, dragging = false, startT = null;
-    el.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
-      startT = setTimeout(() => {
-        dragging = true; this.dragItem = item;
-        ghost = document.createElement('div');
-        ghost.className = 'drag-ghost'; ghost.textContent = itemIcon(item);
-        document.body.appendChild(ghost);
-        moveGhost(t.clientX, t.clientY);
-      }, 250);
-    }, { passive: true });
-    const moveGhost = (x, y) => { if (ghost) { ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; } };
-    el.addEventListener('touchmove', (e) => {
-      if (!dragging) { clearTimeout(startT); return; }
-      const t = e.touches[0]; moveGhost(t.clientX, t.clientY);
-    }, { passive: true });
-    el.addEventListener('touchend', (e) => {
-      clearTimeout(startT);
-      if (!dragging) return;
-      dragging = false;
-      const t = e.changedTouches[0];
-      const target = document.elementFromPoint(t.clientX, t.clientY);
-      const slotEl = target && target.closest && target.closest('.hb-slot');
-      if (slotEl && this.hooks.assignDraggedToSlot) {
-        const idx = [...slotEl.parentNode.children].indexOf(slotEl);
-        this.hooks.assignDraggedToSlot(idx, item);
-      }
-      if (ghost) { ghost.remove(); ghost = null; }
-      this.dragItem = null;
+      const onMove = (ev) => {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+          dragging = true;
+          this.dragItem = item;
+          this.hideTooltip();
+          ghost = document.createElement('div');
+          ghost.className = 'drag-ghost';
+          ghost.textContent = itemIcon(item);
+          document.body.appendChild(ghost);
+        }
+        ghost.style.left = ev.clientX + 'px';
+        ghost.style.top = ev.clientY + 'px';
+        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+        const slotEl = over && over.closest && over.closest('.hb-slot');
+        document.querySelectorAll('#hotbar .hb-slot.drop-hover').forEach((s) => s.classList.remove('drop-hover'));
+        if (slotEl) slotEl.classList.add('drop-hover');
+      };
+
+      const onUp = (ev) => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.querySelectorAll('#hotbar .hb-slot.drop-hover').forEach((s) => s.classList.remove('drop-hover'));
+        if (dragging) {
+          const over = document.elementFromPoint(ev.clientX, ev.clientY);
+          const slotEl = over && over.closest && over.closest('.hb-slot');
+          if (slotEl && this.hooks.assignDraggedToSlot) {
+            const idx = [...slotEl.parentNode.children].indexOf(slotEl);
+            this.hooks.assignDraggedToSlot(idx, item);
+          }
+        }
+        if (ghost) ghost.remove();
+        this.dragItem = null;
+      };
+
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
     });
   }
 
