@@ -150,6 +150,34 @@ export class UI {
     }
     card.appendChild(win);
 
+    // Coin stacks (Tibia-style): each tier is a slot showing its count. Right
+    // click (or long press) converts 100 into 1 of the next tier up.
+    if (!isNested) {
+      const stacks = this.inv.coinStacks();
+      if (stacks.length) {
+        const coinRow = document.createElement('div');
+        coinRow.className = 'coin-row';
+        for (const coin of stacks) {
+          const cc = document.createElement('div');
+          cc.className = 'coin-cell' + (coin.count >= 100 && coin.tier < 4 ? ' convertible' : '');
+          const hex = '#' + coin.color.toString(16).padStart(6, '0');
+          const label = coin.name[getLang()] || coin.name.es;
+          // A little pile of coins (three stacked discs) in the tier's colour,
+          // then the count and the coin's name so it reads at a glance.
+          cc.innerHTML =
+            `<span class="coin-pile" style="--coin:${hex}"><i></i><i></i><i></i></span>` +
+            `<span class="coin-info"><span class="coin-n">${coin.count}</span>` +
+            `<span class="coin-name">${label}</span></span>`;
+          cc.title = label + (coin.count >= 100 && coin.tier < 4 ? ' · ' + t('convertCoin') : '');
+          const convert = () => { if (this.hooks.convertCoin(coin.id)) this.openBackpack(null); };
+          cc.addEventListener('contextmenu', (e) => { e.preventDefault(); convert(); });
+          this._bindCoinLongPress(cc, convert);
+          coinRow.appendChild(cc);
+        }
+        card.appendChild(coinRow);
+      }
+    }
+
     const row = document.createElement('div');
     row.className = 'ctx-actions';
     if (isNested) {
@@ -220,6 +248,15 @@ export class UI {
   attachTooltip(el, item) {
     el.addEventListener('pointerenter', () => this.showTooltip(item, el));
     el.addEventListener('pointerleave', () => this.hideTooltip());
+  }
+
+  // Long press on touch fires the same action as right click (coin conversion).
+  _bindCoinLongPress(el, fn) {
+    let timer = null;
+    el.addEventListener('touchstart', () => { timer = setTimeout(fn, 450); }, { passive: true });
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    el.addEventListener('touchend', cancel);
+    el.addEventListener('touchmove', cancel);
   }
 
   // Make a backpack cell draggable onto the hotbar. Uses pointer events (works

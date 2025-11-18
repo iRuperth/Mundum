@@ -677,6 +677,38 @@ body.touch #crosshair { display: none !important; }
 }
 .bp-cell { position: relative; }
 
+/* Coin stacks under the backpack grid (Tibia-style: bronze→silver→gold→…) */
+.coin-row {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin: 2px 0 12px; padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.1);
+}
+.coin-cell {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 9px; border-radius: 8px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1);
+  cursor: default; user-select: none;
+}
+.coin-cell.convertible { cursor: pointer; border-color: rgba(241,196,64,.5); }
+.coin-cell.convertible:hover { background: rgba(241,196,64,.12); }
+
+/* A small pile of coins: three metallic discs stacked and fanned out, tinted
+   with the tier colour passed in via --coin. */
+.coin-pile { position: relative; width: 24px; height: 20px; flex: 0 0 auto; }
+.coin-pile i {
+  position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff8, var(--coin) 55%, #0006);
+  border: 1px solid rgba(0,0,0,.35);
+  box-shadow: 0 1px 1px rgba(0,0,0,.4);
+}
+.coin-pile i:nth-child(1) { left: 0;  bottom: 0; }
+.coin-pile i:nth-child(2) { left: 6px; bottom: 2px; }
+.coin-pile i:nth-child(3) { left: 3px; bottom: 6px; }
+
+.coin-info { display: flex; flex-direction: column; line-height: 1.1; }
+.coin-cell .coin-n { font-size: 13px; font-weight: 700; color: #fff; }
+.coin-cell .coin-name { font-size: 10px; opacity: .7; }
+
 /* Character preview in creation, and thumbnails in character select */
 #auth-root .auth-portrait {
   display: block; width: 150px; height: 150px; margin: 0 auto 8px;

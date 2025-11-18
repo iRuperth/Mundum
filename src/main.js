@@ -250,6 +250,7 @@ const gameUI = new UI(panelRefs, inv, depot, {
   takeFromBag: (bag, inner) => { if (!inv.takeFromBag(bag, inner)) gameUI.toast(t('full'), 'bad'); recompute(); },
   assignHotbar: (item) => assignPotionToHotbar(item),
   assignDraggedToSlot: (slotIndex, item) => hotbar.assignItem(slotIndex, item),
+  convertCoin: (id) => { const ok = inv.convertCoin(id); if (ok) { audio.sfx.pickup(); recompute(); } return ok; },
   buy: (def, refresh) => doBuy(def, refresh),
   depositItem: (city, i) => { const it = inv.removeFromBackpack(i); if (it) depot.deposit(city, it); recompute(); },
   withdrawItem: (city, i) => {
@@ -382,7 +383,7 @@ const combat = new CombatSystem(scene, world, {
     if (changed.length) onQuestProgress();
   },
   onLoot: (loot) => {
-    if (loot.gold) { inv.gold += loot.gold; player.gold = inv.gold; gameUI.toast(`+${loot.gold} ${t('gold')} 💰`, 'loot'); }
+    if (loot.gold) { inv.addGold(loot.gold); player.gold = inv.gold; gameUI.toast(`+${loot.gold} ${t('gold')} 💰`, 'loot'); }
   },
 });
 
@@ -621,7 +622,7 @@ async function startGame() {
   // inspect live drop positions without touching gameplay otherwise.
   if (new URLSearchParams(location.search).has('debug')) {
     window.__mundum = {
-      player, inv, combat, hotbar, charStats, skillPanel,
+      player, inv, combat, hotbar, charStats, skillPanel, ui: gameUI,
       toss: (id) => { const it = resolveItem(id, () => 0.5, player.level, getLang()); if (it) tossItemForward(it); return it; },
       castSkill: (s) => castSkill(s), toggleSkillPanel,
       give: (id) => { const it = resolveItem(id, () => 0.5, player.level, getLang()); if (it) inv.addToBackpack(it, player.level); recompute(); return it; },
@@ -866,7 +867,7 @@ function doBuy(def, refresh) {
   if (!item) return;
   const r = inv.addToBackpack(item, player.level);
   if (r !== 'ok') { gameUI.toast(t(r === 'heavy' ? 'tooHeavy' : 'full'), 'bad'); return; }
-  inv.gold -= def.value;
+  inv.spendGold(def.value);
   player.gold = inv.gold;
   audio.sfx.pickup();
   recompute();
@@ -1019,7 +1020,7 @@ function completeQuest(qid) {
   const res = questLog.complete(qid);
   if (!res) return;
   const r = res.rewards;
-  if (r.gold) { inv.gold += r.gold; player.gold = inv.gold; }
+  if (r.gold) { inv.addGold(r.gold); player.gold = inv.gold; }
   if (r.exp) gainXp(r.exp);
   if (Array.isArray(r.items)) {
     for (const itemId of r.items) {
