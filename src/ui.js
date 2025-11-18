@@ -102,6 +102,9 @@ export class UI {
         cell.innerHTML = `<span class="ico" ${item.color ? `style="color:#${(item.color).toString(16).padStart(6, '0')}"` : ''}>${itemIcon(item)}</span>`;
         cell.addEventListener('click', () => this.onBackpackClick(i));
         this.attachTooltip(cell, item);
+        // Drag from the side-panel backpack straight onto a hotbar slot too, not
+        // just from the floating window — this is the bag the player sees by default.
+        this._makeDraggable(cell, item);
       }
       grid.appendChild(cell);
     }

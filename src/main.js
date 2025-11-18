@@ -16,9 +16,11 @@ import { Peers } from './peers.js';
 import { Net } from './net.js';
 import { audio } from './audio.js';
 import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore } from './data/items.js';
-import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel } from './data/professions.js';
+import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana } from './data/professions.js';
 import { SkillSystem } from './skills.js';
 import { Hotbar } from './hotbar.js';
+import { CharacterStats } from './characterStats.js';
+import { SkillPanel } from './skillPanel.js';
 import { xpProgress, eventMultipliers } from './progression.js';
 import { QuestLog } from './questlog.js';
 import { WorldNpcs } from './worldNpcs.js';
@@ -122,6 +124,7 @@ function spawnInCity(city) {
 player.level = 1;
 player.exp = 0;
 player.profession = getProfession(profile.profession) ? profile.profession : 'knight';
+let charStats = new CharacterStats(player.profession);
 applyVocationStats(true);
 player.defense = 0;
 player.weapon = null;
@@ -134,8 +137,10 @@ player.alive = true;
 // current values are clamped to the new maxima (e.g. loading a save).
 function applyVocationStats(fill) {
   const s = professionStats(player.profession, player.level);
-  player.maxHp = s.maxHp;
-  player.maxMana = s.maxMana;
+  const sb = charStats ? charStats.bonusHp() : 0;
+  const mb = charStats ? charStats.bonusMana() : 0;
+  player.maxHp = s.maxHp + sb;
+  player.maxMana = s.maxMana + mb;
   player.attackRange = s.attackRange;
   player.damageMul = s.damageMul;
   player.spellColor = s.spellColor;
@@ -397,6 +402,14 @@ const authUI = new AuthUI(auth, {
 ui.creation.classList.add('hidden');
 authUI.show();
 
+// QA/test entry (only with ?debug): skip the login overlay with a throwaway
+// guest character so automated checks can reach the running world. Normal play
+// is unaffected — the overlay still gates everyone without ?debug.
+if (new URLSearchParams(location.search).has('debug')) {
+  window.__mundumStart = (prof = 'knight') =>
+    enterWithCharacter({ name: 'Tester', profession: prof, sex: 'male', hair: 'short' });
+}
+
 // Apply a chosen/created character then start the world. The character object
 // carries its appearance, profession, and (for returning players) saved state.
 function enterWithCharacter(character) {
@@ -413,6 +426,10 @@ function enterWithCharacter(character) {
   };
   saveProfile();
   player.profession = profile.profession;
+  // Fresh stats for this character's vocation. A returning character loads its
+  // saved stats below; a new one gets a few levels' worth of starter points.
+  charStats = new CharacterStats(player.profession);
+  if (!character.stats) charStats.grantForLevels(1, 4);
   player.rebuildCharacter(profile);
   equipVisuals = new EquipVisuals(player.char);
   // Returning character: hydrate level/exp/gold/equipment/depot/pos from the row.
@@ -424,9 +441,22 @@ function enterWithCharacter(character) {
 addEventListener('pointerdown', () => audio.unlock(), { once: true });
 addEventListener('keydown', () => audio.unlock(), { once: true });
 addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyE' && !controls.chatting) tryInteract(); });
+addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyK' && !controls.chatting) toggleSkillPanel(); });
 addEventListener('beforeunload', () => { saveLocal(); saveToAccount(); net.disconnect(); });
 // Periodic save so position is persisted to the account even while just walking.
 setInterval(() => { if (state === 'play') { saveLocal(); saveToAccount(); } }, 15000);
+
+const skillPanel = new SkillPanel(() => charStats, {
+  getProfession: () => player.profession,
+  getLevel: () => player.level,
+  onChange: () => { applyVocationStats(false); recompute(); saveToAccount(); },
+});
+function toggleSkillPanel() {
+  if (document.pointerLockElement) document.exitPointerLock();
+  skillPanel.toggle();
+}
+const btnSkills = document.getElementById('btn-skills');
+if (btnSkills) btnSkills.addEventListener('click', (e) => { e.stopPropagation(); toggleSkillPanel(); });
 
 document.getElementById('hud-mute').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -581,6 +611,18 @@ async function startGame() {
   }
 
   connectOnline();
+
+  // Debug handle (only with ?debug): lets QA/tests give items, drop them, and
+  // inspect live drop positions without touching gameplay otherwise.
+  if (new URLSearchParams(location.search).has('debug')) {
+    window.__mundum = {
+      player, inv, combat, hotbar, charStats, skillPanel,
+      toss: (id) => { const it = resolveItem(id, () => 0.5, player.level, getLang()); if (it) tossItemForward(it); return it; },
+      castSkill: (s) => castSkill(s), toggleSkillPanel,
+      give: (id) => { const it = resolveItem(id, () => 0.5, player.level, getLang()); if (it) inv.addToBackpack(it, player.level); recompute(); return it; },
+      drops: () => combat.drops.map((d) => ({ id: d.item.baseId, x: +d.pos.x.toFixed(2), z: +d.pos.z.toFixed(2), y: +d.pos.y.toFixed(2), flying: d.flying, locked: d.pickupAt > performance.now() })),
+    };
+  }
 }
 
 async function connectOnline() {
@@ -661,7 +703,21 @@ function doDropItem(i, bagIndex) {
   } else {
     item = inv.removeFromBackpack(i);
   }
-  if (item) { combat.spawnDrop(player.pos, item); recompute(); }
+  if (item) { tossItemForward(item); recompute(); }
+}
+
+// Throw a dropped item in an arc in front of the player so it lands a couple of
+// metres ahead instead of underfoot, with a short grace period before it can be
+// picked back up. Forward is derived from yaw (char faces yaw + PI).
+function tossItemForward(item) {
+  const fx = -Math.sin(player.yaw);
+  const fz = -Math.cos(player.yaw);
+  const SPEED = 6;           // horizontal launch speed
+  const vel = { x: fx * SPEED, y: 4.5, z: fz * SPEED }; // up + forward = nice arc
+  // Spawn slightly in front and at chest height so it visibly leaves the hand.
+  const from = { x: player.pos.x + fx * 0.6, z: player.pos.z + fz * 0.6 };
+  combat.spawnDrop(from, item, { vel, pickupDelay: 1.1 });
+  audio.sfx.pickup();
 }
 
 // Drink a potion from the backpack: restore hp/mana, then consume it. Refuses if
@@ -700,25 +756,32 @@ function cooldownState(entry) {
 
 // Cast a profession skill from a hotbar entry, checking mana and cooldown.
 function castSkill(skill) {
-  if (player.level < (skill.minLevel || 1)) { gameUI.toast(t('needLevel', skill.minLevel), 'bad'); return; }
-  const cd = cooldowns[skill.id];
+  const def = getSkill(skill.id) || skill;
+  const skillLv = charStats.skillLevel(def.id);
+  // You must have spent at least one skill point in it (MapleStory-style).
+  if (skillLv < 1) { gameUI.toast(t('skillLocked'), 'bad'); return; }
+  const cd = cooldowns[def.id];
   if (cd && nowSec < cd.until) return; // still cooling down
-  if ((skill.manaCost || 0) > player.mana) { gameUI.toast(t('noMana'), 'bad'); return; }
+  const manaCost = skillMana(def, skillLv);
+  if (manaCost > player.mana) { gameUI.toast(t('noMana'), 'bad'); return; }
 
-  player.mana -= (skill.manaCost || 0);
-  cooldowns[skill.id] = { until: nowSec + (skill.cooldown || 1), total: skill.cooldown || 1 };
+  player.mana -= manaCost;
+  cooldowns[def.id] = { until: nowSec + (def.cooldown || 1), total: def.cooldown || 1 };
   audio.sfx.attack();
 
-  skillSystem.cast(skill, player.pos, player.yaw, player.level, {
+  // Effect strength comes from the SKILL level; the job's primary stat (STR/DEX/
+  // INT) scales it further via charStats.damageMultiplier().
+  const statMul = charStats.damageMultiplier();
+  skillSystem.cast(def, player.pos, player.yaw, skillLv, {
     damageArea: (center, radius, amount) => {
-      const hits = combat.damageArea(center, radius, amount);
+      const hits = combat.damageArea(center, radius, Math.round(amount * statMul));
       if (hits) shakeAmount = Math.min(0.5, shakeAmount + 0.12);
     },
     healPlayer: (amount) => {
       player.hp = Math.min(player.maxHp, player.hp + amount);
       spawnFloatText(player.pos, `+${amount}`, '#7bed6f');
     },
-    spawnSummon: (family, pos) => combat.spawnAlly(family, pos, player.level),
+    spawnSummon: (family, pos) => combat.spawnAlly(family, pos, skillLv),
   });
   gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
 }
@@ -848,6 +911,8 @@ function gainXp(xp) {
   if (player.level > before) {
     // Vocation-driven growth: recompute maxHp/maxMana and top both to full.
     const gain = professionLevelGain(player.profession);
+    // MapleStory-style: each level grants AP (stat points) and SP (skill points).
+    charStats.grantForLevels(before, player.level);
     applyVocationStats(true);
     audio.sfx.levelUp();
     gameUI.toast(t('levelUp', player.level), 'levelup');
@@ -1360,7 +1425,7 @@ function sendNetState() {
 function serializeSave() {
   return {
     level: player.level, exp: player.exp, gold: inv.gold,
-    equipment: inv.serialize(), depot: depot.serialize(), quests: questLog.serialize(),
+    equipment: inv.serialize(), depot: depot.serialize(), quests: questLog.serialize(), stats: charStats.serialize(),
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
   };
 }
@@ -1372,6 +1437,7 @@ function applyCloudSave(data) {
   if (data.equipment) inv.load(data.equipment);
   if (data.depot) depot.load(data.depot);
   if (data.quests) questLog.load(data.quests);
+  if (data.stats) charStats.load(data.stats);
   applyVocationStats(true);
   recompute();
 }
@@ -1385,6 +1451,7 @@ function applyCharacterRow(row) {
   if (row.equipment) inv.load(row.equipment);
   if (row.backpack && Array.isArray(row.backpack)) inv.backpack = row.backpack;
   if (row.depot) depot.load(row.depot);
+  if (row.stats) charStats.load(row.stats);
   applyVocationStats(true);
   if (row.pos && typeof row.pos.x === 'number') {
     player.spawnAt(row.pos.x, row.pos.z);
@@ -1399,7 +1466,7 @@ function saveToAccount() {
   auth.saveCharacter(authCharacterId, {
     level: player.level, exp: player.exp, gold: inv.gold,
     equipment: inv.serialize(), backpack: inv.backpack,
-    depot: depot.serialize(),
+    depot: depot.serialize(), stats: charStats.serialize(),
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
   });
 }

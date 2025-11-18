@@ -370,18 +370,27 @@ export class CombatSystem {
       if (this.rng() < chance) {
         const item = resolveItem(entry.itemId, () => this.rng(), c.def.level, lang);
         if (item) {
-          this.spawnDrop(c.pos, item);
+          // Scatter loot in a little burst so multiple drops don't stack.
+          const a = this.rng() * Math.PI * 2;
+          const s = 2 + this.rng() * 2;
+          this.spawnDrop(c.pos, item, { vel: { x: Math.cos(a) * s, y: 3.5 + this.rng() * 2, z: Math.sin(a) * s } });
           if (entry.potion) potionDropped = true;
         }
       }
     }
   }
 
-  spawnDrop(pos, item) {
+  // Spawn a ground drop. opts.vel = {x,y,z} gives it an initial toss so it flies
+  // in an arc and lands a bit away (used when the player drops an item forward,
+  // so it doesn't land underfoot and get re-grabbed instantly). opts.pickupDelay
+  // (seconds) blocks pickup until it settles.
+  spawnDrop(pos, item, opts = {}) {
+    const world = this.world;
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.3, 0.3, 0.3),
       new THREE.MeshLambertMaterial({ color: item.color || 0xd9b34a }));
-    mesh.position.set(pos.x, this.world.heightAt(pos.x, pos.z) + 0.4, pos.z);
+    const startY = world.heightAt(pos.x, pos.z) + 0.4;
+    mesh.position.set(pos.x, startY, pos.z);
     this.scene.add(mesh);
 
     // Rare drops get a colored glow so kids spot treasure from afar.
@@ -390,10 +399,39 @@ export class CombatSystem {
       glow = new THREE.PointLight(item.rarity === 'legendary' ? 0xffd166 : 0x5dade2, 8, 4);
       mesh.add(glow);
     }
+
+    const vel = opts.vel ? { x: opts.vel.x || 0, y: opts.vel.y || 0, z: opts.vel.z || 0 } : null;
     const drop = {
       item, mesh, glow, pos: mesh.position,
-      spin(dt) { mesh.rotation.y += dt * 1.6; mesh.position.y = this.baseY + Math.sin(performance.now() * 0.003) * 0.1; },
-      baseY: mesh.position.y,
+      vel, flying: !!vel,
+      pickupAt: opts.pickupDelay ? performance.now() + opts.pickupDelay * 1000 : 0,
+      baseY: startY,
+      phase: pos.x, // de-syncs the idle bob between nearby drops
+      // Per-frame motion: ballistic flight while tossed, gentle idle bob once
+      // it has settled on the ground.
+      spin(dt) {
+        mesh.rotation.y += dt * 1.6;
+        if (this.flying) {
+          this.vel.y -= 16 * dt; // gravity
+          mesh.position.x += this.vel.x * dt;
+          mesh.position.y += this.vel.y * dt;
+          mesh.position.z += this.vel.z * dt;
+          const ground = world.heightAt(mesh.position.x, mesh.position.z) + 0.3;
+          if (mesh.position.y <= ground && this.vel.y <= 0) {
+            // Land: small bounce, bleed off horizontal speed; settle when slow.
+            mesh.position.y = ground;
+            if (this.vel.y < -3) {
+              this.vel.y = -this.vel.y * 0.35;
+              this.vel.x *= 0.5; this.vel.z *= 0.5;
+            } else {
+              this.flying = false;
+              this.baseY = ground;
+            }
+          }
+        } else {
+          mesh.position.y = this.baseY + Math.sin(performance.now() * 0.003 + this.phase) * 0.1;
+        }
+      },
     };
     this.drops.push(drop);
   }
@@ -410,10 +448,14 @@ export class CombatSystem {
     this.drops.push(drop);
   }
 
-  // Collect any drop within pickup range; returns the item or null.
+  // Collect any drop within pickup range; returns the item or null. Drops still
+  // in their toss/grace window are skipped so a freshly dropped item doesn't get
+  // re-grabbed the instant it leaves your hand.
   tryPickup(player) {
+    const now = performance.now();
     for (let i = 0; i < this.drops.length; i++) {
       const d = this.drops[i];
+      if (d.pickupAt && now < d.pickupAt) continue;
       if (Math.hypot(d.pos.x - player.pos.x, d.pos.z - player.pos.z) < 1.5) {
         this.scene.remove(d.mesh);
         d.mesh.geometry.dispose();
