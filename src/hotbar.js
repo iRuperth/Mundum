@@ -102,8 +102,8 @@ export class Hotbar {
       menu.appendChild(b);
     };
     add(t('empty') || '—', null);
-    for (const sk of opts.skills) add(sk.name, { kind: 'skill', ...sk });
-    for (const po of opts.potions) add(po.name, { kind: 'potion', ...po });
+    for (const sk of opts.skills) add(sk.name, { ...sk, skillKind: sk.kind, kind: 'skill' });
+    for (const po of opts.potions) add(po.name, { ...po, kind: 'potion' });
 
     document.body.appendChild(menu);
     const x = Math.min(anchor.clientX || innerWidth / 2, innerWidth - 180);
