@@ -10,6 +10,8 @@ const SPAWN_RADIUS = 42;
 const DESPAWN_RADIUS = 70;
 const ATTACK_RANGE = 2.4;
 const ATTACK_COOLDOWN = 0.7;
+const WANDER_RADIUS = 12;   // how far a creature roams from its spawn point
+const WANDER_SPEED = 0.55;  // roam pace as a fraction of the creature's chase speed
 
 function biomeAt(world, x, z) {
   const h = world.heightAt(x, z);
@@ -48,6 +50,14 @@ class Creature {
     this.flashT = 0;
     this._mats = [];
     this.model.group.traverse((o) => { if (o.material && o.material.emissive) this._mats.push(o.material); });
+
+    // Wander state: home is the patrol-area center (set on spawn). targetX/Z is
+    // the current roam goal; waitT pauses briefly between legs so it isn't frantic.
+    this.homeX = 0; this.homeZ = 0;
+    this.targetX = 0; this.targetZ = 0;
+    this.waitT = 0;
+    // Per-creature deterministic RNG, seeded later from the spawn position.
+    this._rng = mulberry(1);
   }
 
   flash() { this.flashT = 0.12; }
@@ -55,6 +65,43 @@ class Creature {
   placeAt(x, z) {
     this.pos.set(x, this.world.heightAt(x, z), z);
     this.model.group.position.copy(this.pos);
+    this.homeX = x; this.homeZ = z;
+    // Seed this creature's RNG from its spawn point so its roaming is varied but
+    // stable, then pick an initial roam target right away (always in motion).
+    this._rng = mulberry(((Math.round(x * 13.7) * 73856093) ^ (Math.round(z * 9.1) * 19349663)) >>> 0);
+    this._pickRoamTarget();
+  }
+
+  // Choose a new wander goal somewhere inside the patrol area, on walkable land.
+  _pickRoamTarget() {
+    for (let i = 0; i < 4; i++) {
+      const a = this._rng() * Math.PI * 2;
+      const r = WANDER_RADIUS * (0.25 + this._rng() * 0.75);
+      const tx = this.homeX + Math.cos(a) * r;
+      const tz = this.homeZ + Math.sin(a) * r;
+      if (this.world.heightAt(tx, tz) >= 0.6) { this.targetX = tx; this.targetZ = tz; return; }
+    }
+    // Fallback: stay home if every sample landed in water.
+    this.targetX = this.homeX; this.targetZ = this.homeZ;
+  }
+
+  // Step toward the current roam target; pause and repick on arrival. Returns
+  // true while actually walking (drives the walk animation).
+  _wander(dt) {
+    if (this.waitT > 0) { this.waitT -= dt; return false; }
+    const tx = this.targetX - this.pos.x;
+    const tz = this.targetZ - this.pos.z;
+    const d = Math.hypot(tx, tz);
+    if (d < 0.5) {
+      this.waitT = 0.6 + this._rng() * 1.8; // brief rest, then a new leg
+      this._pickRoamTarget();
+      return false;
+    }
+    const sp = this.def.speed * WANDER_SPEED * dt;
+    this.pos.x += (tx / d) * sp;
+    this.pos.z += (tz / d) * sp;
+    this.yaw = Math.atan2(tx, tz);
+    return true;
   }
 
   update(dt, player, onPlayerHit, isNight) {
@@ -79,12 +126,17 @@ class Creature {
     const dist = Math.hypot(dx, dz);
 
     let moving = false;
-    if (this.def.aggressive && dist < this.def.aggroRange && dist > ATTACK_RANGE) {
+    const chasing = this.def.aggressive && dist < this.def.aggroRange;
+    if (chasing && dist > ATTACK_RANGE) {
+      // Aggressive and the player is in range: home in on them.
       const sp = this.def.speed * dt;
       this.pos.x += (dx / dist) * sp;
       this.pos.z += (dz / dist) * sp;
       this.yaw = Math.atan2(dx, dz);
       moving = true;
+    } else if (!chasing) {
+      // Otherwise roam the patrol area so every creature is always in motion.
+      moving = this._wander(dt);
     }
 
     if (dist <= ATTACK_RANGE) {
