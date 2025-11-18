@@ -1,10 +1,22 @@
 // Mundum profession (vocation) database — PURE DATA. No Three.js, no DOM.
 // Four Tibia-style vocations. Each defines which weapon TYPES it may equip,
-// per-level hp/mana growth, attack range, and a list of active skills that
-// unlock by level and scale with the character's level.
+// per-level hp/mana growth, attack range, and a MapleStory-style SKILL TREE.
+//
+// Skill tree model: every skill has its own level (1..maxLevel). Its strength
+// (power) and mana cost scale by the SKILL LEVEL, not the character level.
+// The character level only GATES unlocking via reqLevel.
 //
 // Weapon types match src/data/items.js: 'sword' | 'axe' | 'bow' | 'wand' | 'shield'.
 // Summon families match keys in src/data/creatures.js (imp, bat, wolf, ...).
+//
+// Engine-rendered skill kinds (the only valid ones): 'area' | 'melee' |
+// 'ranged' | 'heal' | 'summon'.
+//
+// Skill schema:
+// { id, name:{es,en}, desc:{es,en}, reqLevel, maxLevel, kind,
+//   manaBase, manaPerLevel, cooldown, powerBase, powerPerLevel, radius,
+//   summonFamily, summonCount }
+// Legacy aliases (minLevel, manaCost, power) are mirrored for older engine code.
 
 export const PROFESSIONS = [
   {
@@ -27,56 +39,76 @@ export const PROFESSIONS = [
     regen: { hp: { amount: 1, every: 5 }, mana: { amount: 3, every: 2 } },
     skills: [
       {
-        // Cheap single-target starter bolt (small radius = single hit feel).
-        id: 'spark_bolt',
-        name: { es: 'Chispa', en: 'Spark Bolt' },
-        desc: { es: 'Una chispa de energía que golpea a un enemigo.', en: 'A spark of energy that strikes one foe.' },
-        minLevel: 1, manaCost: 8, cooldown: 1.5,
-        kind: 'area', power: 14, powerPerLevel: 1.8, radius: 1.5,
+        id: 'energy_bolt',
+        name: { es: 'Descarga de Energía', en: 'Energy Bolt' },
+        desc: { es: 'Una descarga básica de energía a un enemigo.', en: 'A basic burst of energy at one foe.' },
+        reqLevel: 1, maxLevel: 20, kind: 'area',
+        manaBase: 6, manaPerLevel: 1, cooldown: 1.2,
+        powerBase: 12, powerPerLevel: 9, radius: 1.5,
       },
       {
-        id: 'fireball',
-        name: { es: 'Bola de Fuego', en: 'Fireball' },
-        desc: { es: 'Estalla en una zona quemando a los enemigos cercanos.', en: 'Bursts in an area, burning nearby foes.' },
-        minLevel: 8, manaCost: 20, cooldown: 2,
-        kind: 'area', power: 45, powerPerLevel: 3.2, radius: 3.5,
+        id: 'magic_claw',
+        name: { es: 'Garra Mágica', en: 'Magic Claw' },
+        desc: { es: 'Dos zarpazos de energía contra un enemigo.', en: 'Two energy claws strike a single foe.' },
+        reqLevel: 4, maxLevel: 20, kind: 'area',
+        manaBase: 10, manaPerLevel: 1.4, cooldown: 1.4,
+        powerBase: 20, powerPerLevel: 12, radius: 1.5,
       },
       {
-        // Focused energy lance (single-target, harder than fireball).
-        id: 'energy_beam',
-        name: { es: 'Rayo de Energía', en: 'Energy Beam' },
-        desc: { es: 'Un haz de energía que perfora a un solo enemigo.', en: 'An energy beam that pierces a single foe.' },
-        minLevel: 14, manaCost: 38, cooldown: 2.5,
-        kind: 'area', power: 90, powerPerLevel: 4.5, radius: 1.8,
+        id: 'fire_arrow',
+        name: { es: 'Flecha de Fuego', en: 'Fire Arrow' },
+        desc: { es: 'Una saeta ardiente que perfora a un enemigo.', en: 'A burning bolt that pierces a single foe.' },
+        reqLevel: 12, maxLevel: 20, kind: 'area',
+        manaBase: 18, manaPerLevel: 2, cooldown: 1.8,
+        powerBase: 40, powerPerLevel: 16, radius: 1.6,
       },
       {
-        id: 'ice_nova',
-        name: { es: 'Nova de Hielo', en: 'Ice Nova' },
-        desc: { es: 'Onda gélida que daña todo a tu alrededor.', en: 'A freezing wave that damages everything around you.' },
-        minLevel: 20, manaCost: 55, cooldown: 4,
-        kind: 'area', power: 120, powerPerLevel: 5.5, radius: 5,
+        id: 'thunder_spear',
+        name: { es: 'Lanza de Trueno', en: 'Thunder Spear' },
+        desc: { es: 'Una lanza de rayo que electrocuta a un enemigo.', en: 'A lance of lightning that shocks one foe.' },
+        reqLevel: 20, maxLevel: 20, kind: 'area',
+        manaBase: 28, manaPerLevel: 2.5, cooldown: 2.2,
+        powerBase: 70, powerPerLevel: 18, radius: 1.7,
       },
       {
-        id: 'chain_lightning',
-        name: { es: 'Cadena de Rayos', en: 'Chain Lightning' },
-        desc: { es: 'Un relámpago salta entre los enemigos cercanos.', en: 'A bolt leaps between nearby foes.' },
-        minLevel: 34, manaCost: 90, cooldown: 6,
-        kind: 'area', power: 210, powerPerLevel: 7, radius: 5.5,
+        id: 'poison_mist',
+        name: { es: 'Niebla Venenosa', en: 'Poison Mist' },
+        desc: { es: 'Una nube tóxica que corroe a los enemigos cercanos.', en: 'A toxic cloud that corrodes nearby foes.' },
+        reqLevel: 26, maxLevel: 15, kind: 'area',
+        manaBase: 40, manaPerLevel: 3, cooldown: 4,
+        powerBase: 90, powerPerLevel: 14, radius: 4,
+      },
+      {
+        id: 'explosion',
+        name: { es: 'Explosión', en: 'Explosion' },
+        desc: { es: 'Una detonación arcana que sacude una zona.', en: 'An arcane detonation that rocks an area.' },
+        reqLevel: 30, maxLevel: 20, kind: 'area',
+        manaBase: 55, manaPerLevel: 3.5, cooldown: 4.5,
+        powerBase: 130, powerPerLevel: 16, radius: 4.5,
+      },
+      {
+        id: 'ice_strike',
+        name: { es: 'Golpe de Hielo', en: 'Ice Strike' },
+        desc: { es: 'Picos de hielo brotan a tu alrededor.', en: 'Ice spikes erupt all around you.' },
+        reqLevel: 40, maxLevel: 20, kind: 'area',
+        manaBase: 75, manaPerLevel: 4, cooldown: 5,
+        powerBase: 190, powerPerLevel: 18, radius: 5,
       },
       {
         id: 'meteor',
         name: { es: 'Meteoro', en: 'Meteor' },
-        desc: { es: 'Llama una lluvia de meteoros en una gran zona.', en: 'Calls a meteor shower over a large area.' },
-        minLevel: 50, manaCost: 140, cooldown: 8,
-        kind: 'area', power: 360, powerPerLevel: 9, radius: 7,
+        desc: { es: 'Llama una lluvia de meteoros sobre una gran zona.', en: 'Calls a meteor shower over a large area.' },
+        reqLevel: 60, maxLevel: 20, kind: 'area',
+        manaBase: 140, manaPerLevel: 6, cooldown: 10,
+        powerBase: 340, powerPerLevel: 24, radius: 7,
       },
       {
-        // Ultimate: catastrophic elemental storm.
-        id: 'rage_of_storms',
-        name: { es: 'Furia de Tormentas', en: 'Rage of Storms' },
-        desc: { es: 'Desata una tormenta devastadora sobre un área enorme.', en: 'Unleashes a devastating storm over a huge area.' },
-        minLevel: 85, manaCost: 220, cooldown: 18,
-        kind: 'area', power: 700, powerPerLevel: 13, radius: 9,
+        id: 'genesis',
+        name: { es: 'Génesis', en: 'Genesis' },
+        desc: { es: 'Una luz devastadora cae sobre un área enorme.', en: 'A devastating light falls over a huge area.' },
+        reqLevel: 90, maxLevel: 20, kind: 'area',
+        manaBase: 220, manaPerLevel: 8, cooldown: 18,
+        powerBase: 620, powerPerLevel: 34, radius: 9,
       },
     ],
   },
@@ -98,58 +130,76 @@ export const PROFESSIONS = [
     regen: { hp: { amount: 3, every: 2 }, mana: { amount: 1, every: 5 } },
     skills: [
       {
-        // Cheap opening strike against one foe.
-        id: 'slash',
-        name: { es: 'Tajo', en: 'Slash' },
-        desc: { es: 'Un tajo rápido contra un enemigo.', en: 'A quick slash against one foe.' },
-        minLevel: 1, manaCost: 8, cooldown: 1.5,
-        kind: 'melee', power: 18, powerPerLevel: 2.2, radius: 2.2,
+        id: 'slash_blast',
+        name: { es: 'Tajo Expansivo', en: 'Slash Blast' },
+        desc: { es: 'Un tajo que golpea a los enemigos cercanos.', en: 'A sweeping slash that hits nearby foes.' },
+        reqLevel: 1, maxLevel: 20, kind: 'area',
+        manaBase: 6, manaPerLevel: 0.8, cooldown: 1.4,
+        powerBase: 14, powerPerLevel: 9, radius: 3,
       },
       {
         id: 'power_strike',
         name: { es: 'Golpe Poderoso', en: 'Power Strike' },
         desc: { es: 'Un mandoble brutal contra un solo enemigo.', en: 'A brutal blow against a single foe.' },
-        minLevel: 5, manaCost: 12, cooldown: 2.5,
-        kind: 'melee', power: 40, powerPerLevel: 4.5, radius: 2.4,
+        reqLevel: 5, maxLevel: 20, kind: 'melee',
+        manaBase: 10, manaPerLevel: 1, cooldown: 2,
+        powerBase: 32, powerPerLevel: 13, radius: 2.4,
       },
       {
-        // Heavy bleeding blow, single target.
-        id: 'rend',
-        name: { es: 'Desgarro', en: 'Rend' },
-        desc: { es: 'Un golpe pesado que hace sangrar al enemigo.', en: 'A heavy blow that makes the foe bleed.' },
-        minLevel: 12, manaCost: 22, cooldown: 4,
-        kind: 'melee', power: 85, powerPerLevel: 5, radius: 2.4,
+        id: 'rage_bleed',
+        name: { es: 'Furia Sangrante', en: 'Rage' },
+        desc: { es: 'Un golpe furioso que hace sangrar al enemigo.', en: 'A raging blow that makes the foe bleed.' },
+        reqLevel: 12, maxLevel: 20, kind: 'melee',
+        manaBase: 18, manaPerLevel: 1.4, cooldown: 3,
+        powerBase: 60, powerPerLevel: 15, radius: 2.4,
       },
       {
-        id: 'whirlwind',
-        name: { es: 'Torbellino', en: 'Whirlwind' },
-        desc: { es: 'Giras tu arma golpeando a todos los enemigos cercanos.', en: 'Spin your weapon, hitting every nearby foe.' },
-        minLevel: 18, manaCost: 35, cooldown: 5,
-        kind: 'area', power: 70, powerPerLevel: 4, radius: 3.5,
+        id: 'brandish',
+        name: { es: 'Doble Tajo', en: 'Brandish' },
+        desc: { es: 'Dos cortes veloces contra un enemigo.', en: 'Two swift cuts against a single foe.' },
+        reqLevel: 20, maxLevel: 20, kind: 'melee',
+        manaBase: 28, manaPerLevel: 2, cooldown: 3.2,
+        powerBase: 95, powerPerLevel: 18, radius: 2.5,
       },
       {
-        // Minor self-heal: a second wind to keep tanking.
-        id: 'war_cry',
-        name: { es: 'Grito de Guerra', en: 'War Cry' },
-        desc: { es: 'Recuperas el aliento y restauras algo de vida.', en: 'Catch your breath and recover some health.' },
-        minLevel: 28, manaCost: 40, cooldown: 12,
-        kind: 'heal', power: 80, powerPerLevel: 5, radius: 0,
-      },
-      {
-        // Ground-shaking stomp, close AoE.
-        id: 'earth_stomp',
-        name: { es: 'Pisotón Sísmico', en: 'Earth Stomp' },
+        id: 'ground_smash',
+        name: { es: 'Golpe Sísmico', en: 'Ground Smash' },
         desc: { es: 'Golpeas el suelo dañando a todo a tu alrededor.', en: 'Slam the ground, damaging everything around you.' },
-        minLevel: 45, manaCost: 75, cooldown: 7,
-        kind: 'area', power: 200, powerPerLevel: 6.5, radius: 4.5,
+        reqLevel: 28, maxLevel: 20, kind: 'area',
+        manaBase: 40, manaPerLevel: 2.6, cooldown: 4.5,
+        powerBase: 120, powerPerLevel: 15, radius: 4,
       },
       {
-        // Ultimate finisher, single devastating blow.
-        id: 'executioner',
-        name: { es: 'Verdugo', en: 'Executioner' },
+        id: 'second_wind',
+        name: { es: 'Segundo Aliento', en: 'Second Wind' },
+        desc: { es: 'Recuperas el aliento y restauras algo de vida.', en: 'Catch your breath and recover some health.' },
+        reqLevel: 35, maxLevel: 15, kind: 'heal',
+        manaBase: 30, manaPerLevel: 2, cooldown: 12,
+        powerBase: 90, powerPerLevel: 14, radius: 0,
+      },
+      {
+        id: 'coma',
+        name: { es: 'Conmoción', en: 'Coma' },
+        desc: { es: 'Un golpe demoledor que aturde a un enemigo.', en: 'A crushing strike that stuns one foe.' },
+        reqLevel: 45, maxLevel: 20, kind: 'melee',
+        manaBase: 55, manaPerLevel: 3, cooldown: 5,
+        powerBase: 200, powerPerLevel: 20, radius: 2.6,
+      },
+      {
+        id: 'axe_booster',
+        name: { es: 'Tajo Reforzado', en: 'Heavy Cleave' },
+        desc: { es: 'Un corte reforzado de gran potencia.', en: 'A boosted cleave of great force.' },
+        reqLevel: 60, maxLevel: 20, kind: 'melee',
+        manaBase: 80, manaPerLevel: 3.5, cooldown: 6,
+        powerBase: 300, powerPerLevel: 22, radius: 2.6,
+      },
+      {
+        id: 'crusher',
+        name: { es: 'Triturador', en: 'Crusher' },
         desc: { es: 'Descargas un golpe demoledor sobre un enemigo.', en: 'Deliver a devastating finishing blow to one foe.' },
-        minLevel: 90, manaCost: 130, cooldown: 14,
-        kind: 'melee', power: 650, powerPerLevel: 12, radius: 2.6,
+        reqLevel: 90, maxLevel: 20, kind: 'melee',
+        manaBase: 130, manaPerLevel: 5, cooldown: 14,
+        powerBase: 560, powerPerLevel: 30, radius: 2.6,
       },
     ],
   },
@@ -171,58 +221,76 @@ export const PROFESSIONS = [
     regen: { hp: { amount: 2, every: 4 }, mana: { amount: 2, every: 4 } },
     skills: [
       {
-        // Cheap starter shot, single target.
-        id: 'quick_shot',
-        name: { es: 'Disparo Rápido', en: 'Quick Shot' },
+        id: 'arrow_blow',
+        name: { es: 'Flechazo', en: 'Arrow Blow' },
         desc: { es: 'Una flecha veloz a un solo objetivo.', en: 'A swift arrow at a single target.' },
-        minLevel: 1, manaCost: 8, cooldown: 1.5,
-        kind: 'ranged', power: 14, powerPerLevel: 1.8, radius: 1.2,
+        reqLevel: 1, maxLevel: 20, kind: 'ranged',
+        manaBase: 6, manaPerLevel: 0.8, cooldown: 1.2,
+        powerBase: 12, powerPerLevel: 9, radius: 1.2,
       },
       {
-        id: 'piercing_shot',
-        name: { es: 'Disparo Perforante', en: 'Piercing Shot' },
-        desc: { es: 'Una flecha veloz que atraviesa al objetivo.', en: 'A swift arrow that pierces the target.' },
-        minLevel: 6, manaCost: 15, cooldown: 2,
-        kind: 'ranged', power: 38, powerPerLevel: 3.8, radius: 1.5,
+        id: 'double_shot',
+        name: { es: 'Disparo Doble', en: 'Double Shot' },
+        desc: { es: 'Dos flechas seguidas contra un objetivo.', en: 'Two arrows in quick succession at a target.' },
+        reqLevel: 5, maxLevel: 20, kind: 'ranged',
+        manaBase: 10, manaPerLevel: 1, cooldown: 1.6,
+        powerBase: 30, powerPerLevel: 13, radius: 1.4,
       },
       {
-        // Explosive arrow: small blast on impact.
-        id: 'explosive_arrow',
-        name: { es: 'Flecha Explosiva', en: 'Explosive Arrow' },
+        id: 'power_knockback',
+        name: { es: 'Disparo de Empuje', en: 'Power Knock-back' },
+        desc: { es: 'Una flecha potente que repele al objetivo.', en: 'A forceful arrow that repels the target.' },
+        reqLevel: 12, maxLevel: 20, kind: 'ranged',
+        manaBase: 18, manaPerLevel: 1.4, cooldown: 2.2,
+        powerBase: 60, powerPerLevel: 15, radius: 1.5,
+      },
+      {
+        id: 'arrow_bomb',
+        name: { es: 'Flecha Bomba', en: 'Arrow Bomb' },
         desc: { es: 'Una flecha que estalla al impactar.', en: 'An arrow that bursts on impact.' },
-        minLevel: 14, manaCost: 30, cooldown: 3,
-        kind: 'ranged', power: 80, powerPerLevel: 4.2, radius: 2.5,
+        reqLevel: 20, maxLevel: 20, kind: 'ranged',
+        manaBase: 30, manaPerLevel: 2.2, cooldown: 3.2,
+        powerBase: 95, powerPerLevel: 16, radius: 3,
       },
       {
-        // Volley of arrows across a tight spread.
-        id: 'multi_shot',
-        name: { es: 'Disparo Múltiple', en: 'Multi Shot' },
-        desc: { es: 'Lanzas varias flechas en abanico.', en: 'Loose several arrows in a fan.' },
-        minLevel: 18, manaCost: 42, cooldown: 4,
-        kind: 'ranged', power: 110, powerPerLevel: 4.5, radius: 3.5,
+        id: 'strafe',
+        name: { es: 'Ráfaga', en: 'Strafe' },
+        desc: { es: 'Cuatro flechas certeras sobre un objetivo.', en: 'Four precise arrows at a single target.' },
+        reqLevel: 28, maxLevel: 20, kind: 'ranged',
+        manaBase: 42, manaPerLevel: 2.8, cooldown: 3.5,
+        powerBase: 130, powerPerLevel: 18, radius: 1.6,
       },
       {
-        id: 'arrow_rain',
-        name: { es: 'Lluvia de Flechas', en: 'Arrow Rain' },
-        desc: { es: 'Cae una lluvia de flechas sobre una zona lejana.', en: 'A rain of arrows falls over a distant area.' },
-        minLevel: 22, manaCost: 55, cooldown: 5,
-        kind: 'ranged', power: 140, powerPerLevel: 5, radius: 4.5,
+        id: 'hurricane',
+        name: { es: 'Huracán', en: 'Hurricane' },
+        desc: { es: 'Una andanada continua de flechas veloces.', en: 'A continuous barrage of rapid arrows.' },
+        reqLevel: 36, maxLevel: 20, kind: 'ranged',
+        manaBase: 60, manaPerLevel: 3.2, cooldown: 5,
+        powerBase: 180, powerPerLevel: 18, radius: 1.8,
       },
       {
-        // Long-range single hit for huge damage.
-        id: 'snipe',
-        name: { es: 'Disparo Certero', en: 'Snipe' },
+        id: 'inferno_arrow',
+        name: { es: 'Flecha Infernal', en: 'Inferno Arrow' },
+        desc: { es: 'Una flecha ardiente que incendia una zona.', en: 'A blazing arrow that sets an area on fire.' },
+        reqLevel: 45, maxLevel: 20, kind: 'area',
+        manaBase: 75, manaPerLevel: 3.8, cooldown: 6,
+        powerBase: 220, powerPerLevel: 20, radius: 4.5,
+      },
+      {
+        id: 'sharp_eyes',
+        name: { es: 'Disparo Certero', en: 'Sharp Snipe' },
         desc: { es: 'Un disparo preciso de largo alcance a un objetivo.', en: 'A precise long-range shot at one target.' },
-        minLevel: 40, manaCost: 70, cooldown: 6,
-        kind: 'ranged', power: 230, powerPerLevel: 7, radius: 1.5,
+        reqLevel: 60, maxLevel: 20, kind: 'ranged',
+        manaBase: 90, manaPerLevel: 4, cooldown: 6.5,
+        powerBase: 320, powerPerLevel: 24, radius: 1.5,
       },
       {
-        // Ultimate volley over a vast area.
         id: 'sky_volley',
         name: { es: 'Andanada Celeste', en: 'Sky Volley' },
         desc: { es: 'Una andanada masiva cae sobre una zona enorme.', en: 'A massive volley rains over a huge area.' },
-        minLevel: 90, manaCost: 200, cooldown: 16,
-        kind: 'ranged', power: 620, powerPerLevel: 12, radius: 8,
+        reqLevel: 90, maxLevel: 20, kind: 'ranged',
+        manaBase: 200, manaPerLevel: 7, cooldown: 16,
+        powerBase: 560, powerPerLevel: 30, radius: 8,
       },
     ],
   },
@@ -246,63 +314,93 @@ export const PROFESSIONS = [
     regen: { hp: { amount: 1, every: 5 }, mana: { amount: 3, every: 2 } },
     skills: [
       {
-        id: 'heal_self',
+        id: 'heal',
         name: { es: 'Curación', en: 'Heal' },
         desc: { es: 'Restaura tu propia vida con magia natural.', en: 'Restore your own health with nature magic.' },
-        minLevel: 4, manaCost: 25, cooldown: 3,
-        kind: 'heal', power: 60, powerPerLevel: 6, radius: 0,
+        reqLevel: 1, maxLevel: 20, kind: 'heal',
+        manaBase: 8, manaPerLevel: 1.5, cooldown: 2,
+        powerBase: 24, powerPerLevel: 12, radius: 0,
       },
       {
-        // Cheap nature attack, single-target feel.
-        id: 'nature_bolt',
-        name: { es: 'Dardo Natural', en: 'Nature Bolt' },
-        desc: { es: 'Lanzas un dardo de energía natural a un enemigo.', en: 'Hurl a bolt of nature energy at one foe.' },
-        minLevel: 8, manaCost: 14, cooldown: 1.8,
-        kind: 'area', power: 32, powerPerLevel: 3, radius: 1.6,
+        id: 'holy_arrow',
+        name: { es: 'Flecha Sagrada', en: 'Holy Arrow' },
+        desc: { es: 'Un dardo de energía natural a un enemigo.', en: 'A bolt of nature energy at one foe.' },
+        reqLevel: 6, maxLevel: 20, kind: 'area',
+        manaBase: 12, manaPerLevel: 1.2, cooldown: 1.6,
+        powerBase: 26, powerPerLevel: 12, radius: 1.6,
       },
       {
-        // Thorns AoE that ensnares nearby foes.
-        id: 'entangle',
-        name: { es: 'Enredadera', en: 'Entangle' },
-        desc: { es: 'Espinas brotan dañando a los enemigos cercanos.', en: 'Thorns erupt, damaging nearby foes.' },
-        minLevel: 16, manaCost: 45, cooldown: 4,
-        kind: 'area', power: 95, powerPerLevel: 4, radius: 4,
-      },
-      {
-        id: 'mass_heal',
-        name: { es: 'Curación en Masa', en: 'Mass Heal' },
-        desc: { es: 'Cura a todos los aliados a tu alrededor.', en: 'Heal every ally around you.' },
-        minLevel: 24, manaCost: 80, cooldown: 6,
-        kind: 'heal', power: 150, powerPerLevel: 8, radius: 6,
+        id: 'bless',
+        name: { es: 'Bendición', en: 'Bless' },
+        desc: { es: 'Una bendición que restaura algo de vida.', en: 'A blessing that restores some health.' },
+        reqLevel: 12, maxLevel: 20, kind: 'heal',
+        manaBase: 20, manaPerLevel: 2, cooldown: 3,
+        powerBase: 60, powerPerLevel: 14, radius: 0,
       },
       {
         id: 'summon_imp',
         name: { es: 'Invocar Diablillo', en: 'Summon Imp' },
         desc: { es: 'Invoca diablillos que luchan a tu lado.', en: 'Summon imps that fight at your side.' },
-        minLevel: 30, manaCost: 110, cooldown: 12,
-        kind: 'summon', power: 0, powerPerLevel: 0, radius: 0,
+        reqLevel: 20, maxLevel: 15, kind: 'summon',
+        manaBase: 90, manaPerLevel: 4, cooldown: 12,
+        powerBase: 0, powerPerLevel: 0, radius: 0,
         summonFamily: 'imp', summonCount: 2,
       },
       {
-        // Beefier pet at high level.
-        id: 'summon_bear',
-        name: { es: 'Invocar Oso', en: 'Summon Bear' },
-        desc: { es: 'Invoca un oso feroz que combate por ti.', en: 'Summon a fierce bear to fight for you.' },
-        minLevel: 55, manaCost: 160, cooldown: 16,
-        kind: 'summon', power: 0, powerPerLevel: 0, radius: 0,
-        summonFamily: 'bear', summonCount: 1,
+        id: 'entangle',
+        name: { es: 'Enredadera', en: 'Entangle' },
+        desc: { es: 'Espinas brotan dañando a los enemigos cercanos.', en: 'Thorns erupt, damaging nearby foes.' },
+        reqLevel: 28, maxLevel: 20, kind: 'area',
+        manaBase: 45, manaPerLevel: 3, cooldown: 4.5,
+        powerBase: 100, powerPerLevel: 15, radius: 4,
       },
       {
-        // Ultimate group heal over a wide area.
+        id: 'mass_heal',
+        name: { es: 'Curación en Masa', en: 'Mass Heal' },
+        desc: { es: 'Cura a todos los aliados a tu alrededor.', en: 'Heal every ally around you.' },
+        reqLevel: 36, maxLevel: 20, kind: 'heal',
+        manaBase: 80, manaPerLevel: 4, cooldown: 6,
+        powerBase: 150, powerPerLevel: 18, radius: 6,
+      },
+      {
+        id: 'summon_wolf',
+        name: { es: 'Invocar Lobo', en: 'Summon Wolf' },
+        desc: { es: 'Invoca un lobo feroz que combate por ti.', en: 'Summon a fierce wolf to fight for you.' },
+        reqLevel: 50, maxLevel: 15, kind: 'summon',
+        manaBase: 140, manaPerLevel: 5, cooldown: 16,
+        powerBase: 0, powerPerLevel: 0, radius: 0,
+        summonFamily: 'wolf', summonCount: 1,
+      },
+      {
+        id: 'holy_symbol',
+        name: { es: 'Símbolo Sagrado', en: 'Holy Symbol' },
+        desc: { es: 'Una gran ola de vida sana a los aliados cercanos.', en: 'A great wave of life heals nearby allies.' },
+        reqLevel: 60, maxLevel: 20, kind: 'heal',
+        manaBase: 120, manaPerLevel: 5, cooldown: 8,
+        powerBase: 280, powerPerLevel: 22, radius: 7,
+      },
+      {
         id: 'sanctuary',
         name: { es: 'Santuario', en: 'Sanctuary' },
         desc: { es: 'Una ola de vida restaura a todos los aliados cercanos.', en: 'A wave of life restores all nearby allies.' },
-        minLevel: 80, manaCost: 200, cooldown: 18,
-        kind: 'heal', power: 520, powerPerLevel: 11, radius: 9,
+        reqLevel: 80, maxLevel: 20, kind: 'heal',
+        manaBase: 200, manaPerLevel: 7, cooldown: 18,
+        powerBase: 520, powerPerLevel: 28, radius: 9,
       },
     ],
   },
 ];
+
+// Mirror new fields onto the legacy field names the older engine still reads
+// (minLevel, manaCost, power). Skill power/mana scale by SKILL LEVEL at runtime
+// through skillPower()/skillMana(); these aliases just hold the level-1 values.
+for (const p of PROFESSIONS) {
+  for (const s of p.skills) {
+    s.minLevel = s.reqLevel;
+    s.manaCost = s.manaBase;
+    s.power = s.powerBase;
+  }
+}
 
 const BY_ID = new Map(PROFESSIONS.map((p) => [p.id, p]));
 
@@ -317,12 +415,23 @@ export function canUseWeaponType(professionId, weaponType) {
   return !!p && p.allowedWeapons.includes(weaponType);
 }
 
-// Skills the profession can actually use at the given character level.
-export function skillsForLevel(professionId, level) {
+// Skills unlockable at the given character level (reqLevel <= charLevel).
+export function skillsForLevel(professionId, charLevel) {
   const p = BY_ID.get(professionId);
   if (!p) return [];
-  return p.skills.filter((s) => level >= s.minLevel);
+  return p.skills.filter((s) => charLevel >= s.reqLevel);
 }
+
+// Every skill of a profession (the full tree, for the skills panel).
+export function skillsOf(professionId) {
+  const p = BY_ID.get(professionId);
+  return p ? p.skills : [];
+}
+
+// Look up a skill by id across all professions.
+const SKILL_BY_ID = new Map();
+for (const p of PROFESSIONS) for (const sk of p.skills) SKILL_BY_ID.set(sk.id, sk);
+export function getSkill(id) { return SKILL_BY_ID.get(id) || null; }
 
 // Derived stats for a profession at a given level.
 export function professionStats(professionId, level) {
@@ -353,10 +462,16 @@ export function professionLevelGain(professionId) {
   return { hp: p.hpPerLevel, mana: p.manaPerLevel };
 }
 
-// Effective power (damage or heal) of a skill for a character of `level`.
-// Returns the skill's base power plus per-level scaling above its minLevel.
-export function skillPower(skill, level) {
+// Effective power (damage or heal) of a skill at a given SKILL LEVEL.
+export function skillPower(skill, skillLevel) {
   if (!skill) return 0;
-  const over = Math.max(0, level - skill.minLevel);
-  return Math.round(skill.power + skill.powerPerLevel * over);
+  const lv = Math.max(1, skillLevel || 1);
+  return Math.round(skill.powerBase + skill.powerPerLevel * (lv - 1));
+}
+
+// Mana cost of a skill at a given SKILL LEVEL.
+export function skillMana(skill, skillLevel) {
+  if (!skill) return 0;
+  const lv = Math.max(1, skillLevel || 1);
+  return Math.round((skill.manaBase || 0) + (skill.manaPerLevel || 0) * (lv - 1));
 }
