@@ -429,7 +429,12 @@ function enterWithCharacter(character) {
   // Fresh stats for this character's vocation. A returning character loads its
   // saved stats below; a new one gets a few levels' worth of starter points.
   charStats = new CharacterStats(player.profession);
-  if (!character.stats) charStats.grantForLevels(1, 4);
+  if (!character.stats) {
+    charStats.grantForLevels(1, 4);
+    // Learn the job's first skill so the player has something usable on the bar.
+    const first = skillsOf(player.profession).find((sk) => sk.reqLevel <= 1);
+    if (first) charStats.addSkillPoint(first);
+  }
   player.rebuildCharacter(profile);
   equipVisuals = new EquipVisuals(player.char);
   // Returning character: hydrate level/exp/gold/equipment/depot/pos from the row.
@@ -449,7 +454,7 @@ setInterval(() => { if (state === 'play') { saveLocal(); saveToAccount(); } }, 1
 const skillPanel = new SkillPanel(() => charStats, {
   getProfession: () => player.profession,
   getLevel: () => player.level,
-  onChange: () => { applyVocationStats(false); recompute(); saveToAccount(); },
+  onChange: () => { applyVocationStats(false); prefillHotbar(); recompute(); saveToAccount(); },
 });
 function toggleSkillPanel() {
   if (document.pointerLockElement) document.exitPointerLock();
@@ -836,14 +841,19 @@ const SKILL_ICON = { area: '🔥', melee: '💥', ranged: '🎯', heal: '💚', 
 
 // Put the vocation's available skills on the first hotbar slots so a new player
 // has their powers ready without configuring anything. Only fills empty slots.
+// Put the skills the player has actually LEARNED (skill level >= 1) onto empty
+// hotbar slots, so the bar only shows usable skills. Called on entering the game
+// and whenever a skill point is spent.
 function prefillHotbar() {
-  const opts = hotbarOptions();
-  let slot = 0;
-  for (const sk of opts.skills) {
-    if (slot >= 10) break;
-    if (!hotbar.slots[slot]) hotbar.setSlot(slot, { kind: 'skill', ...sk });
-    slot++;
+  const learned = hotbarOptions().skills.filter((sk) => charStats.skillLevel(sk.id) >= 1);
+  for (const sk of learned) {
+    const onBar = hotbar.slots.some((e) => e && e.kind === 'skill' && e.id === sk.id);
+    if (onBar) continue;
+    const free = hotbar.slots.findIndex((e) => !e);
+    if (free < 0) break;
+    hotbar.setSlot(free, { ...sk, skillKind: sk.kind, kind: 'skill' });
   }
+  hotbar.render();
 }
 
 function doBuy(def, refresh) {
