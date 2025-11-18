@@ -1,4 +1,4 @@
-import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, rollWeaponInstance, RARITY } from './data/items.js';
+import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, rollWeaponInstance, RARITY, COINS, getCoin } from './data/items.js';
 
 export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag'];
 const BASE_CAPACITY = 400;
@@ -54,7 +54,62 @@ export class Inventory {
     this.equip = {};
     for (const s of EQUIP_SLOTS) this.equip[s] = null;
     this.backpack = [];
-    this.gold = 0;
+    // Coins held per tier (Tibia-style). `gold` is a derived total in bronze
+    // value so shops/quests keep working with a single number.
+    this.coins = {};
+    for (const c of COINS) this.coins[c.id] = 0;
+  }
+
+  // Total wealth in bronze units (sum of every coin times its value).
+  get gold() {
+    let v = 0;
+    for (const c of COINS) v += (this.coins[c.id] || 0) * c.value;
+    return v;
+  }
+  set gold(total) { this._setGoldTotal(total); }
+
+  // Replace all coins with the minimal set that equals `total` bronze.
+  _setGoldTotal(total) {
+    for (const c of COINS) this.coins[c.id] = 0;
+    let v = Math.max(0, Math.floor(total));
+    for (let i = COINS.length - 1; i >= 0; i--) {
+      const c = COINS[i];
+      const n = Math.floor(v / c.value);
+      this.coins[c.id] = n; v -= n * c.value;
+    }
+  }
+
+  // Add coins of a tier from loot (does not auto-convert; the player converts).
+  addCoins(id, count) {
+    if (this.coins[id] == null) return;
+    this.coins[id] += count;
+  }
+
+  // Add a flat bronze amount as bronze coins (loot drops a bronze value).
+  addGold(amount) { this.coins.bronze_coin += Math.max(0, Math.floor(amount)); }
+
+  // Spend a bronze total: rebuild the coin pile from the remaining value.
+  spendGold(amount) {
+    const cur = this.gold;
+    if (amount > cur) return false;
+    this._setGoldTotal(cur - amount);
+    return true;
+  }
+
+  // Convert 100 coins of a tier into 1 of the next tier up. Returns true/false.
+  convertCoin(id) {
+    const idx = COINS.findIndex((c) => c.id === id);
+    if (idx < 0 || idx >= COINS.length - 1) return false; // diamond can't go up
+    if ((this.coins[id] || 0) < 100) return false;
+    this.coins[id] -= 100;
+    this.coins[COINS[idx + 1].id] += 1;
+    return true;
+  }
+
+  // Coin stacks the player holds, for the inventory UI (only non-empty tiers).
+  coinStacks() {
+    return COINS.filter((c) => (this.coins[c.id] || 0) > 0)
+      .map((c) => ({ ...c, count: this.coins[c.id] }));
   }
 
   get bagCapacity() {
@@ -170,14 +225,20 @@ export class Inventory {
   weapon() { return this.equip.weapon; }
 
   serialize() {
-    return { equip: this.equip, backpack: this.backpack, gold: this.gold };
+    // Save the exact coin pile (so a player's manual conversions persist), plus
+    // the derived gold total for backward compatibility.
+    return { equip: this.equip, backpack: this.backpack, coins: { ...this.coins }, gold: this.gold };
   }
 
   load(data) {
     if (!data) return;
     if (data.equip) for (const s of EQUIP_SLOTS) this.equip[s] = data.equip[s] || null;
     if (Array.isArray(data.backpack)) this.backpack = data.backpack;
-    if (typeof data.gold === 'number') this.gold = data.gold;
+    if (data.coins && typeof data.coins === 'object') {
+      for (const c of COINS) this.coins[c.id] = data.coins[c.id] || 0;
+    } else if (typeof data.gold === 'number') {
+      this.gold = data.gold; // old saves only had a number
+    }
   }
 }
 

@@ -194,6 +194,30 @@ export function potionRestore(potion, player) {
   return out;
 }
 
+// Currency tiers, Tibia-style. Each is worth 100 of the previous; the player
+// holds coins as stackable inventory items and can convert 100 up to the next.
+export const COINS = [
+  { id: 'bronze_coin', name: { es: 'Moneda de Bronce', en: 'Bronze Coin' }, value: 1, color: 0xcd7f32, icon: '\uD83D\uDFE0', tier: 0 },
+  { id: 'silver_coin', name: { es: 'Moneda de Plata', en: 'Silver Coin' }, value: 100, color: 0xc0c0c0, icon: '\u26AA', tier: 1 },
+  { id: 'gold_coin', name: { es: 'Moneda de Oro', en: 'Gold Coin' }, value: 10000, color: 0xf1c40f, icon: '\uD83D\uDFE1', tier: 2 },
+  { id: 'platinum_coin', name: { es: 'Moneda de Platino', en: 'Platinum Coin' }, value: 1000000, color: 0xe5e4e2, icon: '\u26AA', tier: 3 },
+  { id: 'diamond_coin', name: { es: 'Moneda de Diamante', en: 'Diamond Coin' }, value: 100000000, color: 0x7ec9ff, icon: '\uD83D\uDC8E', tier: 4 },
+];
+const COIN_BY_ID = new Map(COINS.map((c) => [c.id, c]));
+export function getCoin(id) { return COIN_BY_ID.get(id) || null; }
+
+// Break a total bronze value into the fewest coins of each tier (high to low).
+export function coinsFromValue(total) {
+  let v = Math.max(0, Math.floor(total));
+  const out = [];
+  for (let i = COINS.length - 1; i >= 0; i--) {
+    const c = COINS[i];
+    const n = Math.floor(v / c.value);
+    if (n > 0) { out.push({ id: c.id, count: n }); v -= n * c.value; }
+  }
+  return out;
+}
+
 export const LEGENDARY_ABILITIES = [
   { id: 'ember', name: 'Ember', desc: 'Adds a burst of fire damage on hit.', element: 'fire' },
   { id: 'tide', name: 'Tide', desc: 'Adds a burst of water damage on hit.', element: 'water' },
