@@ -99,7 +99,11 @@ export function buildCharacter(profile) {
     model.add(pivot);
     return { pivot, hand };
   }
-  const armL = makeArm(-1), armR = makeArm(1);
+  // armR holds the weapon (and drives the swing); armL holds the shield. The
+  // model faces +Z and the third-person camera views it from behind, so the
+  // weapon arm sits on -X to read on the right of the screen — matching the
+  // first-person viewmodel, which is also on the right.
+  const armL = makeArm(1), armR = makeArm(-1);
 
   // legs (hip pivot)
   function makeLeg(side) {
