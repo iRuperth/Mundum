@@ -290,12 +290,24 @@ export class World {
     // a time and never stacks two costly builds into one frame — that stacking is
     // what caused the hitch when crossing the city edge. Always build at least
     // one so streaming still keeps up.
+    //
+    // On a teleport/spawn (buildAll), DON'T build the whole 9×9 grid synchronously
+    // — that's ~80 chunks of heavy per-vertex noise in one frame, the freeze you
+    // feel arriving at a city. Build only the immediate ring under the player so
+    // they land on solid ground, then let the normal time-budgeted streaming fill
+    // the rest over the next frames.
     if (buildAll) {
-      while (this.queue.length) {
-        const { key, cx: qx, cz: qz } = this.queue.shift();
-        if (!this.chunks.has(key)) this._buildChunk(qx, qz);
+      const SOLID = 1;   // chunks each way that must exist before the player stands
+      for (let dx = -SOLID; dx <= SOLID; dx++) {
+        for (let dz = -SOLID; dz <= SOLID; dz++) {
+          const key = `${cx + dx},${cz + dz}`;
+          if (!this.chunks.has(key)) this._buildChunk(cx + dx, cz + dz);
+        }
       }
-    } else {
+      // Drop the just-built chunks from the queue so streaming skips them.
+      this.queue = this.queue.filter((q) => !this.chunks.has(q.key));
+    }
+    {
       const deadline = performance.now() + 6;   // ~6 ms of chunk work per frame
       let built = 0;
       while (this.queue.length && (built < 1 || performance.now() < deadline)) {
