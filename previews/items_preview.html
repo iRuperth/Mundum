@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Items Preview — Mundum</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d2228; color: #e7ecf2; font: 14px system-ui, sans-serif; }
+  #app { display: flex; height: 100%; }
+  #stage { flex: 1; position: relative; }
+  #info { position: absolute; left: 14px; top: 12px; font-size: 15px; font-weight: 600; text-shadow: 0 1px 3px #000; line-height: 1.5; }
+  #info small { font-weight: 400; color: #9fb0c2; }
+  #panel { width: 280px; padding: 12px 14px; overflow-y: auto; background: #252b33; box-shadow: -2px 0 8px rgba(0,0,0,.4); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #9fb0c2; margin: 14px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 5px 8px; border: 1px solid #3a434d;
+           background: #2e353e; color: #e7ecf2; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #38414b; }
+  button.on { background: #3b6ea5; border-color: #5a90c8; }
+  .row { display: flex; gap: 6px; }
+  .row button { flex: 1; }
+  .tier-shop { color: #9fe89f; } .tier-epic { color: #c89bff; } .tier-legendary-tier { color: #ffcf5a; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><div id="info"></div></div>
+  <div id="panel"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { WEAPONS, ARMORS, CONTAINERS, POTIONS } from '../src/data/items.js';
+import { buildWeaponMesh } from '../src/equipVisuals.js';
+import { buildPotionMesh, buildBagVariant, buildBackpackVariant, BAG_VARIANTS, BACKPACK_VARIANTS } from '../src/itemMeshes.js';
+
+// --- scene ---------------------------------------------------------------
+const stage = document.getElementById('stage');
+const info = document.getElementById('info');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(stage.clientWidth, stage.clientHeight);
+renderer.setPixelRatio(devicePixelRatio);
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1d2228);
+const camera = new THREE.PerspectiveCamera(38, stage.clientWidth / stage.clientHeight, 0.1, 50);
+camera.position.set(0, 0.4, 2.0);
+camera.lookAt(0, 0.3, 0);
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x30343c, 1.0));
+const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(2, 4, 3); scene.add(key);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(1.5, 32), new THREE.MeshLambertMaterial({ color: 0x2a3038 }));
+floor.rotation.x = -Math.PI / 2; floor.position.y = -0.4; scene.add(floor);
+
+const root = new THREE.Group(); scene.add(root);
+let mesh = null, spinning = true, current = null;
+let legendaryFx = false;
+
+// A few small golden DIAMONDS that orbit + bob around the item — the "legendary
+// item held" aura. Built once, toggled on/off, animated in the loop.
+const goldDiamond = new THREE.MeshStandardMaterial({ color: 0xffe08a, emissive: 0xffc233, emissiveIntensity: 1.0, roughness: 0.2, metalness: 0.4 });
+function makeDiamond() {
+  const d = new THREE.Mesh(new THREE.OctahedronGeometry(0.03, 0), goldDiamond);
+  d.scale.set(1, 1.5, 1);   // a little elongated like a gem
+  return d;
+}
+const starField = new THREE.Group();
+const STAR_N = 4;   // just a few diamonds
+for (let i = 0; i < STAR_N; i++) {
+  const star = makeDiamond();
+  star.userData.a = (i / STAR_N) * Math.PI * 2;
+  star.userData.r = 0.42;
+  star.userData.yBase = 0.18 + (i % 2) * 0.16;
+  starField.add(star);
+}
+starField.visible = false;
+const auraLight = new THREE.PointLight(0xffcc44, 0, 2.5);  // intensity raised when on
+auraLight.position.set(0, 0.3, 0);
+scene.add(starField, auraLight);
+
+function clear() {
+  if (mesh) { root.remove(mesh); mesh.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); mesh = null; }
+}
+
+function showWeapon(w) {
+  clear(); current = w;
+  mesh = buildWeaponMesh(w.type, w.color, { id: w.id, element: w.element, levelReq: w.levelReq, twoHanded: w.twoHanded });
+  // weapons are authored ~0.7 tall; center and lift
+  mesh.position.y = -0.1;
+  root.add(mesh);
+  const tierClass = `tier-${w.shopTier}`;
+  const isShield = w.type === 'shield';
+  // Shields use atk as block strength, not damage — label accordingly.
+  const statLine = isShield
+    ? `bloqueo ${w.atkMin}–${w.atkMax} · def ${w.defense} · nivel ${w.levelReq}`
+    : `ataque ${w.atkMin}–${w.atkMax} · def ${w.defense} · nivel ${w.levelReq} · elem ${w.element}`;
+  info.innerHTML = `${w.name} <small>(${w.type}${w.twoHanded ? ', 2 manos' : ''})</small><br>`
+    + `<small>${statLine}</small><br>`
+    + `<small class="${tierClass}">${w.shopTier}</small> <small>· ${w.value || '—'} oro</small>`;
+  markActive(w.id);
+}
+
+function showPotion(p) {
+  clear(); current = p;
+  mesh = buildPotionMesh(p);
+  mesh.position.y = -0.18; mesh.scale.setScalar(1.6);
+  root.add(mesh);
+  const restore = p.restorePct ? `${p.restorePct * 100}%` : (p.restore || '');
+  info.innerHTML = `${p.name.es || p.name} <small>(${p.restoreType})</small><br>`
+    + `<small>restaura ${restore} · nivel ${p.levelReq} · tier ${p.tier}</small><br>`
+    + `<small>· ${p.value || '—'} oro</small>`;
+  markActive(p.id);
+}
+
+function showBag(v, kind) {
+  clear(); current = v;
+  mesh = kind === 'pack' ? buildBackpackVariant(v) : buildBagVariant(v);
+  mesh.position.y = -0.18; mesh.scale.setScalar(1.5);
+  root.add(mesh);
+  info.innerHTML = `${v.name}<br><small>capacidad ${v.capacity} · ${kind === 'pack' ? 'mochila' : 'bolsa'}</small>`;
+  markActive(v.id);
+}
+
+// --- UI ------------------------------------------------------------------
+const panel = document.getElementById('panel');
+function section(title) { const h = document.createElement('h2'); h.textContent = title; panel.appendChild(h); }
+function btn(label, onClick, parent) { const b = document.createElement('button'); b.textContent = label; b.onclick = onClick; (parent || panel).appendChild(b); return b; }
+
+section('Vista');
+btn('girar on/off', () => { spinning = !spinning; });
+btn('💎 efecto legendario (diamantes) on/off', () => {
+  legendaryFx = !legendaryFx;
+  starField.visible = legendaryFx;
+  auraLight.intensity = legendaryFx ? 1.2 : 0;
+});
+
+// Group by type for a scannable list. Shields are NOT weapons — label them apart.
+const byType = {};
+for (const w of WEAPONS) (byType[w.type] ||= []).push(w);
+const itemBtns = {};
+const TYPE_LABEL = { sword: 'Armas — espada', axe: 'Armas — hacha', mace: 'Armas — maza',
+  lance: 'Armas — lanza', bow: 'Armas — arco/ballesta', wand: 'Armas — varita/báculo',
+  shield: 'Escudos' };
+// Show weapon types first, shields last.
+const order = ['sword', 'axe', 'mace', 'lance', 'bow', 'wand', 'shield'];
+for (const type of order) {
+  if (!byType[type]) continue;
+  section((TYPE_LABEL[type] || type) + ' (' + byType[type].length + ')');
+  for (const w of byType[type].sort((a, b) => a.levelReq - b.levelReq)) {
+    itemBtns[w.id] = btn(`${w.name}  ·  lv${w.levelReq}`, () => showWeapon(w));
+  }
+}
+
+// Potions & consumables (fruits, vials, honey-jar elixirs).
+section('Pociones y comida (' + POTIONS.length + ')');
+for (const p of POTIONS) {
+  itemBtns[p.id] = btn(`${p.icon || ''} ${(p.name.es || p.name)}`, () => showPotion(p));
+}
+
+// 10 loot bags (jute sacks).
+section('Bolsas (' + BAG_VARIANTS.length + ')');
+for (const v of BAG_VARIANTS) itemBtns[v.id] = btn(v.name, () => showBag(v, 'bag'));
+
+// 10 backpacks.
+section('Mochilas (' + BACKPACK_VARIANTS.length + ')');
+for (const v of BACKPACK_VARIANTS) itemBtns[v.id] = btn(v.name, () => showBag(v, 'pack'));
+
+function markActive(id) {
+  for (const k in itemBtns) itemBtns[k].classList.toggle('on', k === id);
+}
+
+// start on the first weapon
+showWeapon(WEAPONS[0]);
+
+// --- loop ----------------------------------------------------------------
+let t = 0;
+function frame() {
+  requestAnimationFrame(frame);
+  t += 0.016;
+  if (spinning && mesh) mesh.rotation.y += 0.012;
+  if (legendaryFx) {
+    starField.rotation.y += 0.01;
+    for (const star of starField.children) {
+      const a = star.userData.a + t * 0.6;
+      star.position.set(Math.cos(a) * star.userData.r, star.userData.yBase + Math.sin(t * 2 + star.userData.a) * 0.08, Math.sin(a) * star.userData.r);
+      star.rotation.y += 0.06;   // slow gem spin
+    }
+  }
+  renderer.render(scene, camera);
+}
+frame();
+addEventListener('resize', () => {
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  camera.aspect = stage.clientWidth / stage.clientHeight; camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>
