@@ -3,6 +3,8 @@
 // Stats scale with level + role so the game gets progressively harder.
 // Everything is expanded deterministically at module load (no Math.random).
 
+import { getWeapon, getArmor, getContainer } from './items.js';
+
 // Family model keys. The renderer builds one procedural mesh per key; every
 // creature variant reuses its family's model with a different scale/tint.
 export const FAMILIES = [
@@ -108,20 +110,23 @@ const FAMILY_DEFS = [
     aggressive: false, aggroRange: 0, speed: 0.6, baseLevel: 1, color: 0xd98a8a,
     gold: [0, 2], loot: [],
     variants: [
-      ['', 1.0, 0x000000, 0, 'minion', 1.6, []], // single, as the user specified
+      ['', 1.0, 0x000000, 0, 'minion', 1.6, [], { levelAbs: 1, attackKind: 'melee' }],
+      // Desert larva (referenced by id from the desert zone).
+      ['Larva', 1.2, 0xe8c87a, 0, 'minion', 1.4, [], { levelAbs: 6, attackKind: 'melee' }],
     ],
   },
   {
     key: 'rat', name: 'Rat', biome: 'grass', element: 'none',
-    aggressive: false, aggroRange: 6, speed: 2.2, baseLevel: 2, color: 0x8a7a6a,
+    aggressive: false, aggroRange: 6, speed: 2.2, baseLevel: 1, color: 0x8a7a6a,
     gold: [0, 4], loot: [drop('cheese', 0.2)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'minion', 1.0, []],
-      ['Big Rat', 1.4, 0x6a5a4a, 3, 'normal', 1.1, [drop('rat-tail', 0.3)]],
-      ['Cave Rat', 1.2, 0x555555, 6, 'normal', 1.15, []],
-      ['Sewer Rat', 1.1, 0x4a4a3a, 8, 'normal', 1.1, []],
-      ['Plague Rat', 1.3, 0x6a7a5a, 10, 'normal', 1.25, [drop('antidote', 0.15)]],
-      ['Rat King', 1.8, 0x7a6a5a, 18, 'boss', 1.4, [drop('rat-crown', 0.1), drop('leather-armor', 0.06)]],
+      // The user asked for exactly: rat, big rat, mutant rat — plus the Rat King
+      // as the rat cave's overlord. Tibia-low levels.
+      ['', 1.0, 0x000000, 0, 'minion', 1.0, [], { levelAbs: 1, attackKind: 'melee' }],
+      ['Big Rat', 1.4, 0x6a5a4a, 0, 'normal', 1.1, [drop('rat-tail', 0.3)], { levelAbs: 2, attackKind: 'melee' }],
+      ['Mutant Rat', 1.3, 0x6a7a5a, 0, 'normal', 1.25, [drop('antidote', 0.12)], { levelAbs: 3, attackKind: 'melee' }],
+      ['Rat King', 1.8, 0x7a6a5a, 0, 'boss', 1.4, [drop('rat-crown', 0.1), drop('leather_armor', 0.06)],
+        { levelAbs: 8, supreme: true, attackKind: 'melee' }],
     ],
   },
   {
@@ -166,9 +171,15 @@ const FAMILY_DEFS = [
     aggressive: false, aggroRange: 5, speed: 1.4, baseLevel: 3, color: 0x445544,
     gold: [0, 4], loot: [drop('chitin', 0.3)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'minion', 1.0, []],
-      ['Fire Beetle', 1.1, 0xaa4422, 7, 'normal', 1.1, [drop('fire-essence', 0.1)]],
-      ['Iron Beetle', 1.3, 0x667788, 14, 'tank', 1.25, [drop('iron-ore', 0.3)]],
+      ['', 1.0, 0x000000, 0, 'minion', 1.0, [], { levelAbs: 3, attackKind: 'melee' }],
+      ['Fire Beetle', 1.1, 0xaa4422, 0, 'normal', 1.1, [drop('fire-essence', 0.1)], { levelAbs: 7, attackKind: 'melee' }],
+      ['Iron Beetle', 1.3, 0x667788, 0, 'tank', 1.25, [drop('iron-ore', 0.3)], { levelAbs: 14, attackKind: 'melee' }],
+      // Desert scarabs (referenced by id from the desert zone). The Ancient Scarab
+      // is the desert overlord: poison clouds + paralyze flavor.
+      ['Scarab', 1.1, 0x4a4a2a, 0, 'normal', 1.2, [drop('chitin', 0.4)],
+        { levelAbs: 12, attackKind: 'melee', areaAttack: { kind: 'poison', radius: 3, damageMul: 1.15, chance: 0.3 } }],
+      ['Ancient Scarab', 1.7, 0x2a2a1a, 0, 'boss', 1.45, [drop('golden_legs', 0.05), drop('chitin', 0.6)],
+        { levelAbs: 34, supreme: true, attackKind: 'melee', areaAttack: { kind: 'poison', radius: 6, damageMul: 1.5, chance: 0.45 } }],
     ],
   },
   {
@@ -209,24 +220,32 @@ const FAMILY_DEFS = [
   },
   {
     key: 'spider', name: 'Spider', biome: 'cave', element: 'none',
-    aggressive: true, aggroRange: 8, speed: 3.0, baseLevel: 7, color: 0x333333,
-    gold: [1, 12], loot: [drop('silk', 0.35), drop('spider-leg', 0.2)], tiers: 2,
+    aggressive: true, aggroRange: 8, speed: 3.0, baseLevel: 1, color: 0x333333,
+    gold: [1, 12], loot: [drop('silk', 0.35), drop('spider-leg', 0.2)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'normal', 1.0, []],
-      ['Wood Spider', 1.1, 0x665544, 4, 'minion', 0.9, []],
-      ['Poison Spider', 1.2, 0x884488, 13, 'caster', 1.2, [drop('poison-vial', 0.3)]],
-      ['Tarantula', 1.5, 0x554433, 20, 'normal', 1.25, [drop('silk', 0.6)]],
-      ['Giant Spider', 2.0, 0x222233, 32, 'boss', 1.4, [drop('spider-silk-armor', 0.06), drop('venom-gland', 0.4)]],
+      // Tibia vermin ladder: spider→poison spider→tarantula, with the Giant
+      // Spider (poison fields) as the nest overlord.
+      ['', 1.0, 0x000000, 0, 'minion', 1.0, [], { levelAbs: 1, attackKind: 'melee' }],
+      ['Poison Spider', 1.2, 0x884488, 0, 'normal', 1.1, [drop('poison-vial', 0.2)], { levelAbs: 3, attackKind: 'melee' }],
+      ['Tarantula', 1.5, 0x554433, 0, 'normal', 1.25, [drop('silk', 0.5)], { levelAbs: 12, attackKind: 'melee' }],
+      // Crystal Spider (Tibia 7.4): an icy spider that spits frost.
+      ['Crystal Spider', 1.6, 0xbfe8ff, 0, 'tank', 1.3, [drop('frost-shard', 0.2), drop('silk', 0.5)],
+        { levelAbs: 30, attackKind: 'caster', element: 'water',
+          areaAttack: { kind: 'water', radius: 3, damageMul: 1.2, chance: 0.3 } }],
+      ['Giant Spider', 2.0, 0x222233, 0, 'boss', 1.4, [drop('spider-silk-armor', 0.05), drop('venom-gland', 0.4)],
+        { levelAbs: 35, supreme: true, attackKind: 'melee',
+          areaAttack: { kind: 'poison', radius: 5, damageMul: 1.4, chance: 0.4 } }],
     ],
   },
   {
-    key: 'scorpion', name: 'Scorpion', biome: 'cave', element: 'none',
-    aggressive: true, aggroRange: 8, speed: 2.6, baseLevel: 9, color: 0x886622,
+    key: 'scorpion', name: 'Scorpion', biome: 'desert', element: 'none',
+    aggressive: true, aggroRange: 8, speed: 2.6, baseLevel: 6, color: 0x886622,
     gold: [2, 14], loot: [drop('scorpion-tail', 0.3)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'normal', 1.0, []],
-      ['Sand Scorpion', 1.2, 0xccaa66, 14, 'normal', 1.15, []],
-      ['Black Scorpion', 1.5, 0x222222, 24, 'tank', 1.3, [drop('venom-gland', 0.35)]],
+      // Ankrahmun desert vermin: melee with a poison sting.
+      ['', 1.0, 0x000000, 0, 'normal', 1.0, [], { levelAbs: 6, attackKind: 'melee' }],
+      ['Sand Scorpion', 1.2, 0xccaa66, 0, 'normal', 1.15, [], { levelAbs: 10, attackKind: 'melee' }],
+      ['Black Scorpion', 1.5, 0x222222, 0, 'tank', 1.3, [drop('venom-gland', 0.3)], { levelAbs: 18, attackKind: 'melee' }],
     ],
   },
   {
@@ -283,7 +302,7 @@ const FAMILY_DEFS = [
     ],
   },
   {
-    key: 'wolf', name: 'Wolf', biome: 'forest', element: 'none',
+    key: 'wolf', name: 'Wolf', biome: 'snow', element: 'none',
     aggressive: true, aggroRange: 11, speed: 4.0, baseLevel: 8, color: 0x888888,
     gold: [2, 16], loot: [drop('wolf-pelt', 0.4), drop('fang', 0.25)], tiers: 2,
     variants: [
@@ -295,7 +314,7 @@ const FAMILY_DEFS = [
     ],
   },
   {
-    key: 'bear', name: 'Bear', biome: 'forest', element: 'none',
+    key: 'bear', name: 'Bear', biome: 'snow', element: 'none',
     aggressive: true, aggroRange: 9, speed: 3.2, baseLevel: 12, color: 0x7a5a3a,
     gold: [4, 22], loot: [drop('bear-pelt', 0.4), drop('claw', 0.3)],
     variants: [
@@ -342,15 +361,22 @@ const FAMILY_DEFS = [
   },
   {
     key: 'orc', name: 'Orc', biome: 'mountain', element: 'none',
-    aggressive: true, aggroRange: 10, speed: 3.4, baseLevel: 15, color: 0x6a8a4a,
-    gold: [5, 30], loot: [drop('iron-sword', 0.1), drop('iron-helmet', 0.07)], tiers: 2,
+    aggressive: true, aggroRange: 10, speed: 3.4, baseLevel: 8, color: 0x6a8a4a,
+    gold: [5, 30], loot: [drop('iron_sword', 0.08), drop('iron_helmet', 0.06)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'normal', 1.0, []],
-      ['Orc Archer', 1.0, 0x7a9a5a, 18, 'caster', 1.15, [drop('long-bow', 0.1)]],
-      ['Orc Mage', 1.1, 0x5a7a6a, 22, 'caster', 1.3, [drop('fire-wand', 0.08), drop('mana-potion', 0.3)]],
-      ['Orc Wise', 1.1, 0x8a9a6a, 26, 'caster', 1.25, [drop('staff', 0.1)]],
-      ['Orc Leader', 1.6, 0x4a6a3a, 30, 'tank', 1.35, [drop('steel-sword', 0.1), drop('iron-armor', 0.1)]],
-      ['Orc Warlord', 2.0, 0x3a5a2a, 40, 'boss', 1.5, [drop('battle-axe', 0.12), drop('steel-armor', 0.1)]],
+      // Tibia 7.4 orc squad: melee grunts + spear-thrower + bow + shaman caster +
+      // a tanky leader and the Warlord as the zone overlord.
+      ['', 1.0, 0x000000, 0, 'normal', 1.0, [], { levelAbs: 8, attackKind: 'melee' }],
+      ['Orc Warrior', 1.15, 0x5a7a3a, 0, 'normal', 1.2, [drop('iron_sword', 0.06)], { levelAbs: 12, attackKind: 'melee' }],
+      ['Orc Spearman', 1.0, 0x7a9a5a, 0, 'normal', 1.1, [drop('spear', 0.15)], { levelAbs: 10, attackKind: 'ranged' }],
+      ['Orc Berserker', 1.4, 0x4a6a2a, 0, 'tank', 1.3, [drop('battle_axe', 0.06)], { levelAbs: 18, attackKind: 'melee' }],
+      ['Orc Shaman', 1.1, 0x5a7a6a, 0, 'caster', 1.2, [drop('fire_wand', 0.06), drop('mana_potion', 0.2)],
+        { levelAbs: 14, attackKind: 'caster',
+          areaAttack: { kind: 'fire', radius: 3.5, damageMul: 1.2, chance: 0.3 },
+          selfHeal: { amount: 0.05, chance: 0.4 } }],
+      ['Orc Leader', 1.6, 0x4a6a3a, 0, 'tank', 1.4, [drop('steel_sword', 0.08), drop('iron_armor', 0.08)], { levelAbs: 28, attackKind: 'melee' }],
+      ['Orc Warlord', 2.0, 0x3a5a2a, 0, 'boss', 1.6, [drop('battle_axe', 0.1), drop('steel_armor', 0.08), drop('knight_sword', 0.04)],
+        { levelAbs: 40, supreme: true, attackKind: 'melee' }],
     ],
   },
   {
@@ -365,25 +391,34 @@ const FAMILY_DEFS = [
   },
   {
     key: 'troll', name: 'Troll', biome: 'mountain', element: 'none',
-    aggressive: true, aggroRange: 10, speed: 3.0, baseLevel: 26, color: 0x6a7a5a,
-    gold: [10, 50], loot: [drop('club', 0.12), drop('troll-hide', 0.3)], tiers: 2,
+    aggressive: true, aggroRange: 9, speed: 3.0, baseLevel: 4, color: 0x6a7a5a,
+    gold: [2, 18], loot: [drop('club', 0.1), drop('troll-hide', 0.3)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'tank', 1.0, []],
-      ['Cave Troll', 1.3, 0x556655, 32, 'tank', 1.2, [drop('iron-armor', 0.1)]],
-      ['Frost Troll', 1.4, 0xaaccdd, 38, 'caster', 1.3, [drop('frost-shard', 0.2)]],
-      ['War Troll', 1.7, 0x4a5a3a, 44, 'boss', 1.45, [drop('steel-armor', 0.12), drop('great-axe', 0.1)]],
+      // Tibia trolls are weak early-game brutes; the island troll lobs a stone.
+      ['', 1.0, 0x000000, 0, 'normal', 1.0, [], { levelAbs: 4, attackKind: 'melee' }],
+      ['Swamp Troll', 1.1, 0x5a6a4a, 0, 'normal', 1.05, [drop('troll-hide', 0.4)], { levelAbs: 5, attackKind: 'melee' }],
+      ['Island Troll', 1.0, 0x7a8a5a, 0, 'normal', 1.1, [drop('spear', 0.08)], { levelAbs: 4, attackKind: 'ranged' }],
+      ['Cave Troll', 1.4, 0x556655, 0, 'tank', 1.2, [drop('iron_armor', 0.05)], { levelAbs: 8, attackKind: 'melee' }],
+      ['Frost Troll', 1.3, 0xaaccdd, 0, 'caster', 1.2, [drop('frost-shard', 0.15)],
+        { levelAbs: 9, attackKind: 'caster', areaAttack: { kind: 'water', radius: 3, damageMul: 1.1, chance: 0.25 } }],
+      ['Troll Champion', 1.6, 0x4a5a3a, 0, 'boss', 1.5, [drop('battle_axe', 0.08), drop('iron_armor', 0.08)],
+        { levelAbs: 12, supreme: true, attackKind: 'melee' }],
     ],
     elementByName: { 'Frost Troll': 'water' },
   },
   {
     key: 'minotaur', name: 'Minotaur', biome: 'cave', element: 'none',
-    aggressive: true, aggroRange: 10, speed: 3.6, baseLevel: 30, color: 0x7a4a2a,
-    gold: [12, 55], loot: [drop('battle-axe', 0.12), drop('horn', 0.3)],
+    aggressive: true, aggroRange: 10, speed: 3.6, baseLevel: 6, color: 0x7a4a2a,
+    gold: [4, 30], loot: [drop('battle_axe', 0.06), drop('horn', 0.3)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'tank', 1.0, []],
-      ['Minotaur Guard', 1.3, 0x6a3a1a, 36, 'tank', 1.25, [drop('steel-shield', 0.1)]],
-      ['Minotaur Mage', 1.2, 0x8a5a3a, 40, 'caster', 1.3, [drop('staff', 0.1)]],
-      ['Minotaur King', 1.9, 0x5a2a0a, 50, 'boss', 1.55, [drop('minotaur-axe', 0.15), drop('steel-armor', 0.12)]],
+      // Mintwallin formation: melee, a tanky guard, a bow archer (ranged), and
+      // the Minotaur Mage who throws energy fields (area) as the zone overlord.
+      ['', 1.0, 0x000000, 0, 'normal', 1.0, [], { levelAbs: 6, attackKind: 'melee' }],
+      ['Minotaur Guard', 1.3, 0x6a3a1a, 0, 'tank', 1.2, [drop('steel_shield', 0.05)], { levelAbs: 16, attackKind: 'melee' }],
+      ['Minotaur Archer', 1.1, 0x8a5a3a, 0, 'normal', 1.15, [drop('long_bow', 0.08)], { levelAbs: 13, attackKind: 'ranged' }],
+      ['Minotaur Mage', 1.2, 0x9a6a4a, 0, 'caster', 1.35, [drop('mystic_staff', 0.06), drop('mana_potion', 0.2)],
+        { levelAbs: 17, supreme: true, attackKind: 'caster',
+          areaAttack: { kind: 'energy', radius: 4, damageMul: 1.4, chance: 0.4 } }],
     ],
   },
   {
@@ -400,15 +435,18 @@ const FAMILY_DEFS = [
   // UNDEAD
   {
     key: 'skeleton', name: 'Skeleton', biome: 'cave', element: 'none',
-    aggressive: true, aggroRange: 9, speed: 3.0, baseLevel: 12, color: 0xddddcc,
-    gold: [3, 20], loot: [drop('bone', 0.4), drop('rusty-sword', 0.1)], tiers: 2,
+    aggressive: true, aggroRange: 9, speed: 3.0, baseLevel: 5, color: 0xddddcc,
+    gold: [3, 20], loot: [drop('bone', 0.4), drop('rusty-sword', 0.08)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'normal', 1.0, []],
-      ['Skeleton Warrior', 1.1, 0xccccbb, 18, 'tank', 1.2, [drop('iron-sword', 0.08)]],
-      ['Skeleton Archer', 1.0, 0xc8c8b8, 16, 'caster', 1.15, [drop('long-bow', 0.1)]],
-      ['Skeleton Mage', 1.1, 0xbbbbee, 24, 'caster', 1.3, [drop('staff', 0.1), drop('mana-potion', 0.25)]],
-      ['Bone Knight', 1.5, 0xaaaa99, 32, 'tank', 1.35, [drop('steel-armor', 0.1)]],
-      ['Lich', 1.6, 0x99bbcc, 48, 'boss', 1.6, [drop('lich-staff', 0.12), drop('soul-gem', 0.2)]],
+      // Crypt undead: melee skeletons, a bow archer, a demon skeleton tank, and
+      // the Necromancer (death area + summons) as the crypt overlord.
+      ['', 1.0, 0x000000, 0, 'normal', 1.0, [], { levelAbs: 5, attackKind: 'melee' }],
+      ['Skeleton Archer', 1.0, 0xc8c8b8, 0, 'normal', 1.15, [drop('long_bow', 0.06)], { levelAbs: 11, attackKind: 'ranged' }],
+      ['Demon Skeleton', 1.3, 0xaaaa99, 0, 'tank', 1.3, [drop('iron_armor', 0.06)], { levelAbs: 20, attackKind: 'melee' }],
+      ['Necromancer', 1.4, 0x99bbcc, 0, 'caster', 1.45, [drop('mystic_staff', 0.06), drop('soul-gem', 0.15)],
+        { levelAbs: 36, supreme: true, attackKind: 'caster',
+          areaAttack: { kind: 'energy', radius: 4.5, damageMul: 1.4, chance: 0.4 },
+          selfHeal: { amount: 0.05, chance: 0.35 } }],
     ],
   },
   {
@@ -416,9 +454,12 @@ const FAMILY_DEFS = [
     aggressive: true, aggroRange: 8, speed: 1.8, baseLevel: 10, color: 0x6a8a5a,
     gold: [2, 16], loot: [drop('rotten-flesh', 0.5)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'tank', 0.9, []],
-      ['Rotting Zombie', 1.2, 0x5a7a4a, 16, 'tank', 1.1, [drop('antidote', 0.15)]],
-      ['Plague Zombie', 1.3, 0x7a9a4a, 24, 'tank', 1.25, [drop('poison-vial', 0.2)]],
+      ['', 1.0, 0x000000, 0, 'tank', 0.9, [], { levelAbs: 10, attackKind: 'melee' }],
+      ['Rotting Zombie', 1.2, 0x5a7a4a, 0, 'tank', 1.1, [drop('antidote', 0.15)], { levelAbs: 16, attackKind: 'melee' }],
+      // Desert mummies (referenced by id from the desert zone): wrapped, slow,
+      // life-drain melee.
+      ['Mummy', 1.1, 0xcabd96, 0, 'tank', 1.2, [drop('antidote', 0.12), drop('chitin', 0.2)], { levelAbs: 16, attackKind: 'melee' }],
+      ['Ancient Mummy', 1.4, 0xb8a878, 0, 'boss', 1.35, [drop('golden_armor', 0.04), drop('soul-gem', 0.1)], { levelAbs: 30, attackKind: 'melee' }],
     ],
   },
   {
@@ -461,9 +502,11 @@ const FAMILY_DEFS = [
       ['Stone Golem', 1.0, 0x888888, 0, 'tank', 1.0, []],
       ['Iron Golem', 1.3, 0x778899, 36, 'tank', 1.3, [drop('iron-ore', 0.5)]],
       ['Lava Golem', 1.4, 0xcc4422, 44, 'tank', 1.35, [drop('fire-essence', 0.3)]],
+      // Ice Golem (Tibia 7.4): a frozen construct from the far north.
+      ['Ice Golem', 1.4, 0xbfe0ef, 40, 'tank', 1.3, [drop('frost-shard', 0.3), drop('water-essence', 0.3)]],
       ['Crystal Golem', 1.5, 0x88ccee, 50, 'boss', 1.5, [drop('crystal', 0.3), drop('steel-armor', 0.1)]],
     ],
-    elementByName: { 'Lava Golem': 'fire' },
+    elementByName: { 'Lava Golem': 'fire', 'Ice Golem': 'water' },
   },
   {
     key: 'gargoyle', name: 'Gargoyle', biome: 'mountain', element: 'none',
@@ -583,28 +626,45 @@ const FAMILY_DEFS = [
       ['Apprentice Mage', 0.9, 0x5566bb, -4, 'caster', 0.9, []],
       ['Fire Mage', 1.0, 0xcc4433, 6, 'caster', 1.2, [drop('fire-wand', 0.1), drop('fire-sword', 0.05)]],
       ['Frost Mage', 1.0, 0x66aadd, 10, 'caster', 1.2, [drop('frost-wand', 0.1)]],
+      // Djinn (Tibia 7.4): the Efreet (fire) and Marid (water) genies — powerful
+      // casters that hurl elemental blasts.
+      ['Efreet', 1.3, 0xff7a33, 18, 'caster', 1.4, [drop('fire-essence', 0.3), drop('mystic_staff', 0.04)],
+        { areaAttack: { kind: 'fire', radius: 4, damageMul: 1.4, chance: 0.4 } }],
+      ['Marid', 1.3, 0x33a0ff, 18, 'caster', 1.4, [drop('water-essence', 0.3), drop('mystic_staff', 0.04)],
+        { areaAttack: { kind: 'water', radius: 4, damageMul: 1.4, chance: 0.4 } }],
       ['Archmage', 1.4, 0x3344cc, 24, 'boss', 1.55, [drop('archmage-staff', 0.12), drop('soul-gem', 0.25)]],
     ],
-    elementByName: { 'Frost Mage': 'water', 'Apprentice Mage': 'none' },
+    elementByName: { 'Frost Mage': 'water', 'Apprentice Mage': 'none', 'Efreet': 'fire', 'Marid': 'water' },
   },
   {
     key: 'dwarf', name: 'Dwarf', biome: 'cave', element: 'none',
-    aggressive: true, aggroRange: 8, speed: 3.0, baseLevel: 18, color: 0xaa7755,
-    gold: [6, 32], loot: [drop('pickaxe', 0.15), drop('iron-ore', 0.3)],
+    aggressive: true, aggroRange: 8, speed: 3.0, baseLevel: 5, color: 0xaa7755,
+    gold: [3, 28], loot: [drop('pickaxe', 0.12), drop('iron-ore', 0.3)],
     variants: [
-      ['Mad Dwarf', 1.0, 0x996644, 0, 'normal', 1.0, []],
-      ['Dwarf Guard', 1.2, 0x885533, 26, 'tank', 1.25, [drop('iron-armor', 0.1)]],
-      ['Dwarf Berserker', 1.3, 0xaa5533, 32, 'boss', 1.4, [drop('battle-axe', 0.12)]],
+      // Tibia dwarves: melee, a crossbow soldier (ranged), a tank guard, and the
+      // Dwarf Geomancer (molten-rock area caster) as the deep overlord.
+      ['', 1.0, 0x000000, 0, 'normal', 1.0, [], { levelAbs: 5, attackKind: 'melee' }],
+      ['Dwarf Soldier', 1.1, 0x885533, 0, 'normal', 1.15, [drop('crossbow', 0.06)], { levelAbs: 14, attackKind: 'ranged' }],
+      ['Dwarf Guard', 1.3, 0x996644, 0, 'tank', 1.25, [drop('iron_armor', 0.06)], { levelAbs: 24, attackKind: 'melee' }],
+      ['Dwarf Geomancer', 1.2, 0xaa5533, 0, 'caster', 1.35, [drop('mystic_staff', 0.06), drop('mana_potion', 0.2)],
+        { levelAbs: 22, supreme: true, attackKind: 'caster',
+          areaAttack: { kind: 'fire', radius: 4, damageMul: 1.3, chance: 0.4 },
+          selfHeal: { amount: 0.05, chance: 0.35 } }],
     ],
   },
   {
     key: 'elf', name: 'Elf', biome: 'forest', element: 'none',
-    aggressive: true, aggroRange: 12, speed: 4.0, baseLevel: 20, color: 0xccddaa,
-    gold: [6, 34], loot: [drop('long-bow', 0.12), drop('elven-cloak', 0.1)],
+    aggressive: true, aggroRange: 12, speed: 4.0, baseLevel: 8, color: 0xccddaa,
+    gold: [6, 34], loot: [drop('long_bow', 0.08), drop('elven-cloak', 0.1)],
     variants: [
-      ['Wild Elf', 1.0, 0xbbcc99, 0, 'caster', 1.0, []],
-      ['Elf Ranger', 1.0, 0xaacc88, 28, 'caster', 1.25, [drop('elven-bow', 0.12)]],
-      ['Elf Warden', 1.3, 0x99bb77, 36, 'boss', 1.4, [drop('nature-staff', 0.1), drop('elven-armor', 0.1)]],
+      // Deep-forest elves: bow archers (ranged); the Arcanist also casts a small
+      // area and heals.
+      ['', 1.0, 0xbbcc99, 0, 'normal', 1.0, [], { levelAbs: 8, attackKind: 'ranged' }],
+      ['Elf Scout', 1.0, 0xaacc88, 0, 'normal', 1.2, [drop('elven_bow', 0.08)], { levelAbs: 13, attackKind: 'ranged' }],
+      ['Elf Arcanist', 1.3, 0x99bb77, 0, 'caster', 1.35, [drop('nature-staff', 0.06), drop('elven-armor', 0.06)],
+        { levelAbs: 20, supreme: true, attackKind: 'caster',
+          areaAttack: { kind: 'energy', radius: 3.5, damageMul: 1.3, chance: 0.35 },
+          selfHeal: { amount: 0.05, chance: 0.4 } }],
     ],
   },
 
@@ -648,9 +708,20 @@ const FAMILY_DEFS = [
     aggressive: true, aggroRange: 13, speed: 3.0, baseLevel: 50, color: 0x447766,
     gold: [40, 150], loot: [drop('hydra-scale', 0.4), drop('hydra-fang', 0.25)],
     variants: [
-      ['', 1.0, 0x000000, 0, 'boss', 0.8, []],
-      ['Swamp Hydra', 1.3, 0x557744, 60, 'boss', 1.1, [drop('poison-vial', 0.4)]],
-      ['Ancient Hydra', 1.8, 0x336655, 72, 'boss', 1.5, [drop('hydra-armor', 0.12), drop('dragon-axe', 0.08)]],
+      // The Hydra: heavy melee (3 heads lunge) + a triangular poison area burst,
+      // and it self-heals like its Tibia counterpart.
+      ['', 1.0, 0x000000, 0, 'boss', 0.8, [],
+        { levelAbs: 68, attackKind: 'melee',
+          areaAttack: { kind: 'poison', radius: 5, damageMul: 1.3, chance: 0.4 },
+          selfHeal: { amount: 0.06, chance: 0.5 } }],
+      ['Swamp Hydra', 1.3, 0x557744, 0, 'boss', 1.1, [drop('poison-vial', 0.4), drop('dragon_armor', 0.05)],
+        { levelAbs: 70, attackKind: 'melee',
+          areaAttack: { kind: 'poison', radius: 6, damageMul: 1.4, chance: 0.45 },
+          selfHeal: { amount: 0.07, chance: 0.5 } }],
+      ['Ancient Hydra', 1.8, 0x336655, 0, 'boss', 1.5, [drop('hydra-armor', 0.12), drop('demon_shield', 0.05), drop('golden_armor', 0.04)],
+        { levelAbs: 76, supreme: true, attackKind: 'melee',
+          areaAttack: { kind: 'poison', radius: 7, damageMul: 1.6, chance: 0.5 },
+          selfHeal: { amount: 0.08, chance: 0.55 } }],
     ],
     elementByName: { 'Swamp Hydra': 'plant' },
   },
@@ -665,34 +736,56 @@ const FAMILY_DEFS = [
   },
   {
     key: 'dragon', name: 'Dragon', biome: 'mountain', element: 'fire',
-    aggressive: true, aggroRange: 14, speed: 4.0, baseLevel: 70, color: 0xcc3322,
-    gold: [80, 350], loot: [drop('dragon-scale', 0.5), drop('dragon-tooth', 0.3)],
+    aggressive: true, aggroRange: 14, speed: 4.0, baseLevel: 38, color: 0xcc3322,
+    gold: [80, 350], loot: [drop('dragon-scale', 0.4), drop('dragon-tooth', 0.25)],
     variants: [
-      ['Young Dragon', 0.9, 0xdd4433, -10, 'boss', 0.7, [drop('dragon-scale', 0.4)]],
-      ['Red Dragon', 1.2, 0xcc2211, 0, 'boss', 1.0, [drop('fire-sword', 0.12), drop('dragon-axe', 0.08)]],
-      ['Green Dragon', 1.2, 0x338822, 6, 'boss', 1.05, [drop('plant-essence', 0.4), drop('dragon-axe', 0.08)]],
-      ['Blue Dragon', 1.2, 0x2244cc, 10, 'boss', 1.1, [drop('water-essence', 0.4), drop('frost-blade', 0.1)]],
-      ['Black Dragon', 1.4, 0x222222, 18, 'boss', 1.25, [drop('dragon-axe', 0.12), drop('dragon-armor', 0.1)]],
-      ['Golden Dragon', 1.5, 0xddbb33, 26, 'boss', 1.4, [drop('dragon-armor', 0.15), drop('dragon-slayer', 0.1)]],
-      ['Elder Dragon', 1.8, 0x991111, 38, 'boss', 1.7, [drop('dragon-slayer', 0.15), drop('dragon-shield', 0.12), drop('soul-gem', 0.4)]],
+      // Dragons: melee bite + a fire-breath / fireball area, and they self-heal.
+      // The Dragon Lord (Tibia ~lv72) is the mountain overlord with a great fire bomb.
+      ['', 1.1, 0xcc2211, 0, 'boss', 1.0, [drop('fire_sword', 0.06), drop('dragon_shield', 0.04)],
+        { levelAbs: 38, attackKind: 'melee',
+          areaAttack: { kind: 'fire', radius: 5, damageMul: 1.4, chance: 0.4 },
+          selfHeal: { amount: 0.05, chance: 0.4 } }],
+      ['Green Dragon', 1.2, 0x338822, 0, 'boss', 1.05, [drop('dragon_armor', 0.05), drop('plant-essence', 0.4)],
+        { levelAbs: 42, attackKind: 'melee',
+          areaAttack: { kind: 'poison', radius: 5, damageMul: 1.4, chance: 0.4 },
+          selfHeal: { amount: 0.05, chance: 0.4 } }],
+      ['Black Dragon', 1.4, 0x222222, 0, 'boss', 1.25, [drop('dragon_armor', 0.06), drop('dragon_helmet', 0.05)],
+        { levelAbs: 55, attackKind: 'melee',
+          areaAttack: { kind: 'fire', radius: 6, damageMul: 1.5, chance: 0.45 },
+          selfHeal: { amount: 0.06, chance: 0.45 } }],
+      // Frost Dragon (Tibia 7.4): an icy dragon with a freezing breath.
+      ['Frost Dragon', 1.5, 0x9fd6ff, 0, 'boss', 1.3, [drop('frost_armor', 0.05), drop('frost-shard', 0.4), drop('dragon_shield', 0.04)],
+        { levelAbs: 58, attackKind: 'melee',
+          areaAttack: { kind: 'water', radius: 6, damageMul: 1.5, chance: 0.45 },
+          selfHeal: { amount: 0.06, chance: 0.45 } }],
+      ['Dragon Lord', 1.9, 0x991111, 0, 'boss', 1.7, [drop('dragon_shield', 0.08), drop('demon_armor', 0.04), drop('golden_legs', 0.04), drop('soul-gem', 0.3)],
+        { levelAbs: 72, supreme: true, attackKind: 'melee',
+          areaAttack: { kind: 'fire', radius: 8, damageMul: 1.8, chance: 0.5 },
+          selfHeal: { amount: 0.07, chance: 0.5 } }],
     ],
-    elementByName: {
-      'Green Dragon': 'plant', 'Blue Dragon': 'water',
-      'Black Dragon': 'none', 'Golden Dragon': 'fire',
-    },
+    elementByName: { 'Green Dragon': 'plant', 'Black Dragon': 'none', 'Frost Dragon': 'water' },
   },
 
   // THE HARDEST: Demon endgame
   {
     key: 'demon', name: 'Demon', biome: 'cave', element: 'fire',
-    aggressive: true, aggroRange: 14, speed: 4.2, baseLevel: 90, color: 0xaa1111,
-    gold: [150, 600], loot: [drop('demon-horn', 0.5), drop('hellfire-shard', 0.3)],
+    aggressive: true, aggroRange: 14, speed: 4.2, baseLevel: 75, color: 0xaa1111,
+    gold: [150, 600], loot: [drop('demon-horn', 0.4), drop('hellfire-shard', 0.25)],
     variants: [
-      ['Lesser Demon', 1.0, 0xbb2211, -15, 'boss', 0.75, [drop('demon-shield', 0.1)]],
-      ['Demon', 1.4, 0xaa1111, 0, 'boss', 1.0, [drop('demon-shield', 0.12), drop('hellfire-blade', 0.1)]],
-      ['Greater Demon', 1.7, 0x991100, 14, 'boss', 1.25, [drop('hellfire-blade', 0.15), drop('demon-armor', 0.12)]],
-      ['Arch Demon', 2.0, 0x770000, 24, 'boss', 1.5, [drop('demon-armor', 0.15), drop('soul-reaper', 0.12), drop('soul-gem', 0.5)]],
-      ['Demon Lord', 2.4, 0x550000, 35, 'boss', 1.9, [drop('demon-crown', 0.2), drop('soul-reaper', 0.2), drop('demon-armor', 0.2), drop('soul-gem', 0.8)]],
+      // The Demon (Tibia ~lv88): the apex. Melee + life-drain energy + huge
+      // fireball area + heals. The Demon Lord is the abyss overlord.
+      ['Lesser Demon', 1.1, 0xbb2211, 0, 'boss', 0.8, [drop('demon_shield', 0.05)],
+        { levelAbs: 75, attackKind: 'caster',
+          areaAttack: { kind: 'fire', radius: 5, damageMul: 1.5, chance: 0.4 },
+          selfHeal: { amount: 0.05, chance: 0.4 } }],
+      ['Demon', 1.5, 0xaa1111, 0, 'boss', 1.1, [drop('demon_shield', 0.06), drop('demon_armor', 0.04)],
+        { levelAbs: 88, attackKind: 'caster',
+          areaAttack: { kind: 'fire', radius: 6, damageMul: 1.7, chance: 0.45 },
+          selfHeal: { amount: 0.06, chance: 0.45 } }],
+      ['Demon Lord', 2.4, 0x550000, 0, 'boss', 1.9, [drop('demon_armor', 0.1), drop('demon_helmet', 0.06), drop('demon_amulet', 0.06), drop('soul-gem', 0.6)],
+        { levelAbs: 110, supreme: true, attackKind: 'caster',
+          areaAttack: { kind: 'fire', radius: 9, damageMul: 2.0, chance: 0.5 },
+          selfHeal: { amount: 0.08, chance: 0.5 } }],
     ],
   },
 ];
@@ -707,26 +800,26 @@ function slug(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-// Tier prefixes used to expand families flagged with `tiers`. Each tier is a
-// tougher recolored/rescaled copy of a base variant, deterministically derived.
-// [prefix, scaleAdd, colorTint, levelDelta, statMul, lootBonus]
-const TIERS = [
-  ['Elite', 0.15, 0x886699, 6, 1.35, drop('gold-coins', 0.2)],
-  ['Champion', 0.3, 0xaa7733, 12, 1.7, drop('rare-charm', 0.15)],
-  ['Ancient', 0.45, 0x445566, 20, 2.2, drop('soul-gem', 0.2)],
-];
 
-function pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, statMul, loot, idxRef) {
-  const element = (fam.elementByName && fam.elementByName[name] != null)
-    ? fam.elementByName[name]
-    : fam.element;
+function pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, statMul, loot, idxRef, opts) {
+  const o = opts || {};
+  const element = (o.element != null)
+    ? o.element
+    : (fam.elementByName && fam.elementByName[name] != null)
+      ? fam.elementByName[name]
+      : fam.element;
   let id = `${fam.key}-${slug(name)}`;
   while (seenIds.has(id)) id = `${id}-${idxRef.i}`;
   seenIds.add(id);
   const base = baseStats(level, role);
-  // Append level-appropriate potion drops (5% basics, 10% rare specials).
+  // High-level foes shouldn't drop fruit/berries; the boss role and deep
+  // creatures lean on real loot instead. potionDropsForLevel already escalates
+  // the tier by level, so this only trims the low fruit tail.
   const lootWithPotions = [...loot, ...potionDropsForLevel(level, role)];
-  out.push({
+  // Whether this creature is aggressive: a per-variant override wins, else the
+  // family default. Passive creatures still get provoked when attacked (combat).
+  const aggressive = (o.aggressive != null) ? o.aggressive : fam.aggressive;
+  const entry = {
     id,
     name,
     family: fam.key,
@@ -738,12 +831,21 @@ function pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, sta
     defense: round(base.defense * statMul),
     exp: round(base.exp * statMul),
     element,
-    aggressive: fam.aggressive,
-    aggroRange: fam.aggressive ? fam.aggroRange : 0,
+    aggressive,
+    aggroRange: aggressive ? (o.aggroRange != null ? o.aggroRange : fam.aggroRange) : 0,
     speed: fam.speed,
     spawnBiome: fam.biome,
     loot: lootWithPotions,
-  });
+    // Combat behaviour (read by combat.js). attackKind drives how it fights;
+    // areaAttack/selfHeal are optional occasional abilities; boss/supreme flag
+    // tougher encounters and the one zone overlord.
+    attackKind: o.attackKind || 'melee',
+  };
+  if (o.areaAttack) entry.areaAttack = o.areaAttack;
+  if (o.selfHeal) entry.selfHeal = o.selfHeal;
+  if (o.boss || role === 'boss') entry.boss = true;
+  if (o.supreme) entry.supreme = true;
+  out.push(entry);
   idxRef.i++;
 }
 
@@ -752,16 +854,20 @@ function buildCreatures() {
   const seenIds = new Set();
   for (const fam of FAMILY_DEFS) {
     const idxRef = { i: 0 };
-    for (const [suffix, scaleMul, colorTint, lvDelta, role, statMul, lootAdds] of fam.variants) {
+    for (const [suffix, scaleMul, colorTint, lvDelta, role, statMul, lootAdds, opts] of fam.variants) {
       const name = suffix === '' ? fam.name : suffix;
-      const level = Math.max(1, fam.baseLevel + lvDelta);
+      // `opts.levelAbs` pins an absolute level (Tibia-accurate authoring); else
+      // the level is the family base plus this variant's delta.
+      const level = (opts && opts.levelAbs != null)
+        ? Math.max(1, opts.levelAbs)
+        : Math.max(1, fam.baseLevel + lvDelta);
       const color = tintColor(fam.color, colorTint);
       const baseLoot = [gold(fam.gold[0], fam.gold[1]), ...fam.loot, ...(lootAdds || [])];
 
       // keep the bare family key as the canonical id for its base variant
       const wasEmpty = suffix === '';
       const startCount = out.length;
-      pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, statMul, baseLoot, idxRef);
+      pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, statMul, baseLoot, idxRef, opts);
       if (wasEmpty) {
         // re-key the just-pushed base entry to the bare family key when free
         const justPushed = out[startCount];
@@ -771,26 +877,91 @@ function buildCreatures() {
           seenIds.add(fam.key);
         }
       }
-
-      // optional tougher tiers expand entry count for richer families
-      if (fam.tiers) {
-        for (const [prefix, scaleAdd, tColor, tLvl, tMul, tLoot] of TIERS.slice(0, fam.tiers)) {
-          // skip on tiny minions to avoid silly "Ancient Worm" noise
-          if (role === 'minion' && prefix === 'Ancient') continue;
-          const tName = `${prefix} ${name}`;
-          pushCreature(
-            out, seenIds, fam, tName,
-            scaleMul + scaleAdd, tColor, level + tLvl, role,
-            statMul * tMul, [...baseLoot, tLoot], idxRef,
-          );
-        }
-      }
     }
   }
   return out;
 }
 
+// --- Drop-rate rebalance + high-end item distribution ----------------------
+// The user wants tight, Tibia-style drop odds, NOT the loose 5-40% the variants
+// were authored with:
+//   • common gear (shopTier 'shop')        -> 2-5%
+//   • epic gear   (shopTier 'epic')         -> 1-3%
+//   • legendary   (shopTier 'legendary-tier')-> 0.01% (a day of farming = ~one or none)
+// Junk/material/flavor drops (hides, scales, gems — ids that aren't real
+// equipment) keep their authored chances; they're meant to be common.
+//
+// Then the marquee high-end items (demon shield, demon armor, etc.) are seeded
+// onto SEVERAL strong, high-level creatures at a tiny chance, so they're not the
+// exclusive reserve of one boss but still brutally rare to farm.
+
+// Resolve a loot itemId to its equipment def (or null for junk/materials).
+function equipDefFor(itemId) {
+  return getWeapon(itemId) || getArmor(itemId) || getContainer(itemId) || null;
+}
+
+// The capped chance for an equipment drop, by its shop tier and a stable hash so
+// items don't all land on the exact same number. Returns null = leave as-is.
+function cappedChance(def, seed) {
+  const j = ((Math.sin(seed) * 43758.5453) % 1 + 1) % 1;   // deterministic 0..1
+  const tier = def.shopTier;
+  if (tier === 'legendary-tier') return 0.0001 + j * 0.0001;   // ~0.01% (0.01-0.02%)
+  if (tier === 'epic') return 0.01 + j * 0.02;                  // 1-3%
+  // everything buyable ('shop') or untagged equipment -> common band
+  return 0.02 + j * 0.03;                                       // 2-5%
+}
+
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+
+// The high-end items that should come from MANY strong foes, each id paired with
+// the minimum creature level that may drop it. Distributed below at tiny odds.
+const HIGH_END_DROPS = [
+  { id: 'demon_shield',  minLevel: 55 },
+  { id: 'demon_armor',   minLevel: 75 },
+  { id: 'demon_helmet',  minLevel: 85 },
+  { id: 'demon_legs',    minLevel: 85 },
+  { id: 'golden_armor',  minLevel: 40 },
+  { id: 'golden_legs',   minLevel: 40 },
+  { id: 'dragon_shield', minLevel: 45 },
+  { id: 'dragon_armor',  minLevel: 55 },
+  { id: 'mastermind_shield', minLevel: 70 },
+  { id: 'magic_sword',   minLevel: 80 },
+  { id: 'demon_sword',   minLevel: 85 },
+  { id: 'soul-gem',      minLevel: 50 },
+];
+
+function rebalanceLoot(creatures) {
+  for (const c of creatures) {
+    for (const entry of c.loot) {
+      if (entry.itemId === 'gold' || entry.potion) continue;   // gold + potions handled elsewhere
+      const def = equipDefFor(entry.itemId);
+      if (!def) continue;                                      // junk/material — leave common
+      const capped = cappedChance(def, hashStr(c.id + entry.itemId));
+      // Only ever LOWER an authored chance (never raise a deliberately-rare one).
+      if (capped != null && entry.chance > capped) entry.chance = capped;
+    }
+  }
+
+  // Seed the marquee items onto every sufficiently strong creature that doesn't
+  // already drop them, at a tiny chance — so a Warlock, Banshee, Vampire Count,
+  // Dragon Lord etc. can all drop a demon shield, but only with a day's luck.
+  for (const c of creatures) {
+    for (const hd of HIGH_END_DROPS) {
+      if ((c.level || 1) < hd.minLevel) continue;
+      if (c.loot.some((l) => l.itemId === hd.id)) continue;    // already drops it
+      const def = equipDefFor(hd.id);
+      // Scale the floor odds a touch with how far the creature out-levels the
+      // requirement (a level-110 demon is likelier than a level-55 warlock), but
+      // keep it minuscule. Soul-gem (a quest material) gets a slightly higher rate.
+      const over = Math.min(1, ((c.level || 1) - hd.minLevel) / 60);
+      const base = hd.id === 'soul-gem' ? 0.003 : (def && def.shopTier === 'legendary-tier' ? 0.0002 : 0.0008);
+      c.loot.push({ itemId: hd.id, chance: +(base * (1 + over)).toFixed(5) });
+    }
+  }
+}
+
 export const CREATURES = buildCreatures();
+rebalanceLoot(CREATURES);
 
 // Fast id lookup.
 const BY_ID = new Map(CREATURES.map((c) => [c.id, c]));
