@@ -500,6 +500,149 @@ export const QUESTS = [
     repeatable: true,
     dungeon: null,
   },
+
+  // ===========================================================================
+  // GEAR QUESTS — the level-22+ equipment the shops no longer sell is earned
+  // here instead. These are deliberately LONG (big kill counts / multi-step
+  // chains, the user's "10 misiones de nivel 30 -> un arma de nivel 30"): a
+  // grind, but a guaranteed reward at the end, unlike the tiny drop odds.
+  // ===========================================================================
+
+  // Westharbor (forest river-port): a long fishing-coast + forest grind that
+  // ends in a solid mid-tier weapon set.
+  {
+    id: 'westharbor_coast_watch',
+    title: { es: 'La Guardia Costera', en: 'The Coast Watch' },
+    desc: {
+      es: 'Westharbor necesita manos firmes. Limpia la costa de alimañas para ganarte su confianza.',
+      en: 'Westharbor needs steady hands. Clear the coast of vermin to earn their trust.',
+    },
+    giverNpc: null, city: 'westharbor', minLevel: 18,
+    objectives: [
+      { type: 'kill', target: 'crab', count: 20, desc: { es: 'Mata 20 cangrejos', en: 'Kill 20 crabs' } },
+      { type: 'kill', target: 'snake', count: 20, desc: { es: 'Mata 20 serpientes', en: 'Kill 20 snakes' } },
+    ],
+    rewards: { gold: 600, exp: 1800, items: ['plate_armor'] },
+    next: 'westharbor_deep_woods', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'westharbor_deep_woods',
+    title: { es: 'El Bosque Profundo', en: 'The Deep Woods' },
+    desc: {
+      es: 'Los elfos del bosque profundo no aceptan intrusos. Demuestra tu valor en una larga cacería.',
+      en: 'The deep-wood elves suffer no intruders. Prove yourself in a long hunt.',
+    },
+    giverNpc: null, city: 'westharbor', minLevel: 22,
+    objectives: [
+      { type: 'kill', target: 'elf', count: 25, desc: { es: 'Mata 25 elfos', en: 'Kill 25 elves' } },
+      { type: 'kill', target: 'treant', count: 10, desc: { es: 'Mata 10 treants', en: 'Kill 10 treants' } },
+    ],
+    rewards: { gold: 1600, exp: 5200, items: ['crystal_sword', 'plate_legs'] },
+    next: null, repeatable: false, dungeon: null,
+  },
+
+  // Frostpeak (frozen mining outpost): an ice-creature grind for cold-weather
+  // gear that no shop carries.
+  {
+    id: 'frostpeak_white_hunt',
+    title: { es: 'La Cacería Blanca', en: 'The White Hunt' },
+    desc: {
+      es: 'El frío trae lobos y osos hambrientos. Adelgaza las manadas alrededor de Frostpeak.',
+      en: 'The cold brings hungry wolves and bears. Thin the packs around Frostpeak.',
+    },
+    giverNpc: null, city: 'frostpeak', minLevel: 20,
+    objectives: [
+      { type: 'kill', target: 'wolf', count: 25, desc: { es: 'Mata 25 lobos', en: 'Kill 25 wolves' } },
+      { type: 'kill', target: 'bear', count: 12, desc: { es: 'Mata 12 osos', en: 'Kill 12 bears' } },
+    ],
+    rewards: { gold: 900, exp: 2600, items: ['warrior_helmet'] },
+    next: 'frostpeak_frozen_depths', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'frostpeak_frozen_depths',
+    title: { es: 'Las Profundidades Heladas', en: 'The Frozen Depths' },
+    desc: {
+      es: 'Algo antiguo se mueve bajo el hielo: troles de escarcha y arañas de cristal. Bájalos.',
+      en: 'Something ancient stirs under the ice: frost trolls and crystal spiders. Put them down.',
+    },
+    giverNpc: null, city: 'frostpeak', minLevel: 28,
+    objectives: [
+      { type: 'kill', target: 'troll', count: 20, desc: { es: 'Mata 20 troles', en: 'Kill 20 trolls' } },
+      { type: 'kill', target: 'spider', count: 15, desc: { es: 'Mata 15 arañas', en: 'Kill 15 spiders' } },
+    ],
+    rewards: { gold: 2200, exp: 7000, items: ['knight_armor', 'crusader_helmet'] },
+    next: null, repeatable: false, dungeon: null,
+  },
+
+  // Sandport (oasis): a desert grind for the golden set the shops won't sell.
+  {
+    id: 'sandport_scarab_swarm',
+    title: { es: 'El Enjambre de Escarabajos', en: 'The Scarab Swarm' },
+    desc: {
+      es: 'Los escarabajos y escorpiones del desierto asfixian Sandport. Aplástalos en masa.',
+      en: 'Desert scarabs and scorpions choke Sandport. Crush them en masse.',
+    },
+    giverNpc: null, city: 'sandport', minLevel: 22,
+    objectives: [
+      { type: 'kill', target: 'beetle', count: 25, desc: { es: 'Mata 25 escarabajos', en: 'Kill 25 beetles' } },
+      { type: 'kill', target: 'scorpion', count: 20, desc: { es: 'Mata 20 escorpiones', en: 'Kill 20 scorpions' } },
+    ],
+    rewards: { gold: 1200, exp: 3800, items: ['scale_armor'] },
+    next: 'sandport_tomb_kings', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'sandport_tomb_kings',
+    title: { es: 'Los Reyes de las Tumbas', en: 'The Tomb Kings' },
+    desc: {
+      es: 'Las momias antiguas guardan oro maldito. Reúne el valor para reclamarlo.',
+      en: 'Ancient mummies guard cursed gold. Find the courage to claim it.',
+    },
+    giverNpc: null, city: 'sandport', minLevel: 30,
+    objectives: [
+      { type: 'kill', target: 'zombie', count: 20, desc: { es: 'Mata 20 muertos', en: 'Kill 20 undead' } },
+      { type: 'reach', target: 'sunktemple', count: 1, desc: { es: 'Llega al templo derruido', en: 'Reach the fallen temple' } },
+    ],
+    rewards: { gold: 4000, exp: 12000, items: ['golden_armor', 'golden_legs'] },
+    next: null, repeatable: false, dungeon: null,
+  },
+
+  // The ghost-town ruin chain: a long undead grind that rewards a real shield.
+  {
+    id: 'hollowmoor_haunting',
+    title: { es: 'El Pueblo Encantado', en: 'The Haunted Town' },
+    desc: {
+      es: 'Hollowmoor cayó hace siglos y sus muertos no descansan. Recorre sus ruinas y libéralo.',
+      en: 'Hollowmoor fell centuries ago and its dead won\'t rest. Walk its ruins and free it.',
+    },
+    giverNpc: null, city: 'oakvale', minLevel: 24,
+    objectives: [
+      { type: 'reach', target: 'hollowmoor', count: 1, desc: { es: 'Llega al pueblo fantasma', en: 'Reach the ghost town' } },
+      { type: 'kill', target: 'ghost', count: 18, desc: { es: 'Mata 18 fantasmas', en: 'Kill 18 ghosts' } },
+      { type: 'kill', target: 'skeleton', count: 18, desc: { es: 'Mata 18 esqueletos', en: 'Kill 18 skeletons' } },
+    ],
+    rewards: { gold: 3000, exp: 9000, items: ['guardian_shield', 'royal_helmet'] },
+    next: null, repeatable: false, dungeon: null,
+  },
+
+  // High-end capstone: a long demon-tier grind that GUARANTEES a demon shield —
+  // the alternative to the brutal drop odds, for players who'd rather grind a
+  // chain than gamble. minLevel high so it's truly endgame.
+  {
+    id: 'abyss_warlords',
+    title: { es: 'Señores del Abismo', en: 'Warlords of the Abyss' },
+    desc: {
+      es: 'Diez cacerías en el Abismo Demoníaco prueban que mereces portar acero infernal.',
+      en: 'Ten hunts in the Demon Abyss prove you are worthy to bear infernal steel.',
+    },
+    giverNpc: 'dragonreach_sage', city: 'dragonreach', minLevel: 55,
+    objectives: [
+      { type: 'kill', target: 'demon', count: 20, desc: { es: 'Mata 20 demonios', en: 'Kill 20 demons' } },
+      { type: 'kill', target: 'imp', count: 30, desc: { es: 'Mata 30 diablillos', en: 'Kill 30 imps' } },
+      { type: 'kill', target: 'cultist', count: 20, desc: { es: 'Mata 20 cultistas', en: 'Kill 20 cultists' } },
+    ],
+    rewards: { gold: 30000, exp: 150000, items: ['demon_shield', 'demon_helmet'] },
+    next: null, repeatable: false, dungeon: 'demonabyss',
+  },
 ];
 
 // Fast id lookup.
