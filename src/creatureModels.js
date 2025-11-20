@@ -21,10 +21,212 @@ const EYE_B = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
 const WHITE = 0xffffff;
 const DARK = 0x222222;
 
+// Shared weapon-prop palette (reused across instances; never disposed per-model).
+const WOOD = new THREE.MeshLambertMaterial({ color: 0x6b4a2a });
+const STEEL = new THREE.MeshLambertMaterial({ color: 0xb8c0cc });
+const IRON = new THREE.MeshLambertMaterial({ color: 0x7a828c });
+const GOLD = new THREE.MeshLambertMaterial({ color: 0xd9b341 });
+const STRING = new THREE.MeshLambertMaterial({ color: 0xe8e0c8 });
+
 // Small mesh helpers.
 function mesh(geo, mat) { return new THREE.Mesh(geo, mat); }
 
 function lambert(color) { return new THREE.MeshLambertMaterial({ color }); }
+
+// ---------------------------------------------------------------------------
+// Weapon props. Each returns a THREE.Group whose handle sits near local origin
+// and whose blade/head points up +Y, so a hand pivot can grip it and the
+// existing attack() arm-swing animates the whole weapon for free. Built from the
+// same shared low-poly geometries; tinted with the shared metal/wood palette.
+// ---------------------------------------------------------------------------
+function haft(len, r, mat) {
+  const h = mesh(G.cyl, mat || WOOD);
+  h.scale.set(r, len * 0.5, r);
+  h.position.y = len * 0.25;
+  return h;
+}
+
+const WEAPONS = {
+  // One-handed axe: short haft, wedge head near the top.
+  axe(o = {}) {
+    const g = new THREE.Group();
+    g.add(haft(0.5, 0.02));
+    const head = mesh(G.cone, o.mat || STEEL);
+    head.scale.set(0.13, 0.09, 0.05);
+    head.rotation.z = Math.PI / 2;
+    head.position.set(0.07, 0.42, 0);
+    g.add(head);
+    return g;
+  },
+  // Two-handed battle axe: long haft, big double-bit head.
+  battleaxe(o = {}) {
+    const g = new THREE.Group();
+    g.add(haft(0.72, 0.025));
+    for (const s of [-1, 1]) {
+      const blade = mesh(G.cone, o.mat || STEEL);
+      blade.scale.set(0.17, 0.12, 0.05);
+      blade.rotation.z = s * Math.PI / 2;
+      blade.position.set(s * 0.1, 0.6, 0);
+      g.add(blade);
+    }
+    return g;
+  },
+  // Mace / club with a heavy head; `spikes` adds studs (morningstar feel).
+  mace(o = {}) {
+    const g = new THREE.Group();
+    g.add(haft(0.5, 0.022));
+    const head = mesh(G.sphere, o.mat || IRON);
+    head.scale.setScalar(0.09);
+    head.position.y = 0.5;
+    g.add(head);
+    if (o.spikes) {
+      for (const a of [0, 1, 2, 3, 4, 5]) {
+        const sp = mesh(G.cone, o.mat || IRON);
+        sp.scale.set(0.025, 0.06, 0.025);
+        const ang = (a / 6) * Math.PI * 2;
+        sp.position.set(Math.cos(ang) * 0.09, 0.5 + Math.sin(a) * 0.03, Math.sin(ang) * 0.09);
+        sp.rotation.z = -Math.cos(ang) * 1.2;
+        sp.rotation.x = Math.sin(ang) * 1.2;
+        g.add(sp);
+      }
+    }
+    return g;
+  },
+  // Wooden club (trolls, ogres): gnarled tapering cudgel.
+  club(o = {}) {
+    const g = new THREE.Group();
+    const c = mesh(G.cone, o.mat || WOOD);
+    c.scale.set(0.07, 0.34, 0.07);
+    c.position.y = 0.3;
+    g.add(c);
+    const knob = mesh(G.sphere, o.mat || WOOD);
+    knob.scale.setScalar(0.08);
+    knob.position.y = 0.6;
+    g.add(knob);
+    return g;
+  },
+  // Trident (demons, sea creatures): long shaft with three prongs.
+  trident(o = {}) {
+    const g = new THREE.Group();
+    g.add(haft(0.95, 0.022, o.mat || STEEL));
+    for (const x of [-0.06, 0, 0.06]) {
+      const prong = mesh(G.cone, o.mat || STEEL);
+      prong.scale.set(0.018, 0.12, 0.018);
+      prong.position.set(x, 1.02, 0);
+      g.add(prong);
+    }
+    const cross = mesh(G.cyl, o.mat || STEEL);
+    cross.scale.set(0.012, 0.08, 0.012);
+    cross.rotation.z = Math.PI / 2;
+    cross.position.y = 0.92;
+    g.add(cross);
+    return g;
+  },
+  // Spear: long shaft, single leaf point.
+  spear(o = {}) {
+    const g = new THREE.Group();
+    g.add(haft(0.95, 0.018, o.mat || WOOD));
+    const tip = mesh(G.cone, o.mat || STEEL);
+    tip.scale.set(0.03, 0.13, 0.03);
+    tip.position.y = 1.0;
+    g.add(tip);
+    return g;
+  },
+  // Sword / scimitar / machete: crossguard + blade. `curve` bends it (scimitar),
+  // `big` makes a two-handed greatsword/machete.
+  sword(o = {}) {
+    const g = new THREE.Group();
+    const bladeLen = o.big ? 0.7 : 0.45;
+    const grip = mesh(G.cyl, o.mat || DARK_MAT());
+    grip.scale.set(0.02, 0.06, 0.02);
+    grip.position.y = 0.05;
+    g.add(grip);
+    const guard = mesh(G.cyl, o.guardMat || GOLD);
+    guard.scale.set(0.012, 0.07, 0.012);
+    guard.rotation.z = Math.PI / 2;
+    guard.position.y = 0.12;
+    g.add(guard);
+    const blade = mesh(G.cone, o.mat || STEEL);
+    blade.scale.set(o.big ? 0.05 : 0.035, bladeLen * 0.5, 0.02);
+    blade.position.y = 0.12 + bladeLen * 0.5;
+    if (o.curve) { blade.rotation.z = 0.18; blade.position.x = bladeLen * 0.12; }
+    g.add(blade);
+    return g;
+  },
+  // Bow: a curved limb + string, held vertically. (Drawn on attack by the arm.)
+  bow(o = {}) {
+    const g = new THREE.Group();
+    const limb = mesh(G.torus, o.mat || WOOD);
+    limb.scale.set(0.22, 0.22, 0.03);
+    limb.rotation.y = Math.PI / 2;
+    // Only show the front arc: scale the torus and rotate so it reads as a bow.
+    limb.position.y = 0.22;
+    g.add(limb);
+    const str = mesh(G.cyl, STRING);
+    str.scale.set(0.006, 0.22, 0.006);
+    str.position.set(0.04, 0.22, 0);
+    g.add(str);
+    return g;
+  },
+  // Staff / wand (mages, shamans): long rod topped with a glowing orb.
+  staff(o = {}) {
+    const g = new THREE.Group();
+    g.add(haft(0.85, 0.02, o.mat || WOOD));
+    const orb = mesh(G.sphere, o.orbMat || lambert(o.orb || 0x66ccff));
+    orb.scale.setScalar(0.06);
+    orb.position.y = 0.9;
+    g.add(orb);
+    return g;
+  },
+};
+
+function DARK_MAT() { return new THREE.MeshLambertMaterial({ color: 0x3a3a3a }); }
+
+// The shared singleton materials that must never be disposed per-model.
+const SHARED_MATS = new Set([EYE_W, EYE_B, WOOD, STEEL, IRON, GOLD, STRING]);
+
+// Gather the per-instance materials hanging off a weapon group so the model can
+// dispose them later (shared palette mats are skipped — they're singletons).
+function collectMats(group) {
+  const out = [];
+  group.traverse((o) => { if (o.material && !SHARED_MATS.has(o.material) && !out.includes(o.material)) out.push(o.material); });
+  return out;
+}
+
+// Attach a weapon prop into a humanoid/bulky right-hand (the last arm pivot).
+// The weapon's handle sits at its own local origin and the blade/head points up
+// +Y, so we move a grip group to the FIST (the bottom tip of the arm capsule),
+// nudge it forward (+Z) and outward so the haft clears the body, then tilt it
+// forward so the weapon reads as carried in front — not buried in the torso.
+//
+//   handY  – fist Y in the arm pivot's local space (set by the builder)
+//   handR  – arm radius, used to push the grip just outside the fist
+//   rest   – forward tilt at idle (default leans the weapon up and ahead)
+function giveWeapon(parts, kind, opts = {}) {
+  const make = WEAPONS[kind];
+  if (!make || !parts.arms || !parts.arms.length) return null;
+  const hand = parts.arms[parts.arms.length - 1]; // right arm pivot
+  const w = make(opts);
+  const handY = opts.handY != null ? opts.handY : (parts.handY != null ? parts.handY : -0.22 * (opts.armLen || 1));
+  const handR = opts.handR != null ? opts.handR : (parts.handR || 0.06);
+
+  const grip = new THREE.Group();
+  // Sit in the fist, then push slightly out (+X) and forward (+Z) so the handle
+  // doesn't intersect the arm/torso. A bow is held across the body, so it sits
+  // a touch more forward and isn't rotated up.
+  grip.position.set(handR * 1.1, handY, handR * 1.8);
+  if (kind === 'bow') {
+    grip.rotation.set(0, 0, 0);         // bow stays upright, faced forward
+    grip.position.z += handR * 1.5;
+  } else {
+    grip.rotation.x = opts.rest != null ? opts.rest : 0.5;  // tilt up-and-forward
+  }
+  grip.scale.setScalar(opts.scale || 1);
+  grip.add(w);
+  hand.add(grip);
+  parts.weapon = { grip, kind };
+  return parts.weapon;
+}
 
 // Add a pair of eyes onto a target at local position with given spread/size.
 function addEyes(target, y, z, spread, size, pupils = true) {
@@ -49,6 +251,69 @@ function shade(hex, f) {
   c.g = Math.min(1, c.g * f);
   c.b = Math.min(1, c.b * f);
   return c.getHex();
+}
+
+// ---------------------------------------------------------------------------
+// Procedural surface detail. We have no image textures, so "texture" is faked
+// with tiny tinted meshes hugging the body: spots/patches, fur tufts, a mane,
+// and claws/nails. All deterministic (index-driven, no Math.random) and opt-in
+// per family so we never pay for detail a creature doesn't want.
+// ---------------------------------------------------------------------------
+
+// Flattened blotches stuck to a body sphere/dome, tinted darker than the tint.
+function addSpots(target, r, tint, count = 6, factor = 0.7) {
+  const m = lambert(shade(tint, factor));
+  for (let i = 0; i < count; i++) {
+    const a = (i * 2.39996);                 // golden-angle spread, deterministic
+    const y = (i / count) * 1.4 - 0.5;
+    const spot = mesh(G.lowSphere, m);
+    const sr = r * (0.18 + (i % 3) * 0.05);
+    spot.scale.set(sr, sr * 0.5, sr);
+    spot.position.set(Math.cos(a) * r * 0.85, y * r, Math.sin(a) * r * 0.85 + r * 0.3);
+    target.add(spot);
+  }
+}
+
+// Short fur tufts ringing a body part (cones flared outward) — shaggy look.
+function addFur(target, r, tint, rings = 2, perRing = 8, factor = 0.85) {
+  const m = lambert(shade(tint, factor));
+  for (let ring = 0; ring < rings; ring++) {
+    const y = r * (0.1 - ring * 0.35);
+    for (let i = 0; i < perRing; i++) {
+      const a = (i / perRing) * Math.PI * 2 + ring * 0.4;
+      const tuft = mesh(G.cone, m);
+      tuft.scale.set(0.025 * r * 4, 0.06 * r * 4, 0.025 * r * 4);
+      tuft.position.set(Math.cos(a) * r * 0.9, y, Math.sin(a) * r * 0.9);
+      tuft.rotation.z = -Math.cos(a) * 1.4;
+      tuft.rotation.x = Math.sin(a) * 1.4;
+      target.add(tuft);
+    }
+  }
+}
+
+// A mane/crest of tufts running down the back of a head/neck group.
+function addMane(target, hs, color, count = 5) {
+  const m = lambert(color);
+  for (let i = 0; i < count; i++) {
+    const tuft = mesh(G.cone, m);
+    const t = i / Math.max(1, count - 1);
+    tuft.scale.set(hs * 0.18, hs * (0.5 - t * 0.2), hs * 0.18);
+    tuft.position.set(0, hs * (0.7 - t * 0.3), -hs * (0.5 + t * 0.5));
+    tuft.rotation.x = -0.5 - t * 0.3;
+    target.add(tuft);
+  }
+}
+
+// Claws/nails: little white cones at the end of a limb pivot or paw.
+function addClaws(target, y, z, spread, size, count = 3, mat) {
+  const m = mat || lambert(0xf0ece0);
+  for (let i = 0; i < count; i++) {
+    const claw = mesh(G.cone, m);
+    claw.scale.set(size * 0.4, size, size * 0.4);
+    claw.position.set((i - (count - 1) / 2) * spread, y, z);
+    claw.rotation.x = Math.PI * 0.5 + 0.3;
+    target.add(claw);
+  }
 }
 
 // Family -> builder mapping. Each builder receives (root, body) where `body`
@@ -153,8 +418,124 @@ function humanoid(root, body, o) {
       head.add(ear);
     }
   }
+  if (o.mane) addMane(head, hs, o.maneColor || shade(o.tint, 0.6), o.maneCount || 5);
   root.add(head);
   parts.head = head;
+
+  // Surface detail (opt-in): blotches on the torso, claws on the hands, a belt
+  // or shoulder pads for armored humanoids (knights, orc warriors).
+  if (o.spots) addSpots(torso, torsoR, o.tint, o.spotCount || 6, o.spotFactor || 0.7);
+  if (o.claws) {
+    for (const arm of parts.arms) addClaws(arm, -0.26 * h, 0.02, 0.018, 0.03 * girth, 3);
+  }
+  if (o.shoulders) {
+    const sm = lambert(o.armorColor || shade(o.tint, 0.55));
+    for (const s of [-1, 1]) {
+      const pad = mesh(G.dome, sm);
+      pad.scale.set(torsoR * 0.55, torsoR * 0.45, torsoR * 0.55);
+      pad.position.set(s * (torsoR + 0.03), torsoY + torsoH * 0.42, 0);
+      root.add(pad);
+    }
+  }
+  if (o.belly) {
+    const bm = lambert(o.bellyColor || shade(o.tint, 1.3));
+    const belly = mesh(G.sphere, bm);
+    belly.scale.set(torsoR * 0.7, torsoH * 0.42, torsoR * 0.6);
+    belly.position.set(0, torsoY - torsoH * 0.05, torsoR * 0.55);
+    root.add(belly);
+  }
+
+  // Where the fist sits in the arm-pivot's local space, so a weapon grip lands
+  // in the hand (the capsule hangs to -0.13h and is 0.1h long → tip ≈ -0.23h).
+  parts.armLen = h;
+  parts.handY = -0.23 * h;
+  parts.handR = 0.06 * girth;   // arm radius, to push the grip just outside it
+  parts.baseY = torsoY;
+  return parts;
+}
+
+// Centaur: a humanoid upper body grafted onto a four-legged horse body. Carries
+// a weapon in the right hand (Tibia-style elf/centaur archers & blademasters).
+function centaur(root, body, o) {
+  const tint = o.tint;
+  const horseMat = o.horseMat || lambert(shade(tint, 0.8));
+  const skinMat = o.skinMat || body;
+  const parts = { type: 'centaur', legs: [], arms: [] };
+
+  const len = o.len || 0.7;
+  const r = o.bodyR || 0.2;
+  const legLen = o.legLen || 0.34;
+  const bodyY = legLen + r * 0.6;
+
+  // horse barrel
+  const trunk = mesh(G.capsule, horseMat);
+  trunk.rotation.x = Math.PI / 2;
+  trunk.scale.set(r, len * 0.5, r);
+  trunk.position.set(0, bodyY, 0);
+  root.add(trunk);
+
+  // four legs at the corners
+  const legX = r * 0.7, legZ = len * 0.42;
+  for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(sx * legX, bodyY - r * 0.4, sz * legZ);
+    const leg = mesh(G.capsule, horseMat);
+    leg.scale.set(0.05, legLen * 0.45, 0.05);
+    leg.position.y = -legLen * 0.5;
+    pivot.add(leg);
+    // little hoof
+    const hoof = mesh(G.lowSphere, lambert(0x2a2018));
+    hoof.scale.setScalar(0.05);
+    hoof.position.y = -legLen;
+    pivot.add(hoof);
+    root.add(pivot);
+    parts.legs.push({ pivot, dir: sz });
+  }
+
+  // tail
+  const tail = mesh(G.capsule, horseMat);
+  tail.scale.set(0.05, 0.16, 0.05);
+  tail.rotation.x = 0.8;
+  tail.position.set(0, bodyY + r * 0.2, -legZ - r * 0.4);
+  root.add(tail);
+  parts.tail = tail;
+
+  // humanoid torso rising from the front of the barrel
+  const torsoR = r * 0.7;
+  const torsoY = bodyY + r * 0.9;
+  const torso = mesh(G.capsule, body);
+  torso.scale.set(torsoR, r * 0.7, torsoR * 0.85);
+  torso.position.set(0, torsoY, legZ * 0.6);
+  root.add(torso);
+
+  // arms
+  for (const s of [-1, 1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(s * (torsoR + 0.04), torsoY + r * 0.25, legZ * 0.6);
+    pivot.rotation.z = s * 0.12;
+    const arm = mesh(G.capsule, skinMat);
+    arm.scale.set(0.05, 0.11, 0.05);
+    arm.position.y = -0.13;
+    pivot.add(arm);
+    root.add(pivot);
+    parts.arms.push(pivot);
+  }
+
+  // head
+  const head = new THREE.Group();
+  const hs = 0.16;
+  head.position.set(0, torsoY + r * 0.7, legZ * 0.6);
+  const skull = mesh(G.sphere, skinMat);
+  skull.scale.setScalar(hs);
+  head.add(skull);
+  addEyes(head, 0.04, hs * 0.95, hs * 0.45, hs * 0.32);
+  addMane(head, hs, o.maneColor || shade(tint, 0.6), 5);
+  root.add(head);
+  parts.head = head;
+
+  parts.armLen = 1.0;
+  parts.handY = -0.24;
+  parts.handR = 0.05;
   parts.baseY = torsoY;
   return parts;
 }
@@ -264,9 +645,11 @@ function serpent(root, body, o) {
     root.add(m);
     parts.segs.push({ m, i });
   }
-  // head with eyes at the front (i=0)
+  // head with eyes at the front (i=0). The head is a unit sphere scaled to sr,
+  // so eye coords are in unit space: keep them small fractions or they balloon
+  // off the face. (Was 0.4/0.6/0.4/0.4 — eyes 3× the head radius.)
   const head = parts.segs[0].m;
-  addEyes(head, 0.4, 0.6, 0.4, 0.4);
+  addEyes(head, 0.35, 0.7, 0.42, 0.16);
   if (o.frill) {
     const hood = mesh(G.dome, body);
     hood.scale.set(r * 2, r * 0.6, r * 1.4);
@@ -472,21 +855,35 @@ function dragon(root, body, o) {
     parts.wings.push({ pivot, side: s });
   }
 
-  // legs
-  for (const s of [-1, 1]) {
+  // FOUR legs (front pair shorter, hind pair sturdier) for a proper drake stance,
+  // each on a pivot so they stride. Front at +Z, hind at -Z under the body.
+  parts.legs = [];
+  for (const [sx, sz, len, thick] of [
+    [-1, 0.55, 0.4, 0.055], [1, 0.55, 0.4, 0.055],   // front
+    [-1, -0.45, 0.5, 0.07], [1, -0.45, 0.5, 0.07],   // hind
+  ]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(sx * r * 0.62, standY * 0.6, sz * r);
     const leg = mesh(G.capsule, body);
-    leg.scale.set(0.06, standY * 0.45, 0.06);
-    leg.position.set(s * r * 0.5, standY * 0.55, 0);
-    root.add(leg);
+    leg.scale.set(thick, standY * len, thick);
+    leg.position.y = -standY * len * 0.9;
+    pivot.add(leg);
+    // clawed foot
+    const foot = mesh(G.sphere, body);
+    foot.scale.set(thick * 1.6, thick, thick * 2.2);
+    foot.position.set(0, -standY * len * 1.7, thick * 1.5);
+    pivot.add(foot);
+    root.add(pivot);
+    parts.legs.push({ pivot, dir: sz > 0 ? 1 : -1 });
   }
 
-  // tail of tapering spheres
+  // long tapering tail that sweeps to the ground
   const tail = new THREE.Group();
   tail.position.set(0, standY, -r * 1.0);
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
     const seg = mesh(G.sphere, body);
-    seg.scale.setScalar(r * (0.5 - i * 0.08));
-    seg.position.set(0, 0, -i * r * 0.4);
+    seg.scale.setScalar(r * (0.55 - i * 0.07));
+    seg.position.set(0, -i * r * 0.08, -i * r * 0.42);
     tail.add(seg);
   }
   root.add(tail);
@@ -626,9 +1023,11 @@ function bulky(root, body, o) {
   const head = new THREE.Group();
   head.position.y = torsoY + torsoR * 1.3;
   const skull = mesh(G.sphere, body);
-  skull.scale.setScalar(0.18);
+  const hs = 0.18;
+  skull.scale.setScalar(hs);
   head.add(skull);
-  addEyes(head, 0.02, 0.17, 0.4, 0.4);
+  // Eyes sized to the skull (was a fixed 0.4 spread/size — bigger than the head).
+  addEyes(head, hs * 0.1, hs * 0.95, hs * 0.45, hs * 0.32);
   if (o.canopy) {
     const leaves = mesh(G.sphere, o.canopyMat || lambert(0x3a6a2a));
     leaves.scale.setScalar(0.3);
@@ -819,7 +1218,8 @@ const BUILDERS = {
 
   // Humanoids
   goblin: [humanoid, { height: 0.85, girth: 0.9, ears: true, headScale: 1.1 }],
-  orc: [humanoid, { height: 1.05, girth: 1.2, tusks: true }],
+  orc: [humanoid, { height: 1.05, girth: 1.25, tusks: true, ears: true, spots: true, spotFactor: 0.65, claws: true, shoulders: true, belly: true, weapon: 'axe' }],
+  centaur: [centaur, { weapon: 'sword', weaponBig: true }],
   troll: [humanoid, { height: 1.3, girth: 1.4, ears: true }],
   ogre: [humanoid, { height: 1.25, girth: 1.5 }],
   kobold: [humanoid, { height: 0.7, girth: 0.8, ears: true, headScale: 1.2 }],
@@ -884,10 +1284,36 @@ function addDemonWings(root, parts, tint, torsoY) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Design registry. Each authored creature (see src/creatureDesigns.js) provides
+// { base, options, decorate, scale, color }. `base` names one of the builders
+// below; `decorate(root, parts, o, tint, API)` adds bespoke geometry so every
+// creature has its own shape, not just a tint. Registered via registerDesigns().
+// ---------------------------------------------------------------------------
+const BASE_BUILDERS = {
+  humanoid, centaur, quadruped, serpent, blob, bug, flyer, floater,
+  dragon, hydra, bulky, worm, fish, turtle, bird, frog, mushroom, mimic,
+};
+
+// The helper surface handed to each design's decorate()/options so authored
+// code can build with the same primitives the built-ins use.
+const MODEL_API = {
+  THREE, G, mesh, lambert, shade, addEyes, addSpots, addFur, addMane, addClaws,
+  giveWeapon, collectMats, EYE_W, EYE_B, WHITE, DARK, WOOD, STEEL, IRON, GOLD, STRING,
+};
+
+const DESIGNS = {};
+export function registerDesigns(map) { Object.assign(DESIGNS, map); }
+export function getDesignKeys() { return Object.keys(DESIGNS); }
+export { MODEL_API };
+
 // Public factory.
 export function buildCreatureModel(family, opts = {}) {
-  const tint = opts.color != null ? opts.color : 0x999999;
-  const scale = opts.scale != null ? opts.scale : 1;
+  const design = DESIGNS[family];
+  const tint = opts.color != null ? opts.color
+    : (design && design.color != null ? design.color : 0x999999);
+  const scale = opts.scale != null ? opts.scale
+    : (design && design.scale != null ? design.scale : 1);
 
   const group = new THREE.Group();
   const root = new THREE.Group();
@@ -897,9 +1323,31 @@ export function buildCreatureModel(family, opts = {}) {
   const bodyMat = lambert(tint);
   const materials = [bodyMat, EYE_W, EYE_B];
 
-  const entry = BUILDERS[family];
   let parts;
-  if (entry) {
+  const entry = BUILDERS[family];
+  // A registered design wins: run its base builder + its bespoke decorate().
+  if (design && BASE_BUILDERS[design.base]) {
+    const designOpts = design.optionsFn ? design.optionsFn(MODEL_API) : (design.options || {});
+    const o = Object.assign({ tint }, designOpts);
+    if (o.skinMat) materials.push(o.skinMat);
+    if (o.legMat) materials.push(o.legMat);
+    if (o.wingMat) materials.push(o.wingMat);
+
+    parts = BASE_BUILDERS[design.base](root, bodyMat, o);
+
+    // Built-in hand-weapon (same path as the table builders).
+    if (o.weapon) {
+      const wOpts = Object.assign({ armLen: parts.armLen || 1, big: o.weaponBig, curve: o.weaponCurve, scale: o.weaponScale }, o.weaponOpts || {});
+      const w = giveWeapon(parts, o.weapon, wOpts);
+      if (w) materials.push(...collectMats(w.grip));
+    }
+    // Bespoke geometry for this creature's unique silhouette.
+    if (design.decorate) {
+      try { design.decorate(root, parts, o, tint, MODEL_API); }
+      catch (e) { console.warn('decorate failed for', family, e); }
+      for (const m of collectMats(root)) if (!materials.includes(m)) materials.push(m);
+    }
+  } else if (entry) {
     const [builder, baseOpts] = entry;
     const o = Object.assign({ tint }, baseOpts);
 
@@ -915,20 +1363,60 @@ export function buildCreatureModel(family, opts = {}) {
     parts = builder(root, bodyMat, o);
 
     if (family === 'demon') addDemonWings(root, parts, tint, parts.baseY || 0.6);
+
+    // Hand weapon, if the family asked for one. weaponOpts lets a variant tweak
+    // the prop (curve/big/spikes/orb colour); armLen aligns the grip to the fist.
+    if (o.weapon) {
+      const wOpts = Object.assign({ armLen: parts.armLen || 1, big: o.weaponBig, curve: o.weaponCurve }, o.weaponOpts || {});
+      const w = giveWeapon(parts, o.weapon, wOpts);
+      if (w) materials.push(...collectMats(w.grip));
+    }
   } else {
     parts = genericBlob(root, bodyMat);
   }
 
   group.scale.setScalar(scale);
 
-  // Idle / walk animation
+  // Idle / walk + transient ATTACK + DEATH animation. attack() is fired by the
+  // combat system on each blow; dieT (0..1) is the death progress passed in
+  // while the creature is dying. Both are pose overlays driven by sin(), so they
+  // cost nothing per frame and allocate nothing.
   let t = 0;
-  function update(dt, moving) {
+  let attackT = 0;
+  const ATTACK_DUR = 0.4;
+  function attack() { attackT = ATTACK_DUR; }
+  function update(dt, moving, dieT = 0) {
     t += dt;
+    if (attackT > 0) attackT = Math.max(0, attackT - dt);
+    const atk = attackT > 0 ? (1 - attackT / ATTACK_DUR) : -1; // 0..1 lunge, or -1 = idle
+    const lunge = atk >= 0 ? Math.sin(atk * Math.PI) : 0;       // 0→1→0 envelope
+
+    // DEATH pose takes priority: the body topples / collapses as dieT rises. The
+    // outer combat shrink dissolves it afterward.
+    if (dieT > 0) {
+      const fall = Math.min(1, dieT * 1.4);
+      switch (parts.type) {
+        case 'dragon': case 'hydra': case 'flyer': case 'floater':
+          root.position.y = -fall * 0.4;
+          root.rotation.z = fall * 0.6;
+          break;
+        case 'blob': case 'frog':
+          if (parts.dome) parts.dome.scale.y = (parts.baseScaleY || 1) * (1 - fall * 0.8);
+          root.position.y = -fall * 0.1;
+          break;
+        default:
+          root.rotation.x = (Math.PI / 2) * fall;   // topple forward
+          root.position.y = -fall * 0.2;
+      }
+      return;
+    }
+
     const move = moving ? 1 : 0.25;        // smaller motion when idle
     const phase = t * (moving ? 8 : 2.2);
     const swing = Math.sin(phase);
     const breath = Math.sin(t * 2.5) * 0.02;
+    // Reset any leftover death transform when alive (model reuse safety).
+    if (root.rotation.x !== 0 && parts.type !== 'bug') root.rotation.x = 0;
 
     switch (parts.type) {
       case 'biped':
@@ -936,8 +1424,11 @@ export function buildCreatureModel(family, opts = {}) {
         for (let i = 0; i < parts.legs.length; i++) {
           parts.legs[i].rotation.x = swing * 0.5 * move * (i % 2 ? 1 : -1);
         }
+        // Attack: both arms chop down hard (overhand smash); else the walk swing.
         for (let i = 0; i < parts.arms.length; i++) {
-          parts.arms[i].rotation.x = swing * 0.4 * move * (i % 2 ? -1 : 1);
+          parts.arms[i].rotation.x = atk >= 0
+            ? -1.5 * lunge
+            : swing * 0.4 * move * (i % 2 ? -1 : 1);
         }
         root.position.y = Math.abs(swing) * 0.02 * move + breath;
         if (parts.head) parts.head.rotation.z = Math.sin(t * 1.5) * 0.05;
@@ -952,7 +1443,27 @@ export function buildCreatureModel(family, opts = {}) {
         }
         root.position.y = Math.abs(swing) * 0.015 * move;
         if (parts.tail) parts.tail.rotation.y = Math.sin(t * 3) * 0.3;
-        if (parts.head) parts.head.rotation.x = breath;
+        // Attack: lunge forward and snap the head down (a bite/pounce).
+        root.position.z = lunge * 0.18;
+        if (parts.head) parts.head.rotation.x = atk >= 0 ? breath + lunge * 0.6 : breath;
+        break;
+      }
+      case 'centaur': {
+        // Horse legs trot; the human torso's right arm swings/draws the weapon.
+        for (const l of parts.legs) l.pivot.rotation.x = swing * 0.5 * move * l.dir;
+        if (parts.tail) parts.tail.rotation.y = Math.sin(t * 3) * 0.3;
+        for (let i = 0; i < parts.arms.length; i++) {
+          const isWeaponArm = i === parts.arms.length - 1;
+          if (isWeaponArm && atk >= 0) {
+            // Bow: draw back then release; blade: overhead chop. Both via lunge.
+            parts.arms[i].rotation.x = parts.weapon && parts.weapon.kind === 'bow'
+              ? -0.6 + lunge * 0.9 : -1.4 * lunge;
+          } else {
+            parts.arms[i].rotation.x = swing * 0.3 * move * (i % 2 ? -1 : 1);
+          }
+        }
+        root.position.y = Math.abs(swing) * 0.015 * move + breath;
+        root.position.z = lunge * 0.12;
         break;
       }
       case 'serpent': {
@@ -979,7 +1490,9 @@ export function buildCreatureModel(family, opts = {}) {
           l.pivot.rotation.x = Math.sin(t * 8 + l.phase * 1.2) * 0.25 * move;
         }
         root.position.y = breath;
-        if (parts.tail) parts.tail.rotation.x = Math.sin(t * 2) * 0.1 - 0.3;
+        // Attack: the tail/stinger flicks forward and the body lunges.
+        if (parts.tail) parts.tail.rotation.x = (Math.sin(t * 2) * 0.1 - 0.3) - lunge * 0.8;
+        root.position.z = lunge * 0.12;
         break;
       }
       case 'flyer': {
@@ -1000,15 +1513,29 @@ export function buildCreatureModel(family, opts = {}) {
         for (const w of parts.wings) {
           w.pivot.rotation.z = w.side * (0.15 + Math.sin(t * 5) * 0.4);
         }
+        // Four legs stride when walking (front/hind alternate via dir).
+        if (parts.legs) {
+          for (let i = 0; i < parts.legs.length; i++) {
+            const l = parts.legs[i];
+            l.pivot.rotation.x = swing * 0.5 * move * (i % 2 ? 1 : -1) * l.dir;
+          }
+        }
         if (parts.tail) parts.tail.rotation.y = Math.sin(t * 2.5) * 0.25;
         root.position.y = Math.sin(t * 2) * 0.03 + breath;
+        // Attack: a forward bite — lunge in and dip the head.
+        root.position.z = lunge * 0.2;
+        if (parts.head) parts.head.rotation.x = lunge * 0.7;
         break;
       }
       case 'hydra': {
+        // Each of the heads sways idly; on attack they LUNGE forward in a
+        // staggered ripple (the user's signature request).
         for (const nk of parts.necks) {
           nk.neck.rotation.z = Math.sin(t * 2 + nk.phase * 1.5) * 0.2;
-          nk.neck.rotation.x = Math.sin(t * 1.5 + nk.phase) * 0.1;
+          const strike = atk >= 0 ? Math.sin(Math.max(0, atk - nk.phase * 0.12) * Math.PI) : 0;
+          nk.neck.rotation.x = Math.sin(t * 1.5 + nk.phase) * 0.1 - strike * 0.9;
         }
+        root.position.z = lunge * 0.12;
         break;
       }
       case 'fish': {
@@ -1058,11 +1585,11 @@ export function buildCreatureModel(family, opts = {}) {
         obj.geometry.dispose();
       }
     });
-    // Dispose only per-instance materials (shared EYE_* stay alive).
+    // Dispose only per-instance materials (shared EYE_*/weapon-palette stay alive).
     for (const m of materials) {
-      if (m !== EYE_W && m !== EYE_B) m.dispose();
+      if (!SHARED_MATS.has(m)) m.dispose();
     }
   }
 
-  return { group, update, dispose };
+  return { group, update, attack, dispose };
 }
