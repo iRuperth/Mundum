@@ -1,10 +1,14 @@
-import { CITIES, cityAt } from './cities.js';
+import { CITIES, cityAt, cityWallOutline, cityGates } from './cities.js';
 import { t } from './i18n.js';
 
 const RANGE = 90;        // half-width shown by the corner minimap, in meters
 const BIG_RANGE = 320;   // default half-width for the expanded map
 const BIG_MIN = 60;      // most zoomed-in the big map goes
 const BIG_MAX = 1400;    // most zoomed-out
+const CAVE_RANGE = 34;   // tighter view underground (rooms are ~50-72m half-extent)
+// Underground, you only see creatures on YOUR floor and within this many meters
+// (Tibia-style: the cave minimap is a short-range radar, not a god view).
+const CAVE_CREATURE_SIGHT = 10;
 
 export class Minimap {
   constructor(canvas, world, cityLabel, opts = {}) {
@@ -56,8 +60,23 @@ export class Minimap {
   recenter() { this.bigCenter = null; }
 
   // Draw a top-down view centered on the player. Peers and creatures are dots.
-  draw(player, peers, creatures) {
+  // `cave` (optional): { floorIndex, floorCount, viewFloor, stairs, label } puts
+  // the minimap in underground mode — a floor schematic with up/down floor peek,
+  // stair markers, and creatures limited to the player's own floor + short range.
+  draw(player, peers, creatures, cave) {
     const pp = player.pos;
+    if (cave) {
+      this._renderCave(this.ctx, this.size, pp, player, creatures, cave, true);
+      if (this.coords) this.coords.textContent = fmtCoords(pp);
+      const fl = cave.floorCount > 1 ? ` ${t('floor')} ${cave.viewFloor + 1}/${cave.floorCount}` : '';
+      this.cityLabel.textContent = (cave.label || t('wilderness')) + fl;
+      if (this.expanded && this.bigCtx) {
+        this._renderCave(this.bigCtx, this.big.width, pp, player, creatures, cave, false);
+        if (this.bigCoords) this.bigCoords.textContent = (cave.label || '') + fl;
+      }
+      return;
+    }
+
     this._render(this.ctx, this.size, pp.x, pp.z, RANGE, player, peers, creatures, true);
 
     if (this.coords) this.coords.textContent = fmtCoords(pp);
@@ -77,6 +96,63 @@ export class Minimap {
     }
   }
 
+  // Render the underground minimap: a dark floor schematic centered on the
+  // player, with stair markers and (when viewing the player's own floor) nearby
+  // creatures as dots. Up/down arrows show there are floors above/below; the big
+  // map lets you page through them (viewFloor), but other floors never show mobs.
+  _renderCave(ctx, s, pp, player, creatures, cave, legend) {
+    const half = s / 2;
+    ctx.clearRect(0, 0, s, s);
+    // Cave room backdrop (rocky dark fill).
+    ctx.fillStyle = '#15120f';
+    ctx.fillRect(0, 0, s, s);
+    // A subtle floor disc so the room reads as an enclosed space.
+    ctx.fillStyle = '#241f1a';
+    ctx.beginPath(); ctx.arc(half, half, half * 0.92, 0, Math.PI * 2); ctx.fill();
+
+    const range = legend ? CAVE_RANGE : CAVE_RANGE * 1.4;
+    const toMap = (wx, wz) => ({ x: half + ((wx - pp.x) / range) * half, y: half + ((wz - pp.z) / range) * half });
+
+    // Stair markers for the viewed floor: green ▲ = up, orange ▼ = down.
+    for (const st of (cave.stairs || [])) {
+      const p = toMap(st.x, st.z);
+      ctx.fillStyle = st.dir === 'up' ? '#7bed6f' : '#ff9a3a';
+      ctx.beginPath();
+      if (st.dir === 'up') { ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x + 5, p.y + 4); ctx.lineTo(p.x - 5, p.y + 4); }
+      else { ctx.moveTo(p.x, p.y + 6); ctx.lineTo(p.x + 5, p.y - 4); ctx.lineTo(p.x - 5, p.y - 4); }
+      ctx.closePath(); ctx.fill();
+    }
+
+    // Creatures: ONLY when viewing the player's own floor, and only those within
+    // CAVE_CREATURE_SIGHT meters (the short-range radar the user asked for).
+    if (creatures && cave.viewFloor === cave.floorIndex) {
+      ctx.fillStyle = '#e74c3c';
+      for (const c of creatures) {
+        if (Math.hypot(c.pos.x - pp.x, c.pos.z - pp.z) > CAVE_CREATURE_SIGHT) continue;
+        const p = toMap(c.pos.x, c.pos.z);
+        ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, 7); ctx.fill();
+      }
+    }
+
+    // Player heading arrow (only drawn when viewing the player's own floor).
+    if (cave.viewFloor === cave.floorIndex) {
+      ctx.save(); ctx.translate(half, half); ctx.rotate(-player.yaw);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.moveTo(0, -6); ctx.lineTo(4, 5); ctx.lineTo(-4, 5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    } else {
+      // Viewing another floor: a faint "you are not here" hint dot.
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath(); ctx.arc(half, half, 3, 0, 7); ctx.fill();
+    }
+
+    // Floor up/down indicators in the corners, so you know there's more cave
+    // above/below and which floor you're peeking at.
+    ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    if (cave.viewFloor > 0) { ctx.fillStyle = '#7bed6f'; ctx.fillText('▲', 4, 4); }
+    if (cave.viewFloor < cave.floorCount - 1) { ctx.fillStyle = '#ff9a3a'; ctx.fillText('▼', 4, s - 18); }
+  }
+
   // Render one frame into ctx, centered on world point (cx, cz) at the given range.
   _render(ctx, s, cx, cz, range, player, peers, creatures, legend) {
     const half = s / 2;
@@ -92,22 +168,65 @@ export class Minimap {
       }
     }
 
+    // City walls: draw each city's perimeter (rectangle for the grid capital, a
+    // circle for round towns) plus a center marker, so the map shows the outline
+    // that surrounds each city, not just a dot.
+    const perPx = half / range;            // map pixels per world meter
     for (const c of CITIES) {
-      const p = this.worldToMap(c, cx, cz, half, range);
-      if (p) {
+      const center = this.toMap(c, cx, cz, half, range);
+      const o = cityWallOutline(c);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(120,90,40,0.95)';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(241,196,15,0.10)';
+      if (o.shape === 'poly') {
+        // The capital's irregular wall: trace its world-space polygon.
+        ctx.beginPath();
+        o.points.forEach((wp, i) => {
+          const p = this.toMap(wp, cx, cz, half, range);
+          if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, o.radius * perPx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+      // Gate markers: a bright opening on the wall for each of the city's exits,
+      // so the outline never looks like a sealed box. Each gate is a green disc
+      // with a dark slot, drawn on top of the wall stroke.
+      for (const g of cityGates(c)) {
+        const gp = this.toMap(g, cx, cz, half, range);
+        if (gp.x < -8 || gp.y < -8 || gp.x > s + 8 || gp.y > s + 8) continue;
+        ctx.save();
+        ctx.fillStyle = '#3ad15a';
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.lineWidth = 1.4;
+        const gr = legend ? 3 : 4;
+        ctx.beginPath(); ctx.arc(gp.x, gp.y, gr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        // a darker slot through the disc = the open gateway
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(gp.x - gr * 0.4, gp.y - gr, gr * 0.8, gr * 2);
+        ctx.restore();
+      }
+      // Center marker, only when it falls inside the view.
+      if (Math.abs(c.x - cx) <= range && Math.abs(c.z - cz) <= range) {
         ctx.fillStyle = '#f1c40f';
-        ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+        ctx.fillRect(center.x - 3, center.y - 3, 6, 6);
       }
     }
 
-    // Points of interest as emoji (shop, weapons, potions, depot, dungeons...).
+    // Points of interest as small DRAWN icons (not emoji): a clean colored glyph
+    // per POI type reads sharper on the map than an emoji and scales with zoom.
     if (this.pois.length) {
-      ctx.font = (legend ? 11 : 14) + 'px system-ui';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      const r = legend ? 4 : 5;
       for (const poi of this.pois) {
         const p = this.worldToMap(poi, cx, cz, half, range);
-        if (p) ctx.fillText(poi.icon, p.x, p.y);
+        if (p) drawPoiIcon(ctx, p.x, p.y, r, poi.icon);
       }
     }
 
@@ -140,7 +259,37 @@ export class Minimap {
       ctx.restore();
     }
 
+    // Cardinal compass on the edges. The map is always north-up (top = -Z =
+    // north, right = +X = east), so the letters are fixed to the canvas edges —
+    // a quick orientation cue the user asked for, kept alongside the coordinates.
+    this._drawCompass(ctx, s);
+
     if (legend) this._drawLegend(ctx);
+  }
+
+  // N/S/E/W markers hugging the four edges. North is tinted red so it stands out
+  // as the reference, the others white. Drawn with a dark halo so they read over
+  // any terrain color.
+  _drawCompass(ctx, s) {
+    const half = s / 2;
+    const dirs = [
+      { c: 'N', x: half, y: 11, color: '#ff6b5a' },
+      { c: 'S', x: half, y: s - 9, color: '#ffffff' },
+      { c: 'E', x: s - 9, y: half, color: '#ffffff' },
+      { c: 'O', x: 11, y: half, color: '#ffffff' },   // Oeste (West) — Spanish UI
+    ];
+    ctx.save();
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const d of dirs) {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeText(d.c, d.x, d.y);
+      ctx.fillStyle = d.color;
+      ctx.fillText(d.c, d.x, d.y);
+    }
+    ctx.restore();
   }
 
   _drawLegend(ctx) {
@@ -165,6 +314,12 @@ export class Minimap {
     if (Math.abs(dx) > range || Math.abs(dz) > range) return null;
     return { x: half + (dx / range) * half, y: half + (dz / range) * half };
   }
+
+  // Like worldToMap but never clamps to null — used for shapes (city walls) that
+  // may straddle the view edge: the canvas clips the off-screen parts for us.
+  toMap(wp, cx, cz, half, range = RANGE) {
+    return { x: half + ((wp.x - cx) / range) * half, y: half + ((wp.z - cz) / range) * half };
+  }
 }
 
 // Roblox-style readout: world X / Y (height) / Z, rounded to whole meters.
@@ -172,11 +327,102 @@ function fmtCoords(p) {
   return `X ${Math.round(p.x)}  Y ${Math.round(p.y)}  Z ${Math.round(p.z)}`;
 }
 
+// Map each POI's emoji to a crisp drawn glyph (color + shape) on the minimap, so
+// markers read sharply at any zoom instead of relying on emoji font rendering.
+// Falls back to a neutral dot for any unmapped icon.
+const POI_STYLE = {
+  '🏦': { color: '#f1c40f', shape: 'square' },   // bank
+  '🛒': { color: '#e67e22', shape: 'square' },   // market
+  '⚗️': { color: '#9b59ff', shape: 'flask' },    // apothecary
+  '🍲': { color: '#c0392b', shape: 'circle' },   // food
+  '⚔️': { color: '#bdc3c7', shape: 'cross' },    // armory
+  '🔮': { color: '#8e44ad', shape: 'diamond' },  // mage
+  '🏹': { color: '#27ae60', shape: 'triangle' }, // archer
+  '🎒': { color: '#b9770e', shape: 'square' },   // bag
+  '🏛️': { color: '#ecf0f1', shape: 'temple' },   // temple / town hall
+  '🏰': { color: '#bdc3c7', shape: 'temple' },   // keep
+  '🍺': { color: '#d35400', shape: 'circle' },   // tavern
+  '💎': { color: '#5dade2', shape: 'diamond' },  // jeweler
+  '🕳️': { color: '#2c2c2c', shape: 'hole' },     // dungeon mouth
+  '🏚️': { color: '#7f8c8d', shape: 'ruin' },     // ruin
+  '📖': { color: '#c0843c', shape: 'square' },   // library
+  '🌳': { color: '#2e8b3a', shape: 'tree' },     // great oak landmark
+  '🌴': { color: '#2eae8a', shape: 'tree' },     // oasis landmark
+  '🗼': { color: '#e0e0e0', shape: 'tower' },    // lighthouse / ice tower
+  '🗿': { color: '#9aa0a6', shape: 'tower' },    // obelisk
+  '🔺': { color: '#e0a050', shape: 'triangle' }, // pyramid
+};
+
+function drawPoiIcon(ctx, x, y, r, icon) {
+  const st = POI_STYLE[icon] || { color: '#dddddd', shape: 'circle' };
+  ctx.save();
+  ctx.fillStyle = st.color;
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 1;
+  const path = () => {
+    ctx.beginPath();
+    switch (st.shape) {
+      case 'square': ctx.rect(x - r, y - r, r * 2, r * 2); break;
+      case 'diamond': ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); break;
+      case 'triangle': ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); break;
+      case 'hole': ctx.arc(x, y, r, 0, Math.PI * 2); break;
+      case 'circle': default: ctx.arc(x, y, r, 0, Math.PI * 2); break;
+    }
+  };
+  if (st.shape === 'cross') {
+    ctx.lineWidth = 2.2; ctx.strokeStyle = st.color;
+    ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+    ctx.restore(); return;
+  }
+  if (st.shape === 'flask') {
+    ctx.beginPath(); ctx.moveTo(x - r * 0.5, y - r); ctx.lineTo(x - r * 0.5, y - r * 0.2);
+    ctx.lineTo(x - r, y + r); ctx.lineTo(x + r, y + r); ctx.lineTo(x + r * 0.5, y - r * 0.2);
+    ctx.lineTo(x + r * 0.5, y - r); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); return;
+  }
+  if (st.shape === 'temple') {
+    // a little pediment: triangle roof over a base
+    ctx.beginPath(); ctx.moveTo(x - r - 1, y - r * 0.2); ctx.lineTo(x, y - r); ctx.lineTo(x + r + 1, y - r * 0.2); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillRect(x - r, y - r * 0.2, r * 2, r); ctx.strokeRect(x - r, y - r * 0.2, r * 2, r); ctx.restore(); return;
+  }
+  if (st.shape === 'ruin') {
+    // a broken wall: two uneven blocks
+    ctx.fillRect(x - r, y - r, r * 0.8, r * 2); ctx.fillRect(x + r * 0.2, y - r * 0.3, r * 0.8, r * 1.3);
+    ctx.strokeRect(x - r, y - r, r * 0.8, r * 2); ctx.restore(); return;
+  }
+  if (st.shape === 'tree') {
+    // a round canopy on a short trunk
+    ctx.fillStyle = '#6a4a30';
+    ctx.fillRect(x - r * 0.25, y, r * 0.5, r); ctx.strokeRect(x - r * 0.25, y, r * 0.5, r);
+    ctx.fillStyle = st.color;
+    ctx.beginPath(); ctx.arc(x, y - r * 0.25, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore(); return;
+  }
+  if (st.shape === 'tower') {
+    // a tall narrow tower with a pointed cap
+    ctx.fillRect(x - r * 0.5, y - r * 0.4, r, r * 1.4); ctx.strokeRect(x - r * 0.5, y - r * 0.4, r, r * 1.4);
+    ctx.beginPath(); ctx.moveTo(x - r * 0.6, y - r * 0.4); ctx.lineTo(x, y - r * 1.3); ctx.lineTo(x + r * 0.6, y - r * 0.4); ctx.closePath();
+    ctx.fill(); ctx.stroke(); ctx.restore(); return;
+  }
+  path(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+// Map terrain color. This now reads the real BIOME (the same one the 3D ground
+// uses), not just the height, so the desert shows up as sand and the whole snow
+// region as white — instead of everything below the high peaks reading as green.
 function terrainColor(world, x, z) {
   const h = world.heightAt(x, z);
-  if (h < -0.8) return '#2f6fa8';
-  if (h < 0.6) return '#cdbd86';
-  if (h > 22) return '#eef3f7';
-  if (h > 17) return '#8a877f';
-  return h > 8 ? '#4a8f44' : '#57a14d';
+  if (h < -0.8) return '#2f6fa8';            // deep water
+  if (h < 0.6) return '#cdbd86';             // beach / shoreline sand
+  const biome = world.biomeAt(x, z, h);
+  switch (biome) {
+    case 'desert':   return h > 16 ? '#b08a5a' : '#dcc483';   // dune sand (dry rock up high)
+    case 'snow':     return h > 18 ? '#ffffff' : '#e6edf2';   // snowfield (white ONLY here)
+    // Mountains stay GREY rock everywhere outside the snow region — no white
+    // snowcaps, so a peak in the west or south never looks like snow.
+    case 'mountain': return '#8a877f';
+    default:                                                  // forest
+      if (h > 19) return '#8a877f';          // bare rocky highland
+      return h > 8 ? '#4a8f44' : '#57a14d';  // grass
+  }
 }
