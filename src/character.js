@@ -219,7 +219,10 @@ export function buildCharacter(profile) {
     body.position.y = 0.95 + b * 0.012;
     body.scale.y = 1 + b * 0.02;
     head.position.y = 1.42 + b * 0.014;
+    // The worn armor overlay sits on chestArmor — move AND scale it with the body
+    // so a plate cuirass breathes with the chest instead of floating rigidly.
     chestArmor.position.y = 0.95 + b * 0.012;
+    chestArmor.scale.y = 1 + b * 0.02;
   }
 
   function animate(phase, intensity, grounded, dt = 0) {
@@ -266,8 +269,16 @@ export function buildCharacter(profile) {
       armR.pivot.rotation.y = -0.2;
       armL.pivot.rotation.set(sw * 0.6, 0, 0.1);
       armL.pivot.rotation.y = 0;
+    } else if (weaponType) {
+      // Holding a melee weapon (sword/axe/mace/lance): the weapon arm rests in a
+      // READY pose — bent forward and tucked in a touch so the blade is carried in
+      // front of the body, not hanging flat against the leg. Off-hand swings.
+      armL.pivot.rotation.set(sw, 0, 0.08);
+      armR.pivot.rotation.set(-0.55 - sw * 0.25, 0, -0.18);
+      armL.pivot.rotation.y = 0;
+      armR.pivot.rotation.y = -0.15;
     } else {
-      // Melee / bare hands: arms swing with the gait.
+      // Bare hands: arms swing freely with the gait.
       armL.pivot.rotation.set(sw, 0, 0.08);
       armR.pivot.rotation.set(-sw, 0, -0.08);
       armL.pivot.rotation.y = 0;
