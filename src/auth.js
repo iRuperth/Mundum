@@ -277,6 +277,11 @@ export class Auth {
       if (s.equipment != null) row.equipment = s.equipment;
       if (s.backpack != null) row.backpack = s.backpack;
       if (s.depot != null) row.depot = s.depot;
+      // Character progression: use-skill levels/tries, spent skill points and
+      // skill-tree levels all live in `stats`. Without this the skill bars and
+      // spent points reset on reload.
+      if (s.stats != null) row.stats = s.stats;
+      if (s.quests != null) row.quests = s.quests;
       if (s.pos != null) row.pos = s.pos;
       else if (s.x != null) row.pos = { x: s.x, y: s.y, z: s.z };
 
