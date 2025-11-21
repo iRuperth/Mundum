@@ -247,6 +247,8 @@ function arpeggio(notes, step, type, peak) {
 const sfx = {
   jump: () => blip("square", 330, 740, 0.16, 0.3),
   attack: () => noise(0.18, 0.35, 1400, 0.8),
+  // Bow loose: a soft string twang plus an airy whoosh as the arrow flies off.
+  bow: () => { blip("triangle", 520, 180, 0.12, 0.22); noise(0.22, 0.22, 2600, 1.4); },
   hit: () => { blip("square", 200, 70, 0.14, 0.35); noise(0.1, 0.25, 500, 1); },
   creatureHit: () => blip("sawtooth", 420, 120, 0.18, 0.3),
   levelUp: () => arpeggio([60, 64, 67, 72, 76], 0.09, "triangle", 0.3),
