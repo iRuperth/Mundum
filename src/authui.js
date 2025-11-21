@@ -74,6 +74,8 @@ const FALLBACK = {
     passwordTooShort: 'La contraseña debe tener al menos 6 caracteres',
     passwordsDoNotMatch: 'Las contraseñas no coinciden',
     nameRequired: 'Escribe un nombre',
+    nameBadChars: 'Solo minúsculas y números, sin espacios ni símbolos',
+    nameReserved: 'Ese nombre está reservado, elige otro',
     pickProfession: 'Elige una profesión',
     working: 'Un momento…',
     authFailed: 'No se pudo completar. Inténtalo de nuevo',
@@ -107,6 +109,8 @@ const FALLBACK = {
     passwordTooShort: 'Password must be at least 6 characters',
     passwordsDoNotMatch: 'Passwords do not match',
     nameRequired: 'Enter a name',
+    nameBadChars: 'Lowercase letters and numbers only, no spaces or symbols',
+    nameReserved: 'That name is reserved, pick another',
     pickProfession: 'Pick a profession',
     working: 'One moment…',
     authFailed: 'Could not complete. Please try again',
@@ -138,6 +142,18 @@ function loc(obj) {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Character-name rules (the user's spec): all lowercase, digits allowed, NO
+// spaces / dashes / dots / any symbol, and the reserved Game Master name "gm"
+// can never be created by a player. Returns an i18n error key, or '' if valid.
+const CHAR_NAME_RE = /^[a-z0-9]+$/;
+export function validateCharName(name) {
+  const n = String(name || '').trim();
+  if (!n) return 'nameRequired';
+  if (!CHAR_NAME_RE.test(n)) return 'nameBadChars';   // rejects caps, spaces, symbols
+  if (n === 'gm') return 'nameReserved';              // GM is provisioned only via the DB
+  return '';
+}
 
 // Small DOM helpers.
 function el(tag, opts, children) {
@@ -475,6 +491,10 @@ export class AuthUI {
     if (this.busy) return;
     const name = (state.name || '').trim();
     if (!name) { err.textContent = tt('nameRequired'); return; }
+    // Name rules: lowercase letters and digits only — no spaces, dashes, dots or
+    // any symbol — and nobody may create the reserved "gm" name (Game Master).
+    const nameErr = validateCharName(name);
+    if (nameErr) { err.textContent = tt(nameErr); return; }
     if (!state.profession) { err.textContent = tt('pickProfession'); return; }
     err.textContent = '';
 

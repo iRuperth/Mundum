@@ -1,4 +1,14 @@
 import { t } from './i18n.js';
+import { iconFor } from './itemIcons.js';
+
+// Icon markup for a hotbar entry: prefer a stored pixel-art SVG (potions/lights),
+// fall back to a small painted SVG for item-shaped entries, else the emoji glyph.
+function entryIcon(entry) {
+  if (!entry) return '';
+  if (entry.iconHtml) return entry.iconHtml;
+  if (entry.kind === 'potion' || entry.kind === 'light') return iconFor(entry);
+  return entry.icon || '';
+}
 
 // A 10-slot action bar for skills and potions. Slots are assigned via a menu
 // (right click on desktop, long press on touch) and triggered by the number
@@ -60,14 +70,16 @@ export class Hotbar {
 
   setSlot(i, entry) { this.slots[i] = entry; this.render(); }
 
-  // Put a dragged item into slot i. The action bar holds usable items: only
-  // potions/food go here (equipment is used from the inventory, not a hotkey).
+  // Put a dragged item into slot i. The action bar holds usable items: potions/
+  // food and light sources (torches). Equipment is used from the inventory.
   assignItem(i, item) {
-    if (!item || item.kind !== 'potion') return false;
+    if (!item || (item.kind !== 'potion' && item.kind !== 'light')) return false;
     this.setSlot(i, {
-      kind: 'potion', id: item.baseId, baseId: item.baseId,
+      kind: item.kind, id: item.baseId, baseId: item.baseId,
       name: this.hooks.itemName ? this.hooks.itemName(item) : (item.baseId || ''),
-      icon: item.icon || '🧪',
+      icon: item.icon || (item.kind === 'light' ? '🔥' : '🧪'),
+      // Pixel-art SVG icon, matching the inventory. Skills keep their emoji.
+      iconHtml: iconFor(item),
     });
     return true;
   }
@@ -97,13 +109,17 @@ export class Hotbar {
     const add = (label, entry) => {
       const b = document.createElement('button');
       b.className = 'hb-menu-item';
-      b.innerHTML = `<span class="hb-menu-ico">${entry ? entry.icon : '✖'}</span> ${label}`;
+      b.innerHTML = `<span class="hb-menu-ico">${entry ? entryIcon(entry) : '✖'}</span> ${label}`;
       b.addEventListener('click', () => { this.setSlot(i, entry); close(); });
       menu.appendChild(b);
     };
     add(t('empty') || '—', null);
     for (const sk of opts.skills) add(sk.name, { ...sk, skillKind: sk.kind, kind: 'skill' });
-    for (const po of opts.potions) add(po.name, { ...po, kind: 'potion' });
+    for (const po of opts.potions) {
+      const entry = { ...po, kind: 'potion' };
+      entry.iconHtml = iconFor(entry);
+      add(po.name, entry);
+    }
 
     document.body.appendChild(menu);
     const x = Math.min(anchor.clientX || innerWidth / 2, innerWidth - 180);
@@ -120,7 +136,7 @@ export class Hotbar {
       const { cell, icon } = this.cells[i];
       const entry = this.slots[i];
       cell.classList.toggle('empty', !entry);
-      icon.textContent = entry ? entry.icon : '';
+      icon.innerHTML = entry ? entryIcon(entry) : '';
       cell.title = entry ? entry.name : '';
     }
   }

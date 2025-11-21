@@ -25,6 +25,13 @@ html, body {
   50% { box-shadow: inset 0 0 150px 45px rgba(220, 0, 0, .7); }
 }
 
+/* Black fade used when descending into / climbing out of caves. */
+#fade-overlay {
+  position: fixed; inset: 0; z-index: 14; pointer-events: none;
+  background: #000; opacity: 0; transition: opacity .35s ease;
+}
+#fade-overlay.active { opacity: 1; }
+
 /* HUD */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
 
@@ -93,17 +100,9 @@ body.touch #hint { display: none; }
 #btn-attack { right: 100px; bottom: calc(40px + env(safe-area-inset-bottom)); width: 70px; height: 70px; font-size: 30px; }
 #btn-jump { right: 28px; bottom: calc(96px + env(safe-area-inset-bottom)); }
 #btn-bag  { right: 28px; bottom: calc(28px + env(safe-area-inset-bottom)); width: 50px; height: 50px; font-size: 22px; }
-#btn-cam  { right: 108px; bottom: calc(120px + env(safe-area-inset-bottom)); width: 50px; height: 50px; font-size: 20px; }
-#btn-range { right: 108px; bottom: calc(184px + env(safe-area-inset-bottom)); width: 50px; height: 50px; font-size: 20px; }
 
 .touch-only { display: none; }
 body.touch .touch-only { display: block; }
-body:not(.touch) #btn-cam { bottom: auto; top: calc(54px + env(safe-area-inset-top)); right: 24px; }
-/* Sit above the side panel (z-index 7) so the minimap doesn't eat the click. */
-#btn-range { z-index: 8; }
-/* On desktop the side panel (188px) hugs the right edge; place the range button
-   just left of it so it never overlaps the minimap. */
-body:not(.touch) #btn-range { bottom: auto; top: calc(20px + env(safe-area-inset-top)); right: 212px; }
 body:not(.touch) #stick-base { display: none !important; }
 
 /* Character creation */
@@ -213,9 +212,11 @@ body:not(.touch) #stick-base { display: none !important; }
 }
 .lang-btn.selected { background: #2f86c9; border-color: #fff; }
 
+/* Vitals now live INSIDE the right side panel (above the buttons + equipment),
+   Tibia-style — no longer floating top-left. */
 #vitals {
-  position: absolute; top: calc(46px + env(safe-area-inset-top)); left: 16px;
-  display: flex; flex-direction: column; gap: 4px; width: 210px;
+  position: relative;
+  display: flex; flex-direction: column; gap: 4px; width: 100%;
 }
 .bar {
   position: relative; height: 16px; border-radius: 9px; overflow: hidden;
@@ -230,12 +231,49 @@ body:not(.touch) #stick-base { display: none !important; }
   font-size: 10px; color: #fff; text-shadow: 0 1px 2px #000;
 }
 #level-badge {
-  position: absolute; top: -2px; left: -10px;
+  position: absolute; top: 0; left: -4px;
   width: 26px; height: 26px; border-radius: 50%;
   background: #2f86c9; color: #fff; font-weight: 800; font-size: 13px;
   display: flex; align-items: center; justify-content: center;
-  border: 2px solid #fff;
+  border: 2px solid #fff; z-index: 1;
 }
+
+/* Small Tibia-style square button box, pinned at the BOTTOM of the right panel
+   (margin-top:auto pushes it down below the windows). A wrapping grid of little
+   square buttons — replaces the big floating round buttons. */
+#panel-btns {
+  margin-top: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  padding: 6px; border-radius: 8px;
+  background: rgba(12,16,34,.6); border: 1px solid rgba(255,255,255,.12);
+}
+.panel-btn {
+  aspect-ratio: 1; min-width: 0; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.18); color: #cdd6e6;
+  font-size: 17px; font-weight: 700; line-height: 1;
+  /* Force text (monochrome) rendering so the symbols never turn into colour
+     emoji on any platform. */
+  font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", system-ui, sans-serif;
+  font-variant-emoji: text;
+  background: linear-gradient(180deg, #232a44, #161b30);
+  display: flex; align-items: center; justify-content: center;
+}
+.panel-btn:hover { background: rgba(255,255,255,.16); color: #fff; }
+.panel-btn.active { outline: 2px solid #5dd6ff; color: #fff; }
+
+/* The character-level row at the top of the Skills tab (replaces the old badge). */
+.sp-level-row { background: rgba(95,140,200,.18); border-color: rgba(126,201,255,.4); }
+.sp-level-row .sp-stat-name { color: #9fd1ff; }
+
+/* The thin XP bar tucked under the hotbar. */
+#hotbar-wrap {
+  position: absolute; left: 50%; bottom: calc(8px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  pointer-events: auto; z-index: 6;
+}
+/* XP strip under the hotbar — tall enough that the % label fits cleanly. */
+#hotbar-xp { width: 100%; height: 14px; border-radius: 7px; }
+#hotbar-xp .bar-text { font-size: 10px; line-height: 14px; font-weight: 700; }
 
 #hud-event {
   color: #fff; font-weight: 700; font-size: 12px;
@@ -258,21 +296,69 @@ body:not(.touch) #stick-base { display: none !important; }
 .toast.bad { background: rgba(60,10,10,.9); border-color: #e74c3c; }
 .toast.fade { opacity: 0; transform: translateY(-10px); }
 
-#side-panel {
-  position: fixed; top: 0; right: 0; z-index: 7;
+/* Both side panels share .side-panel; .side-right docks right, .side-left docks
+   left (empty by default — drag windows over to populate it). */
+.side-panel {
+  position: fixed; top: 0; z-index: 7;
   width: 188px; height: 100%;
   padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
   display: flex; flex-direction: column; gap: 8px;
   background: rgba(8,12,30,.55); backdrop-filter: blur(6px);
-  border-left: 1px solid rgba(255,255,255,.12);
   transition: transform .25s; overflow-y: auto;
 }
-#side-panel.collapsed { transform: translateX(174px); }
-#panel-toggle {
-  position: absolute; top: 50%; left: -2px; transform: translateY(-50%);
-  width: 18px; height: 50px; border: none; border-radius: 6px 0 0 6px;
+.side-right { right: 0; border-left: 1px solid rgba(255,255,255,.12); }
+.side-left  { left: 0;  border-right: 1px solid rgba(255,255,255,.12); }
+.side-right.collapsed { transform: translateX(174px); }
+.side-left.collapsed  { transform: translateX(-174px); }
+.windows { display: flex; flex-direction: column; gap: 8px; }
+#panel-toggle, #panel-toggle-left {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 50px; border: none;
   background: rgba(8,12,30,.8); color: #fff; cursor: pointer; font-size: 14px;
 }
+#panel-toggle      { left: -2px;  border-radius: 6px 0 0 6px; }
+#panel-toggle-left { right: -2px; border-radius: 0 6px 6px 0; }
+/* Tibia-style window: a title bar + body, collapsible and (for bags) closable,
+   reorderable by dragging the head. Lives stacked inside #side-panel. */
+.win {
+  background: rgba(12,16,34,.6); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px; overflow: hidden; flex: 0 0 auto;
+}
+.win.dragging { outline: 1px dashed rgba(126,201,255,.8); }
+/* A window lifted out of the panel, following the cursor (Tibia-style move). */
+.win.lifting {
+  position: fixed; z-index: 90; pointer-events: none;
+  opacity: .9; box-shadow: 0 10px 30px rgba(0,0,0,.6);
+  transform: scale(1.02);
+}
+/* The gap held open in the panel showing where the window will drop. */
+.win-placeholder {
+  border: 1px dashed rgba(126,201,255,.6); border-radius: 8px;
+  background: rgba(126,201,255,.08); flex: 0 0 auto;
+}
+.win-head {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 6px; cursor: grab; user-select: none;
+  background: linear-gradient(180deg, #232a44, #161b30);
+  border-bottom: 1px solid rgba(0,0,0,.5);
+  font-size: 12px; font-weight: 700; color: #d8e2ff;
+}
+.win-head:active { cursor: grabbing; }
+.win-grip { opacity: .5; font-size: 11px; letter-spacing: -2px; }
+.win-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.win-count { opacity: .6; font-weight: 600; }
+.win-collapse, .win-close {
+  border: none; background: rgba(255,255,255,.08); color: #fff;
+  width: 18px; height: 18px; border-radius: 4px; cursor: pointer;
+  font-size: 11px; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.win-close:hover { background: #a33; }
+.win-collapse:hover { background: rgba(255,255,255,.18); }
+.win-body { padding: 7px; }
+.win.collapsed .win-body { display: none; }
+
+#windows { display: flex; flex-direction: column; gap: 8px; }
+
 #minimap-box { position: relative; }
 #minimap {
   width: 100%; height: auto; aspect-ratio: 1; display: block;
@@ -334,9 +420,9 @@ body:not(.touch) #stick-base { display: none !important; }
   grid-template-columns: repeat(3, 46px);
   grid-auto-rows: 46px;
   grid-template-areas:
-    ".      helmet bag"
+    "amulet helmet bag"
     "weapon armor  shield"
-    "amulet legs   extra"
+    ".      legs   extra"
     ".      boots  .";
   gap: 5px;
   padding: 7px;
@@ -487,13 +573,6 @@ body:not(.touch) #stick-base { display: none !important; }
   background: #3d8a36; color: #fff; cursor: pointer;
 }
 
-#hud-mute {
-  position: absolute; right: 16px; top: calc(46px + env(safe-area-inset-top));
-  width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
-  background: rgba(10,16,40,.5); border: 1px solid rgba(255,255,255,.25);
-  color: #fff; font-size: 16px; pointer-events: auto;
-}
-
 #quest-box {
   position: absolute; top: 116px; left: 16px; width: 230px;
   background: rgba(8,12,30,.55); backdrop-filter: blur(5px);
@@ -508,10 +587,9 @@ body:not(.touch) #stick-base { display: none !important; }
 .shop-row.quest-ready { border: 1px solid #2ecc71; }
 .shop-row small { opacity: .7; font-size: 11px; }
 
-body.touch #side-panel { width: 150px; }
+body.touch .side-panel { width: 150px; }
 @media (max-width: 520px) {
-  #vitals { width: 150px; }
-  #side-panel { width: 140px; }
+  .side-panel { width: 140px; }
   #quest-box { width: 170px; top: 110px; }
 }
 
@@ -666,10 +744,12 @@ body.touch #crosshair { display: none !important; }
 
 /* Floating backpack window (20-slot grid, Tibia style) */
 .bp-window {
-  display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;
-  margin-bottom: 12px; max-height: 50vh; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  max-height: 40vh; overflow-y: auto;
 }
-.bp-window .bp-cell { aspect-ratio: 1; font-size: 20px; }
+.bp-window .bp-cell { aspect-ratio: 1; font-size: 18px; }
+/* The context-card backpack (shops/depot reuse it) keeps the roomier 5-col grid. */
+#context-card .bp-window { grid-template-columns: repeat(5, 1fr); gap: 5px; margin-bottom: 12px; font-size: 20px; }
 .bp-count { font-size: 12px; opacity: .7; font-weight: 600; margin-left: 6px; }
 .bp-cell.is-bag { box-shadow: inset 0 0 0 2px rgba(241,196,64,.5); }
 .bp-cell.is-bag::after {
@@ -709,6 +789,22 @@ body.touch #crosshair { display: none !important; }
 .coin-cell .coin-n { font-size: 13px; font-weight: 700; color: #fff; }
 .coin-cell .coin-name { font-size: 10px; opacity: .7; }
 
+/* A coin stack shown inside an inventory cell: the pile centred, with a small
+   count badge in the corner (Tibia-style stack number). */
+.bp-cell.is-coin { position: relative; }
+.coin-pile.cell {
+  position: absolute; inset: 0; width: auto; height: auto;
+  display: block; pointer-events: none;
+}
+.coin-pile.cell i:nth-child(1) { left: 22%; top: 50%; }
+.coin-pile.cell i:nth-child(2) { left: 46%; top: 42%; }
+.coin-pile.cell i:nth-child(3) { left: 34%; top: 26%; }
+.bp-cell .cell-count {
+  position: absolute; right: 2px; bottom: 1px;
+  font-size: 11px; font-weight: 800; color: #fff;
+  text-shadow: 0 1px 2px #000, 0 0 2px #000; pointer-events: none;
+}
+
 /* Character preview in creation, and thumbnails in character select */
 #auth-root .auth-portrait {
   display: block; width: 150px; height: 150px; margin: 0 auto 8px;
@@ -721,11 +817,11 @@ body.touch #crosshair { display: none !important; }
   border: 1px solid rgba(255,255,255,.14); object-fit: contain;
 }
 
-/* Action hotbar: 10 small numbered slots for skills and potions */
+/* Action hotbar: 10 small numbered slots for skills and potions. Positioning is
+   on #hotbar-wrap now (so the XP bar can sit under it); the row itself is just
+   a flex row of slots. */
 #hotbar {
-  position: absolute; left: 50%; bottom: calc(8px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  display: flex; gap: 4px; pointer-events: auto; z-index: 6;
+  display: flex; gap: 4px; pointer-events: auto;
 }
 .hb-slot {
   position: relative; width: 42px; height: 42px; border-radius: 8px;
@@ -787,27 +883,57 @@ body.touch #crosshair { display: none !important; }
 #auth-root .auth-confirm-yes { background: #c0392b; }
 #auth-root .auth-confirm-no { background: #4a5468; }
 
+/* ---- Procedural pixel-art item icons (itemIcons.js) ---------------------- */
+/* The SVG fills its wrapper; wrappers set the box. crispEdges keeps it sharp. */
+.pxico { display: block; width: 100%; height: 100%; }
+/* Inventory / equipment cell icon: fill most of the square cell. */
+.ico { display: inline-flex; width: 82%; height: 82%; align-items: center; justify-content: center; }
+.bp-cell .ico, .slot .ico { width: 84%; height: 84%; }
+/* Empty equipment-slot placeholder: faint painted ghost. */
+.slot .ph { opacity: .32; }
+.slot .ph .pxico { width: 100%; height: 100%; }
+.ph-ico { filter: saturate(.4) brightness(1.1); }
+/* Hotbar slot icon. */
+.hb-ico { display: inline-flex; width: 78%; height: 78%; }
+.hb-ico .pxico { width: 100%; height: 100%; }
+/* Small inline icon for list rows (shop, vendor, depot) and hotbar menu. */
+.row-ico, .hb-menu-ico { display: inline-block; width: 1.25em; height: 1.25em; vertical-align: -0.28em; }
+.row-ico .pxico, .hb-menu-ico .pxico { width: 100%; height: 100%; }
+
 /* Drag and drop: floating ghost (touch) and slot drop highlight */
 .drag-ghost {
-  position: fixed; z-index: 80; pointer-events: none;
-  transform: translate(-50%, -50%); font-size: 26px;
-  filter: drop-shadow(0 2px 4px rgba(0,0,0,.6));
+  position: fixed; left: 0; top: 0; z-index: 80; pointer-events: none;
+  width: 40px; height: 40px; will-change: transform;
+  filter: drop-shadow(0 3px 6px rgba(0,0,0,.7));
+  /* Position comes from a JS translate3d (cursor) + translate(-50%) (centre).
+     Only opacity/scale animate, so following the cursor stays buttery. */
+  opacity: 0;
+  transition: opacity .08s ease, filter .1s ease;
 }
+.drag-ghost.shown { opacity: .92; }
+.drag-ghost .pxico { width: 100%; height: 100%; }
+/* Dragged out over the world: cue that releasing here drops the item. */
+.drag-ghost.to-world { filter: drop-shadow(0 0 7px rgba(255,90,70,.95)); }
+/* The cell an item was picked up from is dimmed while it's being carried. */
+.drag-source { opacity: .35; }
 .hb-slot.drop-hover { box-shadow: inset 0 0 0 2px #7ec9ff, 0 0 8px rgba(126,201,255,.6); }
+/* A bag cell, equipment slot, or whole container window highlighted as a valid
+   drop target while dragging an item over it (Tibia-style move). */
+.bp-cell.drop-hover,
+#paperdoll .slot.drop-hover { box-shadow: inset 0 0 0 2px #7ec9ff, 0 0 8px rgba(126,201,255,.6); }
+.win.drop-hover { box-shadow: 0 0 0 2px #7ec9ff, 0 0 12px rgba(126,201,255,.45); }
 .bp-cell[draggable="true"] { cursor: grab; }
 
+/* Stack-split dialog: a slider + number input to choose how many to move. */
+.split-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.split-row input[type="range"] { flex: 1; }
+.split-num { width: 56px; padding: 3px 4px; }
+
 /* Character window: stats and skill tree (MapleStory style) */
-#skill-panel {
-  position: fixed; inset: 0; z-index: 30; display: flex; align-items: center;
-  justify-content: center; background: rgba(0,0,0,.5); padding: 16px;
-}
-.sp-card {
-  width: min(380px, 94vw); max-height: 86vh; overflow-y: auto;
-  background: rgba(10,16,40,.97); color: #fff;
-  border: 1px solid rgba(255,255,255,.2); border-radius: 14px; padding: 16px;
-  box-shadow: 0 14px 50px rgba(0,0,0,.55);
-}
-.sp-head { font-size: 16px; text-align: center; margin-bottom: 10px; opacity: .95; }
+/* The Skills/Spells window content lives inside a side-panel .win now, so the
+   card is fluid (no fixed width / overlay). Its body scrolls if tall. */
+.sp-wbody { max-height: 60vh; overflow-y: auto; }
+.sp-card { color: #fff; font-size: 13px; }
 .sp-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .sp-tab { flex: 1; padding: 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 8px;
   background: rgba(255,255,255,.08); color: #fff; cursor: pointer; font-size: 13px; }
@@ -818,10 +944,21 @@ body.touch #crosshair { display: none !important; }
   background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
   border-radius: 10px; padding: 8px 10px;
 }
-.sp-stat-name { width: 44px; font-weight: 800; }
-.sp-stat-val { flex: 1; font-size: 16px; }
+.sp-stat-name { width: 96px; font-weight: 800; }
+.sp-stat-val { width: 34px; font-size: 16px; text-align: right; }
+/* Tibia-style use-skill progress bar to the next level. */
+.sp-skillbar { flex: 1; height: 8px; border-radius: 5px; background: rgba(255,255,255,.12); overflow: hidden; }
+.sp-skillbar-fill { display: block; height: 100%; background: linear-gradient(90deg,#5dd6ff,#3a9bdd); }
 .sp-skill.locked { opacity: .5; }
-.sp-skill-ico { font-size: 20px; width: 24px; text-align: center; }
+/* Per-tier section: a labelled group of skills with its own SP pool. */
+.sp-tier { margin-bottom: 12px; padding: 6px 0 2px; border-top: 1px solid rgba(255,255,255,.1); }
+.sp-tier:first-child { border-top: none; }
+.sp-tier-head { font-size: 12px; font-weight: 800; color: #ffe27a; margin: 2px 2px 8px; letter-spacing: .3px; }
+.sp-tier.tier-locked { opacity: .5; }
+.sp-tier.tier-locked .sp-tier-head { color: #9fb0c8; }
+.sp-tier.tier-locked .sp-plus { display: none; }
+.sp-skill-ico { width: 24px; height: 24px; flex: 0 0 24px; display: flex; align-items: center; justify-content: center; }
+.sp-skill-ico svg { width: 22px; height: 22px; display: block; }
 .sp-skill-info { flex: 1; min-width: 0; }
 .sp-skill-name { font-size: 13px; font-weight: 700; }
 .sp-skill-desc { font-size: 11px; opacity: .8; line-height: 1.35; }
@@ -833,10 +970,225 @@ body.touch #crosshair { display: none !important; }
 .sp-close { width: 100%; margin-top: 10px; padding: 11px; border: none; border-radius: 9px;
   background: #555; color: #fff; font-weight: 700; cursor: pointer; }
 
-#btn-skills {
-  position: absolute; right: 212px; top: calc(74px + env(safe-area-inset-top));
-  width: 50px; height: 50px; border-radius: 50%; z-index: 8;
-  border: 2px solid rgba(255,255,255,.4); background: rgba(10,16,40,.5);
-  color: #fff; font-size: 20px; cursor: pointer; pointer-events: auto;
+/* (Skills/Wiki/mute buttons now live in #panel-btns as .panel-btn — no longer
+   floating absolutely.) */
+
+/* ===== Wikia ===== */
+#wiki-panel {
+  position: fixed; inset: 0; z-index: 32; display: flex; align-items: center;
+  justify-content: center; background: rgba(0,0,0,.55); padding: 16px;
+  backdrop-filter: blur(3px);
 }
-body.touch #btn-skills { right: 28px; top: auto; bottom: calc(232px + env(safe-area-inset-bottom)); }
+.wk-card {
+  width: min(640px, 96vw); height: min(88vh, 900px); display: flex; flex-direction: column;
+  background: rgba(10,16,40,.98); color: #fff;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 16px; padding: 14px;
+  box-shadow: 0 18px 60px rgba(0,0,0,.6); overflow: hidden;
+}
+.wk-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.wk-title { font-size: 17px; letter-spacing: .5px; }
+.wk-x { width: 34px; height: 34px; border-radius: 8px; border: none; cursor: pointer;
+  background: rgba(255,255,255,.1); color: #fff; font-size: 15px; }
+.wk-x:hover { background: rgba(255,255,255,.2); }
+
+.wk-tabs { display: flex; gap: 5px; margin-bottom: 12px; flex-wrap: wrap; }
+.wk-tab { flex: 1 1 auto; min-width: 84px; padding: 8px 6px; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 9px; background: rgba(255,255,255,.06); color: #fff; cursor: pointer;
+  font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.wk-tab span { font-size: 11px; opacity: .9; }
+.wk-tab.active { background: #2f6fb0; border-color: #7ec9ff; font-weight: 700; }
+
+.wk-body { flex: 1; overflow-y: auto; padding-right: 4px; }
+.wk-section { display: flex; flex-direction: column; gap: 10px; }
+.wk-lead { font-size: 13px; line-height: 1.5; opacity: .85; margin: 0 0 4px; }
+.wk-section h3 { font-size: 14px; margin: 12px 0 4px; color: #7ec9ff; }
+.wk-section h4 { font-size: 13px; margin: 12px 0 2px; color: #ffe27a; opacity: .95; }
+
+.wk-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.wk-stat { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px; padding: 10px; text-align: center; }
+.wk-stat-n { font-size: 17px; font-weight: 800; }
+.wk-stat-l { font-size: 11px; opacity: .75; margin-top: 2px; }
+
+.wk-list { margin: 0; padding-left: 18px; }
+.wk-list li { font-size: 12.5px; line-height: 1.55; margin-bottom: 5px; }
+
+.wk-curve { display: flex; flex-wrap: wrap; gap: 6px; }
+.wk-curve-step { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px; padding: 6px 9px; font-size: 12px; display: flex; flex-direction: column; }
+.wk-curve-step b { color: #ffe27a; }
+
+.wk-entry { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px; padding: 12px; }
+.wk-entry-head { font-size: 15px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wk-coord { font-size: 12px; opacity: .6; font-weight: 400; }
+.wk-badge { font-size: 11px; background: #2f6fb0; border-radius: 6px; padding: 2px 7px; font-weight: 700; }
+.wk-t-shop { background: #3d6e4a; } .wk-t-epic { background: #6b3aa0; } .wk-t-leg { background: #a06a1a; }
+
+.wk-kv { display: flex; flex-direction: column; gap: 4px; }
+.wk-kv-row { display: flex; gap: 8px; font-size: 12.5px; align-items: baseline; }
+.wk-kv-k { flex: 0 0 auto; opacity: .8; min-width: 120px; }
+.wk-kv-v { flex: 1; }
+
+.wk-sub { margin-top: 10px; }
+.wk-sub-t { font-size: 12px; color: #ffe27a; margin: 8px 0 5px; font-weight: 700; }
+.wk-chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.wk-chip { font-size: 11.5px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 14px; padding: 3px 9px; display: inline-flex; align-items: center; gap: 5px; }
+.wk-chip-btn { cursor: pointer; color: #fff; }
+.wk-chip-btn:hover { background: rgba(126,201,255,.25); border-color: #7ec9ff; }
+.wk-dim { opacity: .6; }
+
+.wk-controls { display: flex; gap: 8px; margin-bottom: 8px; }
+.wk-search { flex: 1; padding: 9px 11px; border-radius: 9px; border: 1px solid rgba(255,255,255,.2);
+  background: rgba(0,0,0,.3); color: #fff; font-size: 13px; }
+.wk-select { padding: 9px; border-radius: 9px; border: 1px solid rgba(255,255,255,.2);
+  background: rgba(10,16,40,.9); color: #fff; font-size: 12px; }
+.wk-count { font-size: 11px; opacity: .6; margin-bottom: 6px; }
+.wk-more { font-size: 12px; opacity: .6; text-align: center; padding: 8px; }
+
+.wk-creature-list { display: flex; flex-direction: column; gap: 5px; }
+.wk-cr { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); border-radius: 9px; overflow: hidden; }
+.wk-cr.open { border-color: #7ec9ff; }
+.wk-cr-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: none; border: none; color: #fff; cursor: pointer; text-align: left; }
+.wk-cr-head:hover { background: rgba(255,255,255,.05); }
+.wk-cr-ico { display: inline-flex; }
+.wk-cr-name { flex: 1; font-size: 13px; font-weight: 600; }
+.wk-cr-tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.wk-tag { font-size: 10.5px; background: rgba(255,255,255,.1); border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
+.wk-aggro { background: rgba(220,70,70,.35); } .wk-calm { background: rgba(70,160,90,.3); }
+.wk-cr-detail { padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid rgba(255,255,255,.1); }
+
+.wk-statline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.wk-stat-cell { background: rgba(255,255,255,.06); border-radius: 8px; padding: 7px; text-align: center; }
+.wk-stat-cell-v { font-size: 14px; font-weight: 800; }
+.wk-stat-cell-l { font-size: 10px; opacity: .7; }
+
+.wk-loot { display: flex; flex-direction: column; gap: 3px; }
+.wk-loot-row { display: flex; justify-content: space-between; font-size: 12px;
+  background: rgba(255,255,255,.04); border-radius: 6px; padding: 4px 8px; }
+.wk-loot-chance { color: #ffe27a; font-weight: 700; }
+
+.wk-subtabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
+.wk-subtab { padding: 7px 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.06); color: #fff; cursor: pointer; font-size: 12px; }
+.wk-subtab.active { background: #2f6fb0; border-color: #7ec9ff; font-weight: 700; }
+
+.wk-item-list { display: flex; flex-direction: column; gap: 6px; }
+.wk-item { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 9px; padding: 9px 11px; }
+.wk-item-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wk-item-name { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.wk-item-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.wk-drops { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; align-items: center; }
+.wk-drops-l { font-size: 11px; opacity: .65; }
+
+.wk-swatch { display: inline-block; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); vertical-align: middle; }
+/* Real pixel-art icon inside wiki lists. */
+.wk-ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  background: linear-gradient(180deg, #2a3047, #14182a); border: 1px solid #05070f; border-radius: 4px; padding: 2px; }
+.wk-ico .pxico { width: 100%; height: 100%; }
+/* Creature 3D preview gallery (front + side snapshots) in the wiki detail. */
+.wk-cr-views { display: flex; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
+.wk-cr-view { margin: 0; text-align: center; }
+.wk-cr-view img { width: 130px; height: 130px; image-rendering: auto; border-radius: 8px;
+  background: radial-gradient(circle at 50% 38%, #2c3450, #11141f 72%); border: 1px solid #05070f;
+  box-shadow: inset 0 0 14px rgba(0,0,0,.5); }
+.wk-cr-view figcaption { font-size: 11px; opacity: .65; margin-top: 3px; }
+.wk-cr-view-fallback { display: flex; align-items: center; justify-content: center;
+  width: 130px; height: 130px; border-radius: 8px; background: #11141f; border: 1px solid #05070f; }
+
+.wk-prof-desc { font-size: 12.5px; line-height: 1.5; opacity: .85; margin: 0 0 8px; }
+.wk-skills { display: flex; flex-direction: column; gap: 5px; }
+.wk-skill { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.1); border-radius: 9px; padding: 8px 10px; }
+.wk-skill-ico { font-size: 18px; width: 22px; text-align: center; }
+.wk-skill-info { flex: 1; min-width: 0; }
+.wk-skill-name { font-size: 12.5px; }
+.wk-skill-desc { font-size: 11px; opacity: .75; line-height: 1.4; margin: 2px 0; }
+.wk-skill-num { font-size: 11px; color: #ffe27a; }
+
+/* ===== Game Master (GM Maple) ===== */
+/* The GM window gets a gold/purple frame so it reads as staff tooling. */
+.gm-win { border-color: rgba(244,196,48,.6); box-shadow: 0 0 14px rgba(244,196,48,.18); }
+.gm-win .win-head {
+  background: linear-gradient(180deg, #5b2a83, #381a52);
+  color: #ffe9a8;
+}
+.gm-body { display: flex; flex-direction: column; gap: 5px; }
+.gm-btn {
+  border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+  background: rgba(91,42,131,.5); color: #f3ecff; cursor: pointer;
+  padding: 7px 8px; font-size: 12.5px; font-weight: 600; text-align: left;
+  transition: background .12s, transform .05s;
+}
+.gm-btn:hover { background: rgba(120,60,170,.75); }
+.gm-btn:active { transform: scale(.98); }
+.gm-btn.gm-danger { background: rgba(140,30,40,.5); border-color: rgba(255,90,90,.4); }
+.gm-btn.gm-danger:hover { background: rgba(180,40,50,.8); }
+
+/* Picker modal (items, creatures, players). */
+.gm-modal-overlay {
+  position: fixed; inset: 0; z-index: 120;
+  background: rgba(4,6,16,.55); backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+}
+.gm-modal {
+  width: min(380px, 92vw); max-height: 78vh; display: flex; flex-direction: column;
+  background: rgba(14,18,38,.97); border: 1px solid rgba(244,196,48,.5);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.6);
+}
+.gm-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; font-weight: 700; color: #ffe9a8;
+  background: linear-gradient(180deg, #5b2a83, #381a52);
+}
+.gm-modal-close {
+  border: none; background: rgba(255,255,255,.1); color: #fff;
+  width: 22px; height: 22px; border-radius: 5px; cursor: pointer; font-size: 14px;
+}
+.gm-modal-close:hover { background: #a33; }
+.gm-modal-search {
+  margin: 8px; padding: 8px 10px; border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.16); background: rgba(0,0,0,.3); color: #fff;
+  font-size: 13px; outline: none;
+}
+.gm-modal-list { overflow-y: auto; padding: 0 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.gm-modal-group {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  color: #ffd24d; opacity: .8; margin: 8px 2px 2px;
+}
+.gm-modal-row {
+  border: none; border-radius: 6px; text-align: left; cursor: pointer;
+  background: rgba(255,255,255,.05); color: #e8eeff; padding: 8px 10px; font-size: 13px;
+}
+.gm-modal-row:hover { background: rgba(126,201,255,.18); }
+.gm-modal-empty { padding: 16px; text-align: center; opacity: .6; font-size: 13px; }
+
+/* Broadcast banner shown to every connected player. */
+#gm-banner {
+  position: fixed; top: 64px; left: 50%; transform: translate(-50%, -20px);
+  z-index: 130; max-width: 80vw; padding: 12px 22px;
+  background: linear-gradient(180deg, rgba(91,42,131,.96), rgba(56,26,82,.96));
+  border: 1px solid rgba(244,196,48,.7); border-radius: 12px;
+  color: #fff; font-size: 16px; font-weight: 600; text-align: center;
+  box-shadow: 0 10px 36px rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s;
+}
+#gm-banner.show { opacity: 1; transform: translate(-50%, 0); }
+#gm-banner.hide { opacity: 0; transform: translate(-50%, -20px); }
+.gm-banner-who { display: block; font-size: 12px; color: #ffd24d; margin-bottom: 3px; }
+
+/* Full-screen block shown to a banned player. */
+#ban-screen {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(6,4,10,.92); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+#ban-screen.hidden { display: none; }
+.ban-card { text-align: center; color: #fff; padding: 30px; }
+.ban-emoji { font-size: 64px; }
+.ban-title { font-size: 26px; font-weight: 800; margin-top: 12px; color: #ff6b6b; }
+.ban-sub { font-size: 15px; opacity: .8; margin-top: 8px; }
