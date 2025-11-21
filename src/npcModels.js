@@ -17,6 +17,9 @@ const PRESETS = {
   guard:  { body: 0x6b6f78, legs: 0x4a4d54, hair: HAIR_DARK, build: 'broad', metal: 0x9aa0ab },
   king:   { body: 0x7a2030, legs: 0x4a1420, hair: 0x6a5a3a, build: 'broad', gold: 0xe7c84a },
   wizard: { body: 0x3a3f7a, legs: 0x3a3f7a, hair: 0xb0b0b0, build: 'robe',  trim: 0x8a7adf },
+  merchant:  { body: 0x3f8a6a, legs: 0x2f5a48, hair: 0x4a3320, build: 'broad', hair_style: 'short', trim: 0xd8c060 },
+  smith:     { body: 0x6a4a30, legs: 0x3a2a1c, hair: 0x2a1a10, build: 'broad', hair_style: 'short', metal: 0x8a8f96 },
+  apothecary:{ body: 0x6aa05a, legs: 0x6aa05a, hair: 0x7a6a4a, build: 'robe',  trim: 0xcfe08a },
 };
 
 export function buildNpcModel(modelKey, opts = {}) {
@@ -42,9 +45,10 @@ function buildFromPreset(key, preset, opts) {
   };
 
   const group = new THREE.Group();
-  // Player model is ~1.7 tall; bring NPC to ~1 unit, feet at y=0.
+  // NPCs share the player's build, so match the player's scale (0.92) to stand
+  // the same height. opts.scale still lets callers tweak individuals.
   const model = new THREE.Group();
-  model.scale.setScalar(0.56 * scale);
+  model.scale.setScalar(0.92 * scale);
   group.add(model);
 
   const robe = preset.build === 'robe';
@@ -74,6 +78,13 @@ function buildFromPreset(key, preset, opts) {
     hips.scale.set(slim ? 1.05 : 1, 0.7, 0.9);
     hips.position.y = 0.62;
     model.add(hips);
+  }
+
+  // a leather apron over the front for tradesfolk
+  if (key === 'merchant' || key === 'smith') {
+    const apron = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.1), mats.trim);
+    apron.position.set(0, 0.78, 0.2);
+    model.add(apron);
   }
 
   // king cape over the shoulders
@@ -170,17 +181,30 @@ function buildFromPreset(key, preset, opts) {
     model.add(scepter);
   }
 
-  // idle animation: subtle breathing + sway via a time accumulator (no Math.random)
-  let t = 0;
-  function update(dt) {
+  // Idle = a short breath + gentle sway that fades out while walking; walking =
+  // leg/arm swing. Both run off a time accumulator (no Math.random). `moving` is
+  // passed in by the world each frame; `breath` eases 0..1 so it ramps in/out.
+  let t = 0, breathA = 0;
+  function update(dt, moving) {
     t += dt;
-    const breath = Math.sin(t * 1.6);
-    head.position.y = 1.42 + breath * 0.012;
-    head.rotation.z = Math.sin(t * 0.8) * 0.03;
+    breathA += ((moving ? 0 : 1) - breathA) * Math.min(1, dt * 8);
+    const breath = Math.sin(t * 2.4) * breathA;
+    head.position.y = 1.42 + breath * 0.014;
+    head.rotation.z = Math.sin(t * 0.8) * 0.03 * breathA;
     model.rotation.z = breath * 0.006;
-    const arm = Math.sin(t * 1.6) * 0.06;
-    if (armL) armL.rotation.x = arm;
-    if (armR) armR.rotation.x = -arm;
+    if (moving) {
+      const sw = Math.sin(t * 9) * 0.5;
+      if (legL) legL.rotation.x = sw;
+      if (legR) legR.rotation.x = -sw;
+      if (armL) armL.rotation.x = -sw * 0.7;
+      if (armR) armR.rotation.x = sw * 0.7;
+    } else {
+      if (legL) legL.rotation.x = 0;
+      if (legR) legR.rotation.x = 0;
+      const arm = breath * 0.06;
+      if (armL) armL.rotation.x = arm;
+      if (armR) armR.rotation.x = -arm;
+    }
   }
 
   function dispose() {
@@ -295,8 +319,9 @@ function buildFallback(opts = {}) {
   };
 
   const group = new THREE.Group();
+  // Match the player's scale (0.92) so the fallback NPC is the same height.
   const model = new THREE.Group();
-  model.scale.setScalar(0.56 * scale);
+  model.scale.setScalar(0.92 * scale);
   group.add(model);
 
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.235, 0.32, 6, 16), mats.body);
@@ -325,17 +350,25 @@ function buildFallback(opts = {}) {
 
   const armL = makeArm(model, -1, mats, false);
   const armR = makeArm(model, 1, mats, false);
-  makeLeg(model, -1, mats);
-  makeLeg(model, 1, mats);
+  const legL = makeLeg(model, -1, mats);
+  const legR = makeLeg(model, 1, mats);
 
-  let t = 0;
-  function update(dt) {
+  let t = 0, breathA = 0;
+  function update(dt, moving) {
     t += dt;
-    const breath = Math.sin(t * 1.6);
-    head.position.y = 1.42 + breath * 0.012;
+    breathA += ((moving ? 0 : 1) - breathA) * Math.min(1, dt * 8);
+    const breath = Math.sin(t * 2.4) * breathA;
+    head.position.y = 1.42 + breath * 0.014;
     model.rotation.z = breath * 0.006;
-    armL.rotation.x = Math.sin(t * 1.6) * 0.06;
-    armR.rotation.x = -Math.sin(t * 1.6) * 0.06;
+    if (moving) {
+      const sw = Math.sin(t * 9) * 0.5;
+      legL.rotation.x = sw; legR.rotation.x = -sw;
+      armL.rotation.x = -sw * 0.7; armR.rotation.x = sw * 0.7;
+    } else {
+      legL.rotation.x = 0; legR.rotation.x = 0;
+      armL.rotation.x = breath * 0.06;
+      armR.rotation.x = -breath * 0.06;
+    }
   }
 
   function dispose() {
@@ -346,4 +379,4 @@ function buildFallback(opts = {}) {
   return { group, update, dispose };
 }
 
-export const NPC_MODEL_KEYS = ['man', 'woman', 'priest', 'guard', 'king', 'wizard'];
+export const NPC_MODEL_KEYS = ['man', 'woman', 'priest', 'guard', 'king', 'wizard', 'merchant', 'smith', 'apothecary'];
