@@ -43,6 +43,10 @@ export class Net {
       chat: null,
       tradeRequest: null,
       tradeUpdate: null,
+      // Game Master broadcasts (received by every connected player).
+      gmAnnounce: null,  // a banner message shown to everyone
+      gmSummon: null,    // teleport me to a world position
+      gmKick: null,      // I have been banned: leave the world
     };
 
     // outgoing position throttle
@@ -135,6 +139,9 @@ export class Net {
       .on('broadcast', { event: 'chat' }, ({ payload }) => this._onChat(payload))
       .on('broadcast', { event: 'trade_req' }, ({ payload }) => this._onTradeReq(payload))
       .on('broadcast', { event: 'trade_upd' }, ({ payload }) => this._onTradeUpd(payload))
+      .on('broadcast', { event: 'gm_announce' }, ({ payload }) => this._onGmAnnounce(payload))
+      .on('broadcast', { event: 'gm_summon' }, ({ payload }) => this._onGmSummon(payload))
+      .on('broadcast', { event: 'gm_kick' }, ({ payload }) => this._onGmKick(payload))
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
         if (key === id) return;
         const meta = (newPresences && newPresences[0]) || {};
@@ -187,6 +194,30 @@ export class Net {
     if (this._cb.tradeUpdate) this._cb.tradeUpdate(payload.from, payload);
   }
 
+  // Game Master broadcasts. announce reaches everyone; summon/kick may target a
+  // single id or all players when `to` is '*'.
+  _onGmAnnounce(payload) {
+    if (!payload) return;
+    if (this._cb.gmAnnounce) this._cb.gmAnnounce(payload);
+  }
+
+  _onGmSummon(payload) {
+    if (!payload) return;
+    if (payload.to !== '*' && payload.to !== this.user.id) return;
+    if (this._cb.gmSummon) this._cb.gmSummon(payload);
+  }
+
+  _onGmKick(payload) {
+    if (!payload || payload.to !== this.user.id) return;
+    if (this._cb.gmKick) this._cb.gmKick(payload);
+  }
+
+  // The local player's own auth id (used to map peers / identify self). Null
+  // while offline.
+  userId() {
+    return this.user ? this.user.id : null;
+  }
+
   // presence / position
 
   // Throttled to STATE_HZ. Skips sending while idle (same pose as last frame).
@@ -233,6 +264,62 @@ export class Net {
   }
 
   onChat(cb) { this._cb.chat = cb; }
+
+  // Game Master actions (only ever called from GM Maple's client).
+
+  // Broadcast a banner message to everyone connected (and echo locally).
+  gmAnnounce(text) {
+    if (!this._online || !this.channel) return;
+    const clean = String(text || '').slice(0, 200).trim();
+    if (!clean) return;
+    const payload = { from: this.user.id, name: (this.profile && this.profile.name) || 'GM', text: clean };
+    this.channel.send({ type: 'broadcast', event: 'gm_announce', payload });
+    if (this._cb.gmAnnounce) this._cb.gmAnnounce(payload); // echo to the GM too
+  }
+
+  // Ask one player (or all, when targetId === '*') to teleport to (x, z).
+  gmSummon(targetId, x, z) {
+    if (!this._online || !this.channel) return;
+    this.channel.send({
+      type: 'broadcast', event: 'gm_summon',
+      payload: { to: targetId, x, z, name: (this.profile && this.profile.name) || 'GM' },
+    });
+  }
+
+  // Persistently ban a player and tell their client to leave. Writes the ban row
+  // (read back by everyone on connect) then broadcasts the kick.
+  async gmBan(targetId, name, reason) {
+    if (!this._online || !this.channel) return false;
+    const { error } = await this.client.from('bans').upsert({
+      id: targetId,
+      name: name || null,
+      reason: reason || null,
+      banned_by: (this.profile && this.profile.name) || 'GM',
+    });
+    if (error) { console.warn('[net] gmBan:', error.message); return false; }
+    this.channel.send({ type: 'broadcast', event: 'gm_kick', payload: { to: targetId } });
+    return true;
+  }
+
+  // Lift a ban (delete the row). Used by the GM's unban action.
+  async gmUnban(targetId) {
+    if (!this._online) return false;
+    const { error } = await this.client.from('bans').delete().eq('id', targetId);
+    if (error) { console.warn('[net] gmUnban:', error.message); return false; }
+    return true;
+  }
+
+  // Is `id` on the ban list? Checked on connect so a banned player is bounced.
+  async isBanned(id) {
+    if (!this._online) return false;
+    const { data, error } = await this.client.from('bans').select('id').eq('id', id).maybeSingle();
+    if (error) { console.warn('[net] isBanned:', error.message); return false; }
+    return !!data;
+  }
+
+  onGmAnnounce(cb) { this._cb.gmAnnounce = cb; }
+  onGmSummon(cb) { this._cb.gmSummon = cb; }
+  onGmKick(cb) { this._cb.gmKick = cb; }
 
   // friends
 

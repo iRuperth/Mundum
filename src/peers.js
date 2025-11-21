@@ -87,7 +87,7 @@ export class Peers {
       const moving = peer.pos.distanceTo(peer.target) > 0.02;
       peer.yaw += angleDelta(peer.yaw, peer.targetYaw) * Math.min(1, dt * 10);
       peer.walkPhase += (moving ? dt * 9 : 0);
-      peer.char.animate(peer.walkPhase, moving ? 1 : 0, true);
+      peer.char.animate(peer.walkPhase, moving ? 1 : 0, true, dt);
       peer.char.updateAttack(dt);
       peer.char.group.position.copy(peer.pos);
       peer.char.group.rotation.y = peer.yaw + Math.PI;
