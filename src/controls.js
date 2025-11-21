@@ -20,6 +20,7 @@ export class Controls {
     this._attackQueued = false;
     this._leftQueued = false;
     this._rightQueued = false;
+    this._lightToggleQueued = false;
     this._lookDX = 0;
     this._lookDY = 0;
 
@@ -36,8 +37,8 @@ export class Controls {
         this.jumpHeld = true;
       }
       if (e.code === 'KeyC' && !e.repeat) opts.onToggleCamera();
-      if (e.code === 'KeyI' && !e.repeat) opts.onToggleBag?.();
       if (e.code === 'KeyR' && !e.repeat) opts.onToggleRange?.();
+      if (e.code === 'KeyF' && !e.repeat) this._lightToggleQueued = true;
       // Number keys 1-9 and 0 trigger the matching hotbar slot.
       if (!e.repeat && /^(Digit|Numpad)[0-9]$/.test(e.code)) {
         opts.onHotbarKey?.(parseInt(e.code.slice(-1), 10));
@@ -53,6 +54,8 @@ export class Controls {
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled || this.isTouch) return;
       if (document.pointerLockElement === canvas) {
+        // Left click attacks in both camera modes. Right click is reserved for a
+        // future action; the torch is now lit from its equipment slot, not here.
         if (e.button === 0) this._leftQueued = true;
         if (e.button === 2) this._rightQueued = true;
       } else {
@@ -143,16 +146,34 @@ export class Controls {
     });
   }
 
-  // Attack fires on the left button in third person and the right button in
-  // first person. The touch button and the spacebar-free attack button always
-  // count. main.js passes which mouse button is active for the current camera.
-  consumeAttack(useLeft) {
-    const mouse = useLeft ? this._leftQueued : this._rightQueued;
-    const a = this._attackQueued || mouse;
+  // The on-screen touch attack button always attacks, regardless of the
+  // camera-mode mouse mapping. Kept separate from the raw mouse buttons.
+  consumeAttack() {
+    const a = this._attackQueued;
     this._attackQueued = false;
-    this._leftQueued = false;
-    this._rightQueued = false;
     return a;
+  }
+
+  // Raw left mouse button press (consumed once).
+  consumeLeftClick() {
+    const a = this._leftQueued;
+    this._leftQueued = false;
+    return a;
+  }
+
+  // Raw right mouse button press (consumed once).
+  consumeRightClick() {
+    const r = this._rightQueued;
+    this._rightQueued = false;
+    return r;
+  }
+
+  // The F key is a quick keyboard shortcut for the torch (the main way is to
+  // double-click it in the fire equip slot). Independent of the mouse buttons.
+  consumeToggleLight() {
+    const v = this._lightToggleQueued;
+    this._lightToggleQueued = false;
+    return v;
   }
 
   _moveKnob(dx, dy) {

@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { buildCharacter } from './character.js';
-import { WATER_LEVEL } from './world.js';
+import { WATER_LEVEL, WORLD_BOUND } from './world.js';
 
 const GRAVITY = 26;
 const JUMP_V = 8.6;
 const WALK = 4.6;
 const SPRINT = 7.6;
 const MAX_STEP = 1.05;    // tallest step you can walk up
-const WORLD_LIMIT = 1600; // keeps the player inside the playable map
+const WORLD_LIMIT = WORLD_BOUND; // hard square clamp just past the ocean edge
 const PLAYER_RADIUS = 0.35;       // body width used for solid collisions
 const MAX_WADE_DEPTH = 1.0;       // can't walk more than 1 m below the waterline
 
@@ -81,7 +81,10 @@ export class Player {
 
   update(dt, controls) {
     const inWater = this.inWater;
-    const boost = 1 + (this.speedBonus || 0);
+    // The Game Master always moves 5x an ordinary hero. This wins over the
+    // boots' speedBonus (which recompute() rewrites whenever the inventory
+    // changes), so GM speed never gets clobbered by an equip change.
+    const boost = this.gm ? 5 : 1 + (this.speedBonus || 0);
     const speed = (controls.sprint ? SPRINT : WALK) * boost * (inWater ? 0.45 : 1);
 
     // movement direction relative to the camera
@@ -126,7 +129,7 @@ export class Player {
     // model animation and placement
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
     this.walkPhase += hSpeed * dt * 2.3;
-    this.char.animate(this.walkPhase, hSpeed / WALK, this.grounded || inWater);
+    this.char.animate(this.walkPhase, hSpeed / WALK, this.grounded || inWater, dt);
     this.char.updateAttack(dt);
     this.char.group.position.copy(this.pos);
     this.char.group.rotation.y = this.yaw + Math.PI;
