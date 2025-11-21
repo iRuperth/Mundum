@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { wandColorForLevel } from './data/items.js';
+import { HELMET_BUILDERS, ARMOR_BUILDERS, LEGS_BUILDERS, AMULET_BUILDERS, setEquipHelpers } from './equipDetail.js';
 
 // Builds and attaches visible weapons, shield and worn armor onto a character.
 // Anchors come from character.parts (armR.hand, helmet, chestArmor, body...).
@@ -56,7 +57,8 @@ export class EquipVisuals {
   setAmulet(item) {
     if (this.amuletMesh) { this.char.parts.chestArmor.remove(this.amuletMesh); disposeTree(this.amuletMesh); this.amuletMesh = null; }
     if (!item) return;
-    this.amuletMesh = buildAmuletMesh(item.color || 0xf1c40f);
+    const detail = AMULET_BUILDERS[item.baseId];
+    this.amuletMesh = detail ? detail(item.color || 0xf1c40f) : buildAmuletMesh(item.color || 0xf1c40f);
     this.char.parts.chestArmor.add(this.amuletMesh);
   }
 
@@ -92,7 +94,11 @@ export class EquipVisuals {
   setHelmet(item) {
     if (this.helmetMesh) { this.char.parts.helmet.remove(this.helmetMesh); disposeTree(this.helmetMesh); this.helmetMesh = null; }
     if (!item) return;
-    this.helmetMesh = buildHelmetMesh(item.color || 0x9aa0a6, headgearStyle(item));
+    // Prefer the detailed per-item helmet (real cascos with crests/visors/horns);
+    // fall back to the generic style builder for any id without a bespoke design.
+    const detail = HELMET_BUILDERS[item.baseId];
+    this.helmetMesh = detail ? detail(item.color || 0x9aa0a6)
+      : buildHelmetMesh(item.color || 0x9aa0a6, headgearStyle(item));
     this.char.parts.helmet.add(this.helmetMesh);
   }
 
@@ -108,20 +114,50 @@ export class EquipVisuals {
     }
     const color = item.color || 0x9aa0a6;
     this.char.mats.shirt.color.set(color);
-    if (isPlateArmor(item)) {
+    // Prefer the detailed per-item breastplate; fall back to the generic plate
+    // overlay for plate-tier items, and nothing (tint only) for soft cloth.
+    const detail = ARMOR_BUILDERS[item.baseId];
+    if (detail) {
+      this.armorMesh = detail(color);
+      this.char.parts.chestArmor.add(this.armorMesh);
+    } else if (isPlateArmor(item)) {
       this.armorMesh = buildArmorMesh(color, !!this.char.parts.isFemale);
       this.char.parts.chestArmor.add(this.armorMesh);
     }
   }
 
   setLegs(item) {
+    // Clear any previous leg overlays from both thighs.
+    for (const lg of [this.char.parts.legL, this.char.parts.legR]) {
+      if (lg.pivot.userData.overlay) { lg.pivot.remove(lg.pivot.userData.overlay); disposeTree(lg.pivot.userData.overlay); lg.pivot.userData.overlay = null; }
+    }
     if (item) this.char.mats.pants.color.set(item.color || 0x6a6f74);
-    else this.char.mats.pants.color.copy(this._origColors.pants);
+    else { this.char.mats.pants.color.copy(this._origColors.pants); return; }
+    // Detailed greaves/knee-cops per item, mirrored onto both thighs.
+    const detail = LEGS_BUILDERS[item.baseId];
+    if (detail) {
+      for (const lg of [this.char.parts.legL, this.char.parts.legR]) {
+        const ov = detail(item.color || 0x6a6f74);
+        lg.pivot.add(ov); lg.pivot.userData.overlay = ov;
+      }
+    }
   }
 
   setBoots(item) {
+    // Clear any previous boot overlays from both feet.
+    for (const b of [this.char.parts.legBootL, this.char.parts.legBootR]) {
+      if (b.userData.overlay) { b.remove(b.userData.overlay); disposeTree(b.userData.overlay); b.userData.overlay = null; }
+    }
     const c = item ? (item.color || 0x4a3526) : 0x4a3526;
     this.char.mats.boots.color.set(c);
+    if (!item) return;
+    // Detailed boots (wings, plate cuffs, dragon scales…) get a per-foot overlay
+    // so e.g. winged boots actually show wings. Left foot mirrors the right.
+    for (const side of [-1, 1]) {
+      const foot = side < 0 ? this.char.parts.legBootL : this.char.parts.legBootR;
+      const ov = buildBootOverlay(item.baseId || '', c, side);
+      if (ov) { foot.add(ov); foot.userData.overlay = ov; }
+    }
   }
 
   // Call when the player changes their base clothing colors in creation.
@@ -150,6 +186,8 @@ export class EquipVisuals {
 
 function mat(color) { return new THREE.MeshLambertMaterial({ color }); }
 function metalMat(color) { return new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.35 }); }
+// Hand the shared material helpers to the detailed equipment builders.
+setEquipHelpers({ mat, metalMat, shade });
 
 // A single arrow lying along +Y, nocked end at the bottom. Reused by the bow's
 // loaded arrow and by the flying projectile. Origin sits at the shaft center.
@@ -1220,55 +1258,47 @@ function buildWandMesh(id, color, style, tier) {
 //   wand:  grip wrap at y=0.04, gem at 0.42
 //   bow/crossbow: grip already at the origin; the build fn yaws aim down the reach
 function applyHoldTransform(mesh, type, id = '') {
+  // The hand group's origin IS the palm (a ~0.085 sphere). A weapon is built with
+  // its grip near the bottom running up +Y. To read as truly HELD — not stuck to
+  // the forearm — the grip must sit in the palm and the shaft must pitch FORWARD
+  // (+X rotation tips +Y toward +Z) well past vertical so the blade/head leads
+  // out ahead of the fist, plus a small forward (+Z) and outward (−X, the right
+  // hand is on −X) nudge so the haft clears the wrist/forearm.
   if (type === 'bow') {
-    // Bows/crossbows already place the grip at the origin and yaw the aim down
-    // the hand's reach in third person; just let the fist close around it a
-    // touch lower so the grip sits in the palm rather than above it.
-    mesh.position.set(0, -0.02, 0);
+    // Bows already place the grip at the origin and yaw the aim down the reach.
+    mesh.position.set(0, -0.02, 0.02);
     return;
   }
   if (type === 'wand') {
-    // The wand's grip wrap is at y≈0.04; drop it so the wrap sits in the palm
-    // and angle it up-and-forward (+X rotation leans +Y toward +Z) like a focus
-    // held in a casting hand.
-    mesh.position.set(0, -0.04, 0.02);
-    mesh.rotation.set(0.35, 0, 0);
+    // A focus rod canted up-and-forward out of a casting fist.
+    mesh.position.set(-0.02, -0.05, 0.06);
+    mesh.rotation.set(0.95, 0, 0.05);
     return;
   }
   if (type === 'axe') {
-    // A one-handed axe is gripped near the butt: bring the wrap (y≈0.04) to the
-    // palm, then lean the haft up-and-forward (+X rotation) so the head clears
-    // the forearm and rides out of the fist. A slight roll turns the bit edge to
-    // the front.
-    mesh.position.set(0, -0.04, 0.04);
-    mesh.rotation.set(0.55, 0, 0.12);
+    // Gripped near the butt; haft pitched forward so the head rides out front.
+    mesh.position.set(-0.02, -0.05, 0.07);
+    mesh.rotation.set(1.05, 0, 0.12);
     return;
   }
   if (type === 'mace') {
-    // Gripped at the butt like an axe; the heavy head rides up out of the fist.
-    mesh.position.set(0, -0.02, 0.04);
-    mesh.rotation.set(0.5, 0, 0.1);
+    mesh.position.set(-0.02, -0.04, 0.07);
+    mesh.rotation.set(1.0, 0, 0.1);
     return;
   }
   if (type === 'lance') {
-    // A long lance is couched forward: grip near the butt, shaft leaning well
-    // forward (+X) so the point leads out ahead of the hand.
-    mesh.position.set(0, -0.02, 0.06);
-    mesh.rotation.set(0.95, 0, 0.06);
+    // Couched almost level, pointing forward ahead of the hand.
+    mesh.position.set(-0.02, -0.02, 0.08);
+    mesh.rotation.set(1.35, 0, 0.04);
     return;
   }
-  // Sword: bring the grip center to the palm and lean the blade up-and-forward
-  // (+X rotation tilts the +Y blade toward +Z) out of the fist so it never passes
-  // through the arm. Most profiles keep the original grip center at y≈0.02, so
-  // the −0.02 drop seats it. The katana and the greatswords use a longer grip
-  // centered at y≈0.0 (no round pommel / two-hand grip), so they get a 0.0 drop
-  // to keep the grip center in the palm.
+  // Sword: grip center to the palm, blade pitched forward-and-up out of the fist.
   if (LOW_GRIP_SWORDS.has(id)) {
-    mesh.position.set(0, 0.0, 0.05);
+    mesh.position.set(-0.02, 0.0, 0.07);
   } else {
-    mesh.position.set(0, -0.02, 0.05);
+    mesh.position.set(-0.02, -0.03, 0.07);
   }
-  mesh.rotation.set(0.5, 0, 0.1);
+  mesh.rotation.set(0.95, 0, 0.1);
 }
 
 // Sword ids whose grip is centered at y≈0.0 (katana + greatswords), so the hold
@@ -1831,14 +1861,16 @@ function buildArmorMesh(color, female) {
 // rounder than the framed backpack so the two read differently.
 function buildBagMesh(color) {
   const g = new THREE.Group();
+  // Raised so the pouch rides high on the upper back, not the lower spine.
   const pouch = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), mat(color));
   pouch.scale.set(1, 1.05, 0.7);
-  pouch.position.set(0, -0.04, -0.24);
+  pouch.position.set(0, 0.14, -0.24);
   const flap = new THREE.Mesh(new THREE.SphereGeometry(0.155, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(shade(color, 0.82)));
   flap.scale.set(1, 0.7, 0.72);
-  flap.position.set(0, 0.06, -0.24);
-  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.32, 0.04), mat(shade(color, 0.7)));
-  strap.position.set(0.1, 0, -0.12);
+  flap.position.set(0, 0.24, -0.24);
+  // Shoulder straps run up over the top of the back toward the shoulders.
+  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.04), mat(shade(color, 0.7)));
+  strap.position.set(0.1, 0.18, -0.12);
   const strap2 = strap.clone();
   strap2.position.x = -0.1;
   g.add(pouch, flap, strap, strap2);
@@ -1848,28 +1880,92 @@ function buildBagMesh(color) {
 // A pendant: a short chain loop and a gem hanging at the base of the neck.
 function buildAmuletMesh(color) {
   const g = new THREE.Group();
-  const chain = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.012, 6, 18, Math.PI * 1.4), mat(0xd9c46a));
+  // chestArmor sits at y≈0.95; the neck/collar is around local +0.34. Hang the
+  // chain around the neck and let the gem rest just below the collarbone — not
+  // floating in the middle of the chest.
+  const chain = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.01, 6, 20, Math.PI * 1.5), mat(0xd9c46a));
   chain.rotation.x = Math.PI / 2;
   chain.rotation.z = Math.PI;
-  chain.position.set(0, 0.26, 0.18);
-  const gem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.04, 0),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, roughness: 0.3, metalness: 0.2 }));
-  gem.position.set(0, 0.16, 0.22);
-  g.add(chain, gem);
+  chain.position.set(0, 0.4, 0.12);
+  const gem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.045, 0),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35, roughness: 0.3, metalness: 0.3 }));
+  gem.position.set(0, 0.31, 0.2);
+  // a little gold bezel around the gem so it reads as a real pendant
+  const bezel = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.008, 6, 14), metalMat(0xd9c46a));
+  bezel.position.set(0, 0.31, 0.2);
+  g.add(chain, gem, bezel);
   return g;
+}
+
+// Per-foot boot overlay. The boot group sits at the ankle (foot mesh ~0.07 box
+// in front). `side` is -1 (left) / +1 (right) so wings/spurs mirror. Returns a
+// Group to add onto the boot, or null for plain boots (just the tint).
+function buildBootOverlay(id, color, side) {
+  const g = new THREE.Group();
+  const accent = metalMat(0xd9c46a);
+  // WINGED boots: a pair of feathered wings on the outer ankle (Hermes/winged).
+  if (/winged|hermes|swift|fast|soft/.test(id)) {
+    const wingMat = new THREE.MeshStandardMaterial({ color: 0xf2f6ff, emissive: 0x88aaff, emissiveIntensity: 0.3, roughness: 0.4 });
+    const wing = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const f = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.12 - i * 0.02, 5), wingMat);
+      f.position.set(0, 0.04 + i * 0.02, -0.02 - i * 0.03);
+      f.rotation.x = -1.4; f.rotation.z = 0.2;
+      wing.add(f);
+    }
+    wing.position.set(side * 0.09, 0.06, 0);
+    wing.rotation.y = side < 0 ? 0.4 : -0.4;
+    g.add(wing);
+    // a small gold ankle band
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.012, 6, 14), accent);
+    band.rotation.x = Math.PI / 2; band.position.y = 0.04;
+    g.add(band);
+    return g;
+  }
+  // DRAGON / DEMON boots: clawed toes + a scaly cuff in the boot colour.
+  if (/dragon|demon/.test(id)) {
+    const dark = mat(shade(color, 0.7));
+    for (let i = -1; i <= 1; i++) {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.06, 5), mat(0xeae2cc));
+      claw.position.set(i * 0.03, -0.02, 0.11); claw.rotation.x = 1.7;
+      g.add(claw);
+    }
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.02, 6, 14), dark);
+    cuff.rotation.x = Math.PI / 2; cuff.position.y = 0.06;
+    g.add(cuff);
+    if (/demon/.test(id)) {  // demon boots get a little spur spike
+      const spur = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.07, 5), mat(0x1a0a0a));
+      spur.position.set(side * 0.08, 0.05, -0.04); spur.rotation.z = side * 1.3;
+      g.add(spur);
+    }
+    return g;
+  }
+  // PLATE / KNIGHT / GUARDIAN / CELESTIAL boots: a metal cuff + a toe cap.
+  if (/plate|knight|guardian|steel|celestial|frost|glacial/.test(id)) {
+    const metalC = metalMat(shade(color, 1.05));
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.09, 0.07, 12), metalC);
+    cuff.position.y = 0.06; g.add(cuff);
+    const toe = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), metalC);
+    toe.scale.set(1, 0.7, 1.3); toe.position.set(0, -0.02, 0.06); g.add(toe);
+    return g;
+  }
+  return null;   // plain boots: tint only
 }
 
 function buildBackpackMesh(color) {
   const g = new THREE.Group();
+  // Raised onto the upper back so the pack sits between the shoulder blades.
   const pack = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.36, 0.16), mat(color));
-  pack.position.set(0, -0.04, -0.26);
+  pack.position.set(0, 0.16, -0.26);
   const flap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.04), mat(shade(color, 0.8)));
-  flap.position.set(0, 0.08, -0.34);
-  const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.04), mat(shade(color, 0.7)));
-  strapL.position.set(-0.12, 0, -0.12);
+  flap.position.set(0, 0.3, -0.34);
+  const buckle = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.01, 6, 12), metalMat(0xc8a24a));
+  buckle.position.set(0, 0.12, -0.35); buckle.rotation.x = Math.PI / 2;
+  const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.36, 0.04), mat(shade(color, 0.7)));
+  strapL.position.set(-0.12, 0.2, -0.1);
   const strapR = strapL.clone();
   strapR.position.x = 0.12;
-  g.add(pack, flap, strapL, strapR);
+  g.add(pack, flap, buckle, strapL, strapR);
   return g;
 }
 
