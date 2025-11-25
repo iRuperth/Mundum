@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wardrobe Preview — Mundum</title>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d2228; color: #e7ecf2; font: 14px system-ui, sans-serif; }
+  #app { display: flex; height: 100%; }
+  #stage { flex: 1; }
+  #panel { width: 280px; padding: 12px 14px; overflow-y: auto; background: #252b33; box-shadow: -2px 0 8px rgba(0,0,0,.4); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9fb0c2; margin: 16px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 6px 8px; border: 1px solid #3a434d;
+           background: #2e353e; color: #e7ecf2; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #38414b; }
+  button.on { background: #3b6ea5; border-color: #5a90c8; }
+  .row { display: flex; gap: 6px; }
+  .row button { flex: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"></div>
+  <div id="panel"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { buildCharacter } from './src/character.js';
+import { EquipVisuals } from './src/equipVisuals.js';
+import { WEAPONS, ARMORS, CONTAINERS } from './src/data/items.js';
+import { instanceFromArmor, instanceFromContainer } from './src/inventory.js';
+import { rollWeaponInstance } from './src/data/items.js';
+
+// --- scene ---------------------------------------------------------------
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(stage.clientWidth, stage.clientHeight);
+renderer.setPixelRatio(devicePixelRatio);
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1d2228);
+const camera = new THREE.PerspectiveCamera(38, stage.clientWidth / stage.clientHeight, 0.1, 50);
+camera.position.set(0, 1.2, 3.4);
+camera.lookAt(0, 1.0, 0);
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x30343c, 1.0));
+const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(2, 4, 3); scene.add(key);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(2, 32), new THREE.MeshLambertMaterial({ color: 0x2a3038 }));
+floor.rotation.x = -Math.PI / 2; floor.position.y = 0.1; scene.add(floor);
+
+// --- character -----------------------------------------------------------
+const profile = { colors: { skin: '#f2c79b', shirt: '#3498db', pants: '#34495e', hair: '#4a2f1b' }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' };
+let char, ev, spinning = true;
+const root = new THREE.Group(); scene.add(root);
+
+const equip = { weapon: null, helmet: null, armor: null, legs: null, boots: null, shield: null, bag: null, amulet: null };
+
+function rebuild() {
+  if (char) { root.remove(char.group); char.group.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
+  char = buildCharacter(profile);
+  root.add(char.group);
+  ev = new EquipVisuals(char);
+  ev.refresh(equip, 40);
+}
+rebuild();
+
+// --- UI ------------------------------------------------------------------
+const panel = document.getElementById('panel');
+function section(title) { const h = document.createElement('h2'); h.textContent = title; panel.appendChild(h); }
+function pickList(title, slot, defs, makeInst) {
+  section(title);
+  const none = btn('— ninguno —', () => { equip[slot] = null; ev.refresh(equip, 40); markActive(slot); });
+  none.dataset.slot = slot; none.dataset.id = '__none';
+  for (const d of defs) {
+    const b = btn(d.name?.es || d.name || d.id, () => { equip[slot] = makeInst(d); ev.refresh(equip, 40); markActive(slot); });
+    b.dataset.slot = slot; b.dataset.id = d.id;
+  }
+  markActive(slot);
+}
+function btn(label, onClick) { const b = document.createElement('button'); b.textContent = label; b.onclick = onClick; panel.appendChild(b); return b; }
+function markActive(slot) {
+  const cur = equip[slot]?.baseId || '__none';
+  panel.querySelectorAll(`button[data-slot="${slot}"]`).forEach(b => b.classList.toggle('on', b.dataset.id === cur));
+}
+
+section('Apariencia');
+const seg = document.createElement('div'); seg.className = 'row'; panel.appendChild(seg);
+for (const s of ['male', 'female']) { const b = document.createElement('button'); b.textContent = s; b.onclick = () => { profile.sex = s; rebuild(); }; seg.appendChild(b); }
+const seg2 = document.createElement('div'); seg2.className = 'row'; panel.appendChild(seg2);
+for (const h of ['short', 'long', 'spiky', 'bald']) { const b = document.createElement('button'); b.textContent = h; b.onclick = () => { profile.hair = h; rebuild(); }; seg2.appendChild(b); }
+
+// Pick a representative subset across tiers so every visual style shows up.
+const someHelmets = ARMORS.filter(a => a.slot === 'helmet');
+const someArmor = ARMORS.filter(a => a.slot === 'armor');
+const someLegs = ARMORS.filter(a => a.slot === 'legs');
+const someBoots = ARMORS.filter(a => a.slot === 'boots');
+const someAmulets = ARMORS.filter(a => a.slot === 'amulet');
+
+pickList('Casco', 'helmet', someHelmets, instanceFromArmor);
+pickList('Armadura', 'armor', someArmor, instanceFromArmor);
+pickList('Piernas', 'legs', someLegs, instanceFromArmor);
+pickList('Botas', 'boots', someBoots, instanceFromArmor);
+pickList('Amuleto', 'amulet', someAmulets, instanceFromArmor);
+pickList('Mochila / Bolsa', 'bag', CONTAINERS, instanceFromContainer);
+pickList('Arma', 'weapon', WEAPONS, (w) => rollWeaponInstance(w.id, () => 0.5));
+pickList('Escudo', 'shield', ARMORS.filter(a => false).concat(
+  // shields live in WEAPONS with type 'shield'
+  WEAPONS.filter(w => w.type === 'shield')), (s) => rollWeaponInstance(s.id, () => 0.5));
+
+section('Vista');
+btn('girar on/off', () => spinning = !spinning);
+
+// Demo loadouts for headless screenshots: ?demo=closed|plate|wizard|bag
+const demos = {
+  closed: { helmet: 'steel_helmet', armor: 'steel_armor', legs: 'steel_legs', boots: 'steel_boots', weapon: 'knight_sword', shield: 'steel_shield', amulet: 'gold_amulet', bag: 'red_backpack' },
+  plate:  { helmet: 'dragon_helmet', armor: 'dragon_armor', legs: 'dragon_legs', boots: 'dragon_boots', weapon: 'dragon_sword', amulet: 'dragon_amulet', bag: 'purple_backpack' },
+  wizard: { helmet: 'wizard_hat', armor: 'mage_robe', legs: 'mage_legs', boots: 'soft_boots', weapon: 'mystic_staff', amulet: 'sapphire_amulet', bag: 'blue_bag' },
+  bag:    { helmet: 'straw_hat', armor: 'leather_armor', legs: 'leather_legs', boots: 'leather_boots', amulet: 'jade_amulet', bag: 'green_bag' },
+};
+const params = new URLSearchParams(location.search);
+if (params.get('sex')) { profile.sex = params.get('sex'); rebuild(); }
+const demo = params.get('demo');
+if (demos[demo]) {
+  const d = demos[demo];
+  for (const slot of ['helmet', 'armor', 'legs', 'boots', 'amulet']) {
+    const def = ARMORS.find(a => a.id === d[slot]); if (def) equip[slot] = instanceFromArmor(def);
+  }
+  if (d.bag) { const c = CONTAINERS.find(x => x.id === d.bag); if (c) equip.bag = instanceFromContainer(c); }
+  if (d.weapon) { const w = WEAPONS.find(x => x.id === d.weapon); if (w) equip.weapon = rollWeaponInstance(w.id, () => 0.5); }
+  if (d.shield) { const s = WEAPONS.find(x => x.id === d.shield); if (s) equip.shield = rollWeaponInstance(s.id, () => 0.5); }
+  ev.refresh(equip, 40);
+  spinning = false;
+  // ?back turns the model around so the bag/backpack on the back is visible.
+  root.rotation.y = new URLSearchParams(location.search).has('back') ? Math.PI : 0.5;
+}
+
+// --- loop ----------------------------------------------------------------
+let t = 0;
+function frame() {
+  requestAnimationFrame(frame);
+  t += 0.016;
+  if (spinning) root.rotation.y += 0.008;
+  char.animate(t * 6, 0.0, true); // idle pose
+  char.updateAttack(0.016);
+  renderer.render(scene, camera);
+}
+frame();
+addEventListener('resize', () => {
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  camera.aspect = stage.clientWidth / stage.clientHeight; camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>
