@@ -30,8 +30,15 @@ create table if not exists public.characters (
   backpack   jsonb        default '[]'::jsonb,
   depot      jsonb        default '[]'::jsonb,
   pos        jsonb        default '{}'::jsonb,
+  -- Character progression: use-skill levels/tries (sword/axe/distance/magic…),
+  -- spent skill points (spByTier) and skill-tree levels. From charStats.serialize().
+  stats      jsonb        default '{}'::jsonb,
   updated_at timestamptz  default now()
 );
+
+-- Add `stats` to characters tables created before this column existed (safe to
+-- re-run; no-op when it already exists).
+alter table public.characters add column if not exists stats jsonb default '{}'::jsonb;
 
 -- friends: each row is "user_id has befriended friend_name".
 create table if not exists public.friends (
@@ -41,10 +48,23 @@ create table if not exists public.friends (
   primary key (user_id, friend_name)
 );
 
+-- bans: one row per banned player. Written by the Game Master ("GM Maple") and
+-- read by everyone on connect so a banned player is bounced out. This is a
+-- kid-friendly game with a single trusted GM, so any authenticated player may
+-- insert a ban; the client only ever exposes the ban button to GM Maple.
+create table if not exists public.bans (
+  id         uuid        primary key references auth.users (id) on delete cascade,
+  name       text,
+  reason     text,
+  banned_by  text,
+  created_at timestamptz default now()
+);
+
 
 -- Row Level Security
 alter table public.characters enable row level security;
 alter table public.friends    enable row level security;
+alter table public.bans       enable row level security;
 
 -- characters
 -- Any authenticated player may READ characters (so others' names/levels show
@@ -94,6 +114,29 @@ create policy "friends_delete_own"
   on public.friends for delete
   to authenticated
   using (auth.uid() = user_id);
+
+-- bans
+-- Everyone authenticated may READ the ban list (so the game can bounce a banned
+-- player on connect). Any authenticated player may INSERT a ban — only GM Maple
+-- ever sees the ban button in the client. A player may DELETE their own ban row
+-- (used by the GM to lift a ban via the unban action, which targets that id).
+drop policy if exists "bans_select_all_auth" on public.bans;
+create policy "bans_select_all_auth"
+  on public.bans for select
+  to authenticated
+  using (true);
+
+drop policy if exists "bans_insert_auth" on public.bans;
+create policy "bans_insert_auth"
+  on public.bans for insert
+  to authenticated
+  with check (true);
+
+drop policy if exists "bans_delete_auth" on public.bans;
+create policy "bans_delete_auth"
+  on public.bans for delete
+  to authenticated
+  using (true);
 
 
 -- execute_trade: ATOMIC, server-authoritative item swap.
