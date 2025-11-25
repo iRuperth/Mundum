@@ -45,6 +45,11 @@ create table if not exists public.characters (
   backpack   jsonb        default '[]'::jsonb,
   depot      jsonb        default '[]'::jsonb,
   pos        jsonb        default '{}'::jsonb,
+  -- Character progression: use-skill levels/tries, spent skill points and
+  -- skill-tree levels (charStats.serialize()).
+  stats      jsonb        default '{}'::jsonb,
+  -- Quest log progress (questLog.serialize()).
+  quests     jsonb        default '{}'::jsonb,
   updated_at timestamptz  default now(),
   unique (user_id, slot)
 );
@@ -56,6 +61,8 @@ alter table public.characters add column if not exists id         uuid    defaul
 alter table public.characters add column if not exists user_id    uuid;
 alter table public.characters add column if not exists slot       int     default 0;
 alter table public.characters add column if not exists profession text;
+alter table public.characters add column if not exists stats      jsonb   default '{}'::jsonb;
+alter table public.characters add column if not exists quests     jsonb   default '{}'::jsonb;
 
 -- Helps the per-user roster query (where user_id = ... order by slot).
 create index if not exists characters_user_slot_idx
