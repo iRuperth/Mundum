@@ -18,6 +18,20 @@ export class Peers {
     return out;
   }
 
+  // The peer whose body a screen ray hits (left-clicking a player). Returns
+  // { id, peer } or null. Uses each peer's character group for the hit test.
+  raycast(raycaster) {
+    let best = null, bestDist = Infinity;
+    for (const [id, peer] of this.peers) {
+      const hits = raycaster.intersectObject(peer.char.group, true);
+      if (hits.length && hits[0].distance < bestDist) {
+        bestDist = hits[0].distance;
+        best = { id, peer };
+      }
+    }
+    return best;
+  }
+
   update(id, state) {
     let peer = this.peers.get(id);
     if (!peer) peer = this._create(id, state);
