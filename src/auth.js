@@ -282,6 +282,7 @@ export class Auth {
       // spent points reset on reload.
       if (s.stats != null) row.stats = s.stats;
       if (s.quests != null) row.quests = s.quests;
+      if (s.friends != null) row.friends = s.friends;
       if (s.pos != null) row.pos = s.pos;
       else if (s.x != null) row.pos = { x: s.x, y: s.y, z: s.z };
 
