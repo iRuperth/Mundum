@@ -591,7 +591,12 @@ function buildMouth(head, style, mat, eyeW) {
   } else if (style === 'smirk') {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.016, 0.02), mat); m.rotation.z = 0.32; m.position.set(0, y, z); head.add(m);
   } else {
-    const m = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.018, 6, 12, Math.PI), mat); m.rotation.x = Math.PI / 2; m.rotation.z = Math.PI; m.position.set(0, y, z); head.add(m);
+    // Smile: a half-ring facing the camera (in the X-Y plane) opening UPWARD, so
+    // it reads as a clear upturned curve. Thicker and a touch wider than before.
+    const m = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.014, 8, 20, Math.PI), mat);
+    m.rotation.z = Math.PI;            // half-ring opens upward (smile)
+    m.position.set(0, y + 0.012, surfaceZ(y, -0.005));
+    head.add(m);
   }
 }
 
