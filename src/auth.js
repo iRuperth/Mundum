@@ -49,6 +49,24 @@ function clampSlot(slot) {
   return Math.max(0, Math.min(MAX_CHARACTERS - 1, Math.floor(n)));
 }
 
+// Extended appearance (nose/mouth/eyes/brows/ears) is stored inside the colors
+// jsonb under `_look` (the table only has sex/hair/colors appearance columns).
+// On read, lift those fields to the top level and strip `_look` from colors so
+// the rest of the game sees a flat character object.
+function unpackLook(row) {
+  if (!row || typeof row !== 'object') return row;
+  const colors = row.colors && typeof row.colors === 'object' ? { ...row.colors } : {};
+  const look = colors._look && typeof colors._look === 'object' ? colors._look : null;
+  if (look) {
+    for (const k of ['nose', 'mouth', 'eyes', 'brows', 'ears']) {
+      if (row[k] == null && look[k] != null) row[k] = look[k];
+    }
+    delete colors._look;
+    row.colors = colors;
+  }
+  return row;
+}
+
 export class Auth {
   constructor() {
     this.client = null;
@@ -152,8 +170,8 @@ export class Auth {
         .eq('user_id', user.id)
         .order('slot', { ascending: true })
         .limit(MAX_CHARACTERS);
-      if (error) { console.warn('[auth] listCharacters:', error.message); return []; }
-      return data || [];
+      if (error) { console.warn("[auth] listCharacters:", error.message); return []; }
+      return (data || []).map(unpackLook);
     } catch (err) {
       console.warn('[auth] listCharacters:', errMsg(err));
       return [];
@@ -213,7 +231,7 @@ export class Auth {
         const taken = /duplicate key|unique/i.test(error.message || '');
         return { ok: false, error: taken ? 'name taken' : error.message };
       }
-      return { ok: true, character: data };
+      return { ok: true, character: unpackLook(data) };
     } catch (err) {
       return { ok: false, error: errMsg(err) };
     }
@@ -248,7 +266,7 @@ export class Auth {
         .eq('id', id)
         .maybeSingle();
       if (error) { console.warn('[auth] loadCharacter:', error.message); return null; }
-      return data || null;
+      return data ? unpackLook(data) : null;
     } catch (err) {
       console.warn('[auth] loadCharacter:', errMsg(err));
       return null;
