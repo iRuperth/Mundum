@@ -5,16 +5,24 @@ import * as THREE from 'three';
 // so weapons, shield and visible armor can be attached at runtime.
 const BOOT_COLOR = 0x4a3526;
 
-const HAIR_STYLES = ['short', 'long', 'spiky', 'bald'];
-const NOSE_STYLES = ['small', 'round', 'pointy'];
-const MOUTH_STYLES = ['smile', 'neutral', 'open'];
+const HAIR_STYLES = ['short', 'long', 'spiky', 'buzz', 'curly', 'mohawk', 'bun', 'ponytail', 'pigtails', 'afro', 'emo', 'bald'];
+const NOSE_STYLES = ['small', 'round', 'pointy', 'button', 'wide'];
+const MOUTH_STYLES = ['smile', 'neutral', 'open', 'grin', 'frown', 'smirk'];
+const EYE_STYLES  = ['normal', 'happy', 'bored', 'wink', 'sleepy', 'angry', 'cute'];
+const BROW_STYLES = ['normal', 'raised', 'angry', 'sad', 'none'];
+const EAR_STYLES  = ['normal', 'big', 'elf', 'small'];
+
+const inSet = (set, v, fb) => set.includes(v) ? v : fb;
 
 export function buildCharacter(profile) {
   const colors = profile.colors;
   const sex = profile.sex || 'male';
-  const hairStyle = profile.hair || 'short';
-  const noseStyle = NOSE_STYLES.includes(profile.nose) ? profile.nose : 'small';
-  const mouthStyle = MOUTH_STYLES.includes(profile.mouth) ? profile.mouth : 'smile';
+  const hairStyle = inSet(HAIR_STYLES, profile.hair, 'short');
+  const noseStyle = inSet(NOSE_STYLES, profile.nose, 'small');
+  const mouthStyle = inSet(MOUTH_STYLES, profile.mouth, 'smile');
+  const eyeStyle = inSet(EYE_STYLES, profile.eyes, 'normal');
+  const browStyle = inSet(BROW_STYLES, profile.brows, 'normal');
+  const earStyle = inSet(EAR_STYLES, profile.ears, 'normal');
 
   const mats = {
     skin:  new THREE.MeshLambertMaterial({ color: colors.skin }),
@@ -59,18 +67,12 @@ export function buildCharacter(profile) {
   skull.position.y = 0.1;
   head.add(skull);
 
-  buildHair(head, hairStyle, mats.hair);
-
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), mats.eyeW);
-    eye.position.set(0.09 * side, 0.11, 0.215);
-    head.add(eye);
-    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 6), mats.eyeB);
-    pupil.position.set(0.09 * side, 0.11, 0.252);
-    head.add(pupil);
-  }
+  buildEars(head, earStyle, mats.skin);
+  const hairGroup = buildHair(head, hairStyle, mats.hair);
+  buildEyes(head, eyeStyle, mats);
+  buildBrows(head, browStyle, mats.hair);
   buildNose(head, noseStyle, mats.skin);
-  buildMouth(head, mouthStyle, mats.mouth);
+  buildMouth(head, mouthStyle, mats.mouth, mats.eyeW);
 
   // helmet equip anchor
   const helmet = new THREE.Group();
@@ -340,7 +342,7 @@ export function buildCharacter(profile) {
     // The Game Master wears a fixed robe + cape: EquipVisuals reads this flag and
     // skips drawing any equipped armor/weapon so worn gear never shows on the GM.
     isGM: !!profile.gm,
-    parts: { head, helmet, chestArmor, armL, armR, legL, legR, legBootL: legL.boot, legBootR: legR.boot, body, hips, isFemale: female },
+    parts: { head, helmet, hairGroup, chestArmor, armL, armR, legL, legR, legBootL: legL.boot, legBootR: legR.boot, body, hips, isFemale: female },
     mats,
     setColors,
     animate,
@@ -352,62 +354,245 @@ export function buildCharacter(profile) {
   };
 }
 
-// Hair sits as a cap on TOP of the head and is pushed back so it never falls
-// over the eyes or the face. The crown is a shallow dome; longer styles add
-// hair only on the back and sides, leaving the face clear.
+// ===========================================================================
+// HEAD / FACE helpers. The skull is a sphere r=0.27 centred at head-local
+// (0, 0.10, 0), scaled (0.92,1,0.92). surfaceZ(y)/surfaceX(y) give the front /
+// side surface at a height so face features SIT on the skin (never float).
+// ===========================================================================
+const SK = { cy: 0.10, r: 0.27, s: 0.92 };
+function surfaceZ(y, inset = 0) { const dy = y - SK.cy, k = SK.r * SK.r - dy * dy; return k > 0 ? SK.s * Math.sqrt(k) - inset : 0; }
+function surfaceX(y, inset = 0) { const dy = y - SK.cy, k = SK.r * SK.r - dy * dy; return k > 0 ? SK.s * Math.sqrt(k) - inset : 0; }
+
+// Hair HUGS the skull (part of the head, never a floating hat). The base cap is
+// a sphere shell sharing the skull centre/scale, cut to a LEVEL rim high on the
+// forehead so the face stays clear all the way around. Longer styles add pieces
+// strictly behind the head. Everything goes in ONE group (returned) so a helmet
+// can hide it with .visible = false.
 function buildHair(head, style, mat) {
-  if (style === 'bald') return;
+  const G = new THREE.Group();
+  head.add(G);
+  if (style === 'bald') return G;
+  const CY = SK.cy;
+  const add = (m) => { G.add(m); return m; };
 
-  // Shallow top dome (phi ~0.34) lifted above the eyes so the forehead shows.
-  const cap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.29, 22, 18, 0, Math.PI * 2, 0, Math.PI * 0.4), mat);
-  cap.scale.set(0.97, 0.9, 1);
-  cap.position.set(0, 0.16, -0.02);
-  head.add(cap);
+  function cap(rimY, r = 0.285) {
+    const shell = new THREE.Group();
+    shell.position.set(0, CY, 0);
+    shell.scale.set(0.94, 1.02, 0.94);
+    const theta = Math.acos(Math.max(-1, Math.min(1, (rimY - CY) / r)));
+    shell.add(new THREE.Mesh(new THREE.SphereGeometry(r, 26, 18, 0, Math.PI * 2, 0, theta), mat));
+    G.add(shell);
+    return shell;
+  }
+  const surf = (y) => surfaceZ(y);
 
-  if (style === 'long') {
-    // A single sheet of hair down the BACK of the head only, never over the face.
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.1), mat);
-    back.position.set(0, -0.08, -0.22);
-    head.add(back);
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.08), mat);
-    tip.position.set(0, -0.3, -0.21);
-    head.add(tip);
-  } else if (style === 'spiky') {
-    const spikes = [[-0.1, 0.34, 0.04], [0.09, 0.36, 0.02], [0, 0.37, -0.06], [-0.15, 0.33, -0.03], [0.15, 0.33, -0.02]];
-    for (const [x, y, z] of spikes) {
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 6), mat);
-      spike.position.set(x, y, z);
-      head.add(spike);
+  switch (style) {
+    case 'buzz': cap(0.20, 0.278); break;
+    case 'short': cap(0.20); break;
+    case 'spiky': {
+      cap(0.21);
+      for (const [x, y, z] of [[-0.1, 0.36, 0.04], [0.1, 0.38, 0.02], [0, 0.39, -0.05], [-0.16, 0.34, -0.03], [0.16, 0.34, -0.02], [-0.05, 0.39, 0.12], [0.06, 0.38, 0.12]]) {
+        const s = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 6), mat);
+        s.position.set(x, y, z); s.rotation.x = -z * 1.3; s.rotation.z = -x * 1.3; add(s);
+      }
+      break;
+    }
+    case 'mohawk': {
+      cap(0.30, 0.278); // mostly shaved sides
+      for (let i = 0; i < 7; i++) {
+        const fin = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.3 - Math.abs(i - 3) * 0.03, 5), mat);
+        fin.position.set(0, 0.42, 0.16 - i * 0.06); add(fin);
+      }
+      break;
+    }
+    case 'curly': {
+      cap(0.16);
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const c = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), mat);
+        c.position.set(Math.cos(a) * 0.2, 0.30 + (i % 2) * 0.025, Math.sin(a) * 0.2 - 0.02); add(c);
+      }
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), mat)).position.set(0, 0.36, -0.02);
+      break;
+    }
+    case 'afro': {
+      cap(0.18);
+      const poof = new THREE.Mesh(new THREE.SphereGeometry(0.27, 16, 14), mat);
+      poof.position.set(0, 0.30, -0.01); add(poof);
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        const c = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), mat);
+        c.position.set(Math.cos(a) * 0.22, 0.29 + Math.sin(i) * 0.03, Math.sin(a) * 0.22 - 0.01); add(c);
+      }
+      break;
+    }
+    case 'emo': {
+      cap(0.16);
+      // A side-swept fringe lying along the forehead (above the eyes).
+      const fringe = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 12), mat);
+      fringe.scale.set(1.15, 0.5, 0.55);
+      fringe.position.set(0.05, 0.24, surf(0.24) - 0.02); fringe.rotation.z = 0.35; add(fringe);
+      // back length to the nape
+      const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.18, 6, 12), mat);
+      back.scale.set(1, 1, 0.55); back.position.set(0, -0.02, -0.18); add(back);
+      break;
+    }
+    case 'bun': {
+      cap(0.16);
+      const bun = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), mat);
+      bun.position.set(0, 0.34, -0.08); add(bun);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 8, 14), mat);
+      ring.rotation.x = Math.PI / 2; ring.position.set(0, 0.34, -0.08); add(ring);
+      break;
+    }
+    case 'ponytail': {
+      cap(0.16);
+      // Gather at the BACK of the crown, on the skull surface, then let the tail
+      // hang straight DOWN the back (slightly behind the head) so it reads as one
+      // connected ponytail, never a stick poking out to the side.
+      const tieY = 0.24, tieZ = -surf(tieY) - 0.01;
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat)).position.set(0, tieY, tieZ);
+      const Z = -0.22;                       // the tail falls in a plane behind the head
+      // Three stacked segments flowing from the nape down the back.
+      const seg = [[0.07, tieY - 0.06], [0.075, tieY - 0.2], [0.065, tieY - 0.34]];
+      for (const [r, y] of seg) {
+        const s = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+        s.scale.set(1, 1.25, 0.85); s.position.set(0, y, Z);
+        add(s);
+      }
+      // Tapered tip (cone pointing down).
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.13, 8), mat);
+      tip.rotation.x = Math.PI; tip.position.set(0, tieY - 0.47, Z); add(tip);
+      break;
+    }
+    case 'pigtails': {
+      cap(0.16);
+      for (const side of [-1, 1]) {
+        const tieY = 0.2, tx = surfaceX(tieY) * side;
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), mat)).position.set(tx, tieY, -0.03);
+        const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.28, 6, 10), mat);
+        tail.position.set(tx + 0.05 * side, tieY - 0.2, -0.05); tail.rotation.z = side * 0.35; add(tail);
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), mat)).position.set(tx + 0.1 * side, tieY - 0.36, -0.05);
+      }
+      break;
+    }
+    case 'long': {
+      cap(0.16);
+      const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.42, 6, 14), mat);
+      back.scale.set(1, 1, 0.55); back.position.set(0, -0.06, -0.18); add(back);
+      const collar = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), mat);
+      collar.scale.set(1.0, 0.8, 0.7); collar.position.set(0, 0.16, -0.12); add(collar);
+      break;
+    }
+    default: cap(0.20);
+  }
+  return G;
+}
+
+// EARS — small, flush to the temple, tucked back so hair covers their top.
+function buildEars(head, style, mat) {
+  if (style === undefined) style = 'normal';
+  for (const side of [-1, 1]) {
+    const y = 0.06, x = surfaceX(y) * side;
+    if (style === 'elf') {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.16, 6), mat);
+      ear.scale.set(0.45, 1, 0.5); ear.position.set(x - 0.01 * side, y + 0.05, -0.04); ear.rotation.z = side * -0.6;
+      head.add(ear);
+    } else {
+      const r = style === 'big' ? 0.058 : style === 'small' ? 0.034 : 0.046;
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+      ear.scale.set(0.45, 1, 0.62); ear.position.set(x - 0.005 * side, y, -0.02);
+      head.add(ear);
     }
   }
 }
 
+// EYES — a white + dark pupil seated on the face, with per-style shaping
+// (happy arcs, half-lids, wink, cute big pupils, angry slant).
+function buildEyes(head, style, mats) {
+  const ey = 0.115;
+  for (const side of [-1, 1]) {
+    const ex = 0.09 * side;
+    const ez = surfaceZ(ey, 0.055) - Math.abs(ex) * Math.abs(ex) * 0.9;
+
+    if (style === 'happy') {
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.012, 6, 12, Math.PI), mats.eyeB);
+      arc.position.set(ex, ey, ez + 0.05); arc.rotation.z = Math.PI; head.add(arc);
+      continue;
+    }
+    if (style === 'wink' && side === 1) {
+      const line = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.012, 6, 12, Math.PI), mats.eyeB);
+      line.position.set(ex, ey, ez + 0.05); line.rotation.z = Math.PI; head.add(line);
+      continue;
+    }
+
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), mats.eyeW);
+    eye.position.set(ex, ey, ez); head.add(eye);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), mats.eyeB);
+    pupil.position.set(ex, ey, ez + 0.036); head.add(pupil);
+
+    if (style === 'cute') {
+      pupil.scale.setScalar(1.3);
+      const hi = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 6), mats.eyeW);
+      hi.position.set(ex - 0.012 * side, ey + 0.013, ez + 0.05); head.add(hi);
+    }
+    if (style === 'bored' || style === 'sleepy' || style === 'angry') {
+      const lid = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mats.skin);
+      lid.position.set(ex, ey + (style === 'sleepy' ? 0.012 : 0.02), ez + 0.005);
+      lid.rotation.x = Math.PI;
+      if (style === 'angry') lid.rotation.z = side * 0.5;
+      lid.scale.set(1, style === 'bored' ? 0.6 : 0.5, 1);
+      head.add(lid);
+    }
+  }
+}
+
+// EYEBROWS — a small bar above each eye, tinted with the hair colour.
+function buildBrows(head, style, mat) {
+  if (style === 'none') return;
+  for (const side of [-1, 1]) {
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.017, 0.02), mat);
+    let y = 0.2, rot = 0;
+    if (style === 'raised') y = 0.22;
+    if (style === 'angry') { rot = side * 0.45; y = 0.185; }
+    if (style === 'sad') { rot = side * -0.45; y = 0.19; }
+    const x = 0.085 * side;
+    brow.position.set(x, y, surfaceZ(y, 0.01) - Math.abs(x) * Math.abs(x) * 0.8);
+    brow.rotation.z = rot; head.add(brow);
+  }
+}
+
 function buildNose(head, style, mat) {
-  let geo;
-  if (style === 'round') geo = new THREE.SphereGeometry(0.042, 8, 6);
-  else if (style === 'pointy') geo = new THREE.ConeGeometry(0.03, 0.08, 6);
-  else geo = new THREE.SphereGeometry(0.03, 8, 6);
+  const y = 0.03, z = surfaceZ(y, 0);
+  let geo, sx = 1, sy = 1, sz = 1, out = 0.0;
+  if (style === 'round') { geo = new THREE.SphereGeometry(0.04, 8, 6); out = 0.012; }
+  else if (style === 'button') { geo = new THREE.SphereGeometry(0.032, 8, 6); out = 0.01; }
+  else if (style === 'wide') { geo = new THREE.SphereGeometry(0.038, 8, 6); sx = 1.4; sy = 0.7; out = 0.008; }
+  else if (style === 'pointy') { geo = new THREE.ConeGeometry(0.028, 0.08, 6); out = 0.03; }
+  else { geo = new THREE.SphereGeometry(0.028, 8, 6); out = 0.008; }
   const nose = new THREE.Mesh(geo, mat);
   if (style === 'pointy') nose.rotation.x = Math.PI / 2;
-  nose.position.set(0, 0.03, 0.255);
+  nose.scale.set(sx, sy, sz);
+  nose.position.set(0, y, z + out);
   head.add(nose);
 }
 
-function buildMouth(head, style, mat) {
-  let mouth;
+function buildMouth(head, style, mat, eyeW) {
+  const y = -0.05, z = surfaceZ(y, 0.005);
   if (style === 'neutral') {
-    mouth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.016, 0.02), mat);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.016, 0.02), mat); m.position.set(0, y, z); head.add(m);
   } else if (style === 'open') {
-    mouth = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), mat);
-    mouth.scale.set(1, 0.7, 0.5);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), mat); m.scale.set(1, 0.7, 0.5); m.position.set(0, y, z); head.add(m);
+  } else if (style === 'grin') {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 10), mat); m.scale.set(1.3, 0.7, 0.4); m.position.set(0, y, z); head.add(m);
+    const teeth = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.022, 0.02), eyeW); teeth.position.set(0, y + 0.022, z + 0.015); head.add(teeth);
+  } else if (style === 'frown') {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.017, 6, 12, Math.PI), mat); m.rotation.x = Math.PI / 2; m.position.set(0, y - 0.015, z); head.add(m);
+  } else if (style === 'smirk') {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.016, 0.02), mat); m.rotation.z = 0.32; m.position.set(0, y, z); head.add(m);
   } else {
-    mouth = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.018, 6, 12, Math.PI), mat);
-    mouth.rotation.x = Math.PI / 2;
-    mouth.rotation.z = Math.PI;
+    const m = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.018, 6, 12, Math.PI), mat); m.rotation.x = Math.PI / 2; m.rotation.z = Math.PI; m.position.set(0, y, z); head.add(m);
   }
-  mouth.position.set(0, -0.05, 0.24);
-  head.add(mouth);
 }
 
-export { HAIR_STYLES, NOSE_STYLES, MOUTH_STYLES };
+export { HAIR_STYLES, NOSE_STYLES, MOUTH_STYLES, EYE_STYLES, BROW_STYLES, EAR_STYLES };
