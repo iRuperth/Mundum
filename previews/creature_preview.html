@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Creature Preview — Mundum</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d2228; color: #e7ecf2; font: 14px system-ui, sans-serif; }
+  #app { display: flex; height: 100%; }
+  #stage { flex: 1; position: relative; }
+  #name { position: absolute; left: 14px; top: 12px; font-size: 18px; font-weight: 700; text-shadow: 0 1px 3px #000; }
+  #panel { width: 260px; padding: 12px 14px; overflow-y: auto; background: #252b33; box-shadow: -2px 0 8px rgba(0,0,0,.4); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #9fb0c2; margin: 14px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 5px 8px; border: 1px solid #3a434d;
+           background: #2e353e; color: #e7ecf2; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #38414b; }
+  button.on { background: #3b6ea5; border-color: #5a90c8; }
+  .row { display: flex; gap: 6px; }
+  .row button { flex: 1; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .grid button { margin: 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><div id="name"></div></div>
+  <div id="panel"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import '../src/creatureDesigns.js';        // registers the 83 authored designs
+import '../src/creatureDesignsExtra.js';   // registers the hand-authored vermin + dragons
+import { buildCreatureModel, getDesignKeys } from '../src/creatureModels.js';
+
+// All registered Tibia-7.4 designs (106), sorted, with a few legacy families
+// appended so nothing that still uses the old table is hidden.
+const LEGACY = ['centaur','ogre','kobold','imp','golem','gargoyle','elemental',
+  'treant','mandrake','harpy','lizardman','serpent','shark','jellyfish','turtle',
+  'cultist','knight','mage','fairy','mimic','frog'];
+const FAMILIES = Array.from(new Set([...getDesignKeys().sort(), ...LEGACY]));
+
+// A representative tint per family so previews aren't all grey.
+const TINTS = {
+  orc: 0x6a8a4a, goblin: 0x6aaa55, centaur: 0xb88a5a, troll: 0x6a7a5a, ogre: 0x9a8a6a,
+  demon: 0xaa1111, dragon: 0xcc2211, knight: 0x99aabb, mage: 0x4455aa, skeleton: 0xddddcc,
+  wolf: 0x888888, bear: 0x7a5a3a, deer: 0xb07a4a, boar: 0x6a5040, minotaur: 0x7a4a2a,
+  cyclops: 0x9a7a5a, hydra: 0x447766, golem: 0x888888, lizardman: 0x559966,
+};
+
+// --- scene ---------------------------------------------------------------
+const stage = document.getElementById('stage');
+const nameEl = document.getElementById('name');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(stage.clientWidth, stage.clientHeight);
+renderer.setPixelRatio(devicePixelRatio);
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1d2228);
+const camera = new THREE.PerspectiveCamera(40, stage.clientWidth / stage.clientHeight, 0.1, 60);
+camera.position.set(0, 1.3, 3.6);
+camera.lookAt(0, 0.7, 0);
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x30343c, 1.0));
+const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(2, 4, 3); scene.add(key);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(6, 40), new THREE.MeshLambertMaterial({ color: 0x2a3038 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+
+// A 1m grid on the floor so relative size is readable (each square = 1 unit).
+const grid = new THREE.GridHelper(12, 12, 0x4a5560, 0x394149);
+grid.position.y = 0.01; scene.add(grid);
+
+// A pale human-height (1.0) reference figure standing to the side, so you can
+// SEE that a dwarf is short and a hydra is huge — the real in-game sizes.
+function makeRef() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0x8fa0b3, transparent: true, opacity: 0.5 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.5, 4, 8), mat);
+  body.position.y = 0.5; g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), mat);
+  head.position.y = 0.9; g.add(head);
+  for (const s of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.3, 4, 6), mat);
+    leg.position.set(s * 0.07, 0.18, 0); g.add(leg);
+  }
+  g.position.set(-1.6, 0, 0);
+  return g;
+}
+const refFigure = makeRef(); scene.add(refFigure);   // ~1.0 unit tall human
+
+const root = new THREE.Group(); scene.add(root);
+
+let model = null, spinning = true, moving = true, attacking = false, attackTimer = 0;
+let scaleOverride = null;   // null = use the design's own scale; a number forces it
+let current = 'orc';
+let refOn = true;           // show the human-height reference figure
+const designKeys = new Set(getDesignKeys());
+
+function build(family) {
+  if (model) { root.remove(model.group); model.dispose(); }
+  current = family;
+  // Registered designs carry their own color+scale; only override when asked.
+  const opts = {};
+  if (scaleOverride != null) opts.scale = scaleOverride;
+  if (!designKeys.has(family)) opts.color = (TINTS[family] != null ? TINTS[family] : 0x9a9a9a);
+  model = buildCreatureModel(family, opts);
+  root.add(model.group);
+  // Measure real height and frame the camera so big and small creatures are both
+  // readable — and show the size next to the human (1.0) reference.
+  const box = new THREE.Box3().setFromObject(model.group);
+  const h = (box.max.y - box.min.y) || 1;
+  const dist = Math.max(2.4, h * 1.7);
+  camera.position.set(0, h * 0.55, dist);
+  camera.lookAt(0, h * 0.45, 0);
+  refFigure.visible = refOn;
+  nameEl.textContent = `${family}  ·  alto≈${h.toFixed(2)} (humano=1.0)${scaleOverride != null ? '  ×' + scaleOverride.toFixed(1) : ''}`;
+  markActive();
+}
+
+// --- UI ------------------------------------------------------------------
+const panel = document.getElementById('panel');
+function section(title) { const h = document.createElement('h2'); h.textContent = title; panel.appendChild(h); }
+function btn(label, onClick, parent) { const b = document.createElement('button'); b.textContent = label; b.onclick = onClick; (parent || panel).appendChild(b); return b; }
+
+section('Vista');
+const r1 = document.createElement('div'); r1.className = 'row'; panel.appendChild(r1);
+btn('girar', () => { spinning = !spinning; }, r1);
+btn('caminar', () => { moving = !moving; }, r1);
+btn('atacar (loop)', () => { attacking = !attacking; }, r1);
+btn('referencia humana on/off', () => { refOn = !refOn; refFigure.visible = refOn; });
+
+section('Tamaño');
+btn('escala propia (real)', () => { scaleOverride = null; build(current); });
+const r2 = document.createElement('div'); r2.className = 'row'; panel.appendChild(r2);
+for (const s of [0.6, 1.0, 1.6, 2.4]) btn('×' + s, () => { scaleOverride = s; build(current); }, r2);
+
+section('Criaturas');
+const grid = document.createElement('div'); grid.className = 'grid'; panel.appendChild(grid);
+const fbtns = {};
+for (const f of FAMILIES) fbtns[f] = btn(f, () => build(f), grid);
+
+function markActive() {
+  for (const f in fbtns) fbtns[f].classList.toggle('on', f === current);
+}
+
+build('orc');
+
+// --- loop ----------------------------------------------------------------
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (spinning) root.rotation.y += 0.01;
+  if (attacking) {
+    attackTimer -= dt;
+    if (attackTimer <= 0 && model.attack) { model.attack(); attackTimer = 1.0; }
+  }
+  if (model) model.update(dt, moving);
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+addEventListener('resize', () => {
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  camera.aspect = stage.clientWidth / stage.clientHeight; camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>

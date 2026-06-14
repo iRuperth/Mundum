@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Powers Preview — Mundum</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #12161b; color: #e7ecf2; font: 14px system-ui, sans-serif; }
+  #app { display: flex; height: 100%; }
+  #stage { flex: 1; position: relative; }
+  #name { position: absolute; left: 14px; top: 12px; font-size: 15px; font-weight: 700; text-shadow: 0 1px 3px #000; line-height: 1.4; }
+  #name small { font-weight: 400; color: #9fb0c2; }
+  #panel { width: 280px; padding: 12px 14px; overflow-y: auto; background: #1c2128; box-shadow: -2px 0 8px rgba(0,0,0,.5); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #9fb0c2; margin: 14px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 5px 8px; border: 1px solid #3a434d;
+           background: #262d36; color: #e7ecf2; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #313a45; }
+  button.on { background: #3b6ea5; border-color: #5a90c8; }
+  .row { display: flex; gap: 6px; }
+  .row button { flex: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><div id="name"></div></div>
+  <div id="panel"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { SkillSystem } from '../src/skills.js';
+import { PROFESSIONS } from '../src/data/professions.js';
+import { buildCharacter } from '../src/character.js';
+
+// --- scene ---------------------------------------------------------------
+const stage = document.getElementById('stage');
+const nameEl = document.getElementById('name');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(stage.clientWidth, stage.clientHeight);
+renderer.setPixelRatio(devicePixelRatio);
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x12161b);
+const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.1, 80);
+camera.position.set(6, 4, 8);
+camera.lookAt(2, 0.8, 0);
+scene.add(new THREE.HemisphereLight(0x9fb8d8, 0x20242c, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(3, 6, 4); scene.add(key);
+// a large ground so area/rain/ground effects read
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshLambertMaterial({ color: 0x232a22 }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+const grid = new THREE.GridHelper(40, 40, 0x39424c, 0x2a313a); grid.position.y = 0.01; scene.add(grid);
+// a few dummy "enemy" posts downrange so projectiles have something to fly at
+for (let i = 0; i < 3; i++) {
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.6, 8), new THREE.MeshLambertMaterial({ color: 0x6a5a4a }));
+  post.position.set(5 + i * 2.5, 0.8, (i - 1) * 1.5); scene.add(post);
+}
+
+// The world stub the SkillSystem needs (flat ground at y=0).
+const world = { heightAt: () => 0 };
+const skillSystem = new SkillSystem(scene, world);
+
+// A caster character standing at origin, facing +X (down the range toward posts).
+const char = buildCharacter({ colors: { skin: '#f2c79b', shirt: '#6a5bef', pants: '#34495e', hair: '#4a2f1b' }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' });
+char.group.position.set(0, 0, 0);
+char.group.rotation.y = -Math.PI / 2;   // face +X
+scene.add(char.group);
+const casterYaw = -Math.PI / 2;          // matches the model facing +X
+
+// --- UI ------------------------------------------------------------------
+const panel = document.getElementById('panel');
+function section(title) { const h = document.createElement('h2'); h.textContent = title; panel.appendChild(h); }
+function btn(label, onClick, parent) { const b = document.createElement('button'); b.textContent = label; b.onclick = onClick; (parent || panel).appendChild(b); return b; }
+
+let current = null, autoLoop = false, autoTimer = 0;
+
+function castOne(skill) {
+  current = skill;
+  char.triggerAttack && char.triggerAttack();
+  skillSystem.cast(skill, char.group.position, casterYaw, 12, {
+    damageArea() {}, healPlayer() {}, spawnSummon() {},
+  });
+  nameEl.innerHTML = `${skill.name.es || skill.name} <small>(${skill.fx || '—'} · ${skill.kind})</small>`;
+}
+
+section('Reproducción');
+btn('▶ repetir el último (loop)', () => { autoLoop = !autoLoop; });
+
+// One section per profession, listing its castable skills.
+for (const p of PROFESSIONS) {
+  const casts = p.skills.filter(s => s.kind !== 'passive');
+  if (!casts.length) continue;
+  section(`${p.name.es || p.name} (${casts.length})`);
+  for (const s of casts) btn(`${s.name.es || s.name}`, () => castOne(s));
+}
+
+// --- loop ----------------------------------------------------------------
+let last = performance.now(), t = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  t += dt;
+  char.animate(t * 2, 0, true, dt);
+  char.updateAttack && char.updateAttack(dt);
+  skillSystem.update(dt);
+  if (autoLoop && current) {
+    autoTimer -= dt;
+    if (autoTimer <= 0) { castOne(current); autoTimer = 1.4; }
+  }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+addEventListener('resize', () => {
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  camera.aspect = stage.clientWidth / stage.clientHeight; camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>

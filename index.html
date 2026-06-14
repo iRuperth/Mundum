@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es" id="html-root">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1030">
+<title>Mundum</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%235fae54'/><circle cx='38' cy='42' r='15' fill='%232f86c9'/><circle cx='66' cy='64' r='11' fill='%23d5c382'/></svg>">
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="low-hp-vignette"></div>
+<div id="fade-overlay"></div>
+<div id="crosshair" class="hidden"></div>
+<div id="auth-root"></div>
+
+<div id="hud" class="hidden">
+  <div id="hud-top">
+    <div id="hud-clock"><span id="clock-icon">☀️</span> <span id="clock-time">--:--</span></div>
+    <div id="hud-event" class="hidden"></div>
+  </div>
+
+  <div id="quest-box" class="hidden"></div>
+  <!-- Hotbar + a thin XP bar under it (Tibia-style). -->
+  <div id="hotbar-wrap">
+    <div id="hotbar"></div>
+    <div class="bar xp" id="hotbar-xp"><div id="hotbar-xp-fill" class="fill"></div><span id="hotbar-xp-text" class="bar-text"></span></div>
+  </div>
+  <div id="hint"></div>
+  <div id="toast-stack"></div>
+</div>
+
+<!-- LEFT panel: empty by default. Windows can be dragged here from the right. -->
+<div id="side-panel-left" class="hidden side-panel side-left collapsed">
+  <button id="panel-toggle-left" title="">›</button>
+  <div id="windows-left" class="windows"></div>
+</div>
+
+<!-- RIGHT panel, Tibia order: map → vitals → equipment → a small button row.
+     Container/dragged windows append after. -->
+<div id="side-panel" class="hidden side-panel side-right">
+  <button id="panel-toggle" title="">›</button>
+
+  <div id="windows" class="windows">
+    <div class="win" id="win-map" data-win="map">
+      <div class="win-head"><span class="win-grip">⠿</span><span class="win-title" data-i18n="map">Mapa</span><button class="win-collapse" title="">▾</button></div>
+      <div class="win-body">
+        <div id="minimap-box">
+          <canvas id="minimap" width="150" height="150" title="Click to expand"></canvas>
+          <div id="coords"></div>
+          <div id="city-name"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vitals (HP / Mana) — between the map and equipment. Level is shown in the
+         Skills window, not here. -->
+    <div id="vitals">
+      <div class="bar hp"><div id="hp-fill" class="fill"></div><span id="hp-text" class="bar-text"></span></div>
+      <div class="bar mana"><div id="mana-fill" class="fill"></div><span id="mana-text" class="bar-text"></span></div>
+    </div>
+
+    <div class="win" id="win-equip" data-win="equip">
+      <div class="win-head"><span class="win-grip">⠿</span><span class="win-title" data-i18n="equipment">Equipo</span><button class="win-collapse" title="">▾</button></div>
+      <div class="win-body">
+        <div id="paperdoll">
+          <div class="slot" data-slot="amulet" title=""></div>
+          <div class="slot" data-slot="helmet" title=""></div>
+          <div class="slot" data-slot="bag" title=""></div>
+          <div class="slot" data-slot="weapon" title=""></div>
+          <div class="slot" data-slot="armor" title=""></div>
+          <div class="slot" data-slot="shield" title=""></div>
+          <div class="slot" data-slot="legs" title=""></div>
+          <div class="slot" data-slot="boots" title=""></div>
+          <div class="slot" data-slot="extra" title=""></div>
+        </div>
+        <div id="cap-row"><span id="cap-icon">🎒</span> <span id="cap-text"></span></div>
+      </div>
+    </div>
+
+    <!-- Open container windows (backpack and any bags) are appended here. -->
+  </div>
+
+  <!-- Tibia-style button box: a grid of small SIMPLE-SYMBOL buttons (no emojis). -->
+  <div id="panel-btns">
+    <button id="btn-skills" class="panel-btn" title="Skills">≡</button>
+    <button id="btn-spells" class="panel-btn" title="Hechizos">✦</button>
+    <button id="btn-wiki" class="panel-btn" title="Wiki">?</button>
+    <button id="btn-cam" class="panel-btn" title="Cámara">◉</button>
+    <button id="btn-range" class="panel-btn" title="Rango">⊕</button>
+    <button id="hud-mute" class="panel-btn" title="Sonido">♪</button>
+  </div>
+</div>
+
+<!-- Touch-only on-screen controls (joystick + action buttons). Camera/range
+     toggles now live in the right panel's button box. -->
+<div id="controls-ui" class="hidden">
+  <div id="stick-base"><div id="stick-knob"></div></div>
+  <button id="btn-attack" class="round-btn touch-only" title="">⚔</button>
+  <button id="btn-jump" class="round-btn touch-only" title="">⬆</button>
+  <button id="btn-bag" class="round-btn touch-only" title="">🎒</button>
+</div>
+
+<div id="chat" class="hidden">
+  <div id="chat-log"></div>
+  <input id="chat-input" maxlength="160" autocomplete="off" class="hidden">
+</div>
+
+<div id="map-overlay" class="hidden">
+  <canvas id="bigmap" width="600" height="600"></canvas>
+  <div id="bigmap-coords"></div>
+  <div id="bigmap-hint">Drag to move · scroll / pinch to zoom</div>
+  <button id="bigmap-recenter" title="Recenter on player">⌖</button>
+  <button id="bigmap-close" title="Close">✕</button>
+</div>
+
+<div id="context-card" class="hidden"></div>
+
+<div id="creation">
+  <div id="creation-card">
+    <h1>MUNDUM</h1>
+    <p class="subtitle" data-i18n="createHero"></p>
+    <label class="field" data-i18n-label="name">
+      <input id="name-input" maxlength="16" autocomplete="off">
+    </label>
+    <div class="seg-row">
+      <div class="seg seg-prof" id="prof-seg">
+        <button data-prof="knight" class="selected" data-i18n="profKnight"></button>
+        <button data-prof="mage" data-i18n="profMage"></button>
+        <button data-prof="paladin" data-i18n="profPaladin"></button>
+        <button data-prof="druid" data-i18n="profDruid"></button>
+      </div>
+    </div>
+    <p id="prof-desc" class="prof-desc"></p>
+    <div class="seg-row">
+      <div class="seg" id="sex-seg">
+        <button data-sex="male" class="selected" data-i18n="male"></button>
+        <button data-sex="female" data-i18n="female"></button>
+      </div>
+    </div>
+    <div class="seg-row">
+      <div class="seg" id="hair-seg">
+        <button data-hair="short" class="selected" data-i18n="hairShort"></button>
+        <button data-hair="long" data-i18n="hairLong"></button>
+        <button data-hair="spiky" data-i18n="hairSpiky"></button>
+        <button data-hair="bald" data-i18n="hairBald"></button>
+      </div>
+    </div>
+    <div class="seg-row">
+      <div class="seg" id="nose-seg">
+        <button data-nose="small" class="selected" data-i18n="noseSmall"></button>
+        <button data-nose="round" data-i18n="noseRound"></button>
+        <button data-nose="pointy" data-i18n="nosePointy"></button>
+      </div>
+    </div>
+    <div class="seg-row">
+      <div class="seg" id="mouth-seg">
+        <button data-mouth="smile" class="selected" data-i18n="mouthSmile"></button>
+        <button data-mouth="neutral" data-i18n="mouthNeutral"></button>
+        <button data-mouth="open" data-i18n="mouthOpen"></button>
+      </div>
+    </div>
+    <div id="swatch-rows"></div>
+    <button id="btn-play">▶ &nbsp;<span data-i18n="play"></span></button>
+    <div id="lang-row">
+      <button data-lang="es" class="lang-btn">ES</button>
+      <button data-lang="en" class="lang-btn">EN</button>
+    </div>
+    <p class="tiny" data-i18n="phaseTag"></p>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
