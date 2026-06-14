@@ -616,7 +616,13 @@ const gameUI = new UI(panelRefs, inv, depot, {
   convertCoin: (id) => { const ok = inv.convertCoin(id); if (ok) { audio.sfx.pickup(); recompute(); } return ok; },
   buy: (def, refresh, price) => doBuy(def, refresh, price),
   sell: (i, npc, refresh) => doSell(i, npc, refresh),
-  depositItem: (city, i) => { const it = inv.removeFromBackpack(i); if (it) depot.deposit(city, it); recompute(); },
+  depositItem: (city, i) => {
+    // Don't pull the item out of the bag unless the vault has room (max 100).
+    if (depot.isFull(city)) { gameUI.toast(t('depotFull') || 'Depot full (100)', 'bad'); return; }
+    const it = inv.removeFromBackpack(i);
+    if (it && !depot.deposit(city, it)) inv.addToBackpack(it, player.level);  // safety: put back if it failed
+    recompute();
+  },
   withdrawItem: (city, i) => {
     const item = depot.withdraw(city, i);
     if (item && inv.addToBackpack(item, player.level) !== 'ok') depot.deposit(city, item);
@@ -1122,9 +1128,37 @@ async function connectOnline() {
   }
 
   net.onPeerUpdate((id, s) => peers.update(id, s));
-  net.onPeerLeave((id) => peers.remove(id));
+  net.onPeerLeave((id) => {
+    peers.remove(id);
+    if (trade && trade.peerId === id) { gameUI.toast(t('partnerLeft') || 'Partner left', 'bad'); endTrade(false); }
+  });
   net.onPeerJoin((id, meta) => { if (meta && meta.name) gameUI.toast(t('connected', meta.name)); });
   net.onChat((m) => addChatLine(m.name, m.text));
+
+  // Incoming trade request: a peer wants to trade. Auto-open the window if I'm
+  // free (a friendly kid game; no spam guard needed beyond one trade at a time).
+  net.onTradeRequest((fromId, payload) => {
+    if (trade) { net.respondTrade(fromId, false); return; }   // busy
+    trade = { peerId: fromId, peerName: (payload && payload.name) || 'Player', myOffer: [], theirOffer: [], iConfirmed: false, theirConfirmed: false };
+    net.respondTrade(fromId, true);
+    renderTrade();
+  });
+
+  // Live trade updates from the partner (offer changed / they confirmed / cancel).
+  net.onTradeUpdate((fromId, payload) => {
+    if (!trade || trade.peerId !== fromId || !payload) return;
+    if (payload.kind === 'offer') {
+      trade.theirOffer = Array.isArray(payload.items) ? payload.items.slice(0, MAX_TRADE_ITEMS) : [];
+      trade.iConfirmed = trade.theirConfirmed = false;   // their change resets both
+      renderTrade();
+    } else if (payload.kind === 'confirm') {
+      trade.theirConfirmed = true; renderTrade();
+    } else if (payload.kind === 'respond' && !payload.accept) {
+      gameUI.toast(t('tradeDeclined') || 'Trade declined', 'bad'); endTrade(false);
+    } else if (payload.kind === 'result') {
+      if (payload.ok) { for (const it of trade.theirOffer) inv.addToBackpack(it, player.level); gameUI.toast(t('tradeDone') || 'Trade complete', 'good'); endTrade(true); }
+    }
+  });
 
   // GM broadcasts reach everyone: a banner message, a summon (teleport me to a
   // point), or a kick (I've been banned — bounce me out).
@@ -1141,7 +1175,111 @@ async function connectOnline() {
   if (cloud) applyCloudSave(cloud);
 }
 
-// ===== Game Master =====
+// ===== Players: click to inspect, friends, trade =====
+
+// The player's FRIENDS list (names). Persisted with the character save so it
+// survives logout. A Set keeps it unique; serialized as a plain array.
+const friends = new Set();
+function isFriend(name) { return friends.has(name); }
+function addFriend(name) {
+  if (!name) return;
+  friends.add(name);
+  gameUI.toast(t('friendAdded') ? t('friendAdded', name) : `${name} added to friends`, 'good');
+  saveToAccount();
+}
+function removeFriend(name) {
+  if (friends.delete(name)) { gameUI.toast(`${name} removed`, 'info'); saveToAccount(); }
+}
+
+// Left-click reach for selecting another player (metres). A reusable raycaster
+// fires from the crosshair (screen centre) since the game is pointer-locked.
+const _peerRay = new THREE.Raycaster();
+const _peerCenter = new THREE.Vector2(0, 0);
+function tryClickPeer() {
+  if (!peers || peers.peers.size === 0) return false;
+  _peerRay.setFromCamera(_peerCenter, camera);
+  const hit = peers.raycast(_peerRay);
+  if (!hit) return false;
+  // Only inspect peers within a sensible reach (don't open someone across the map).
+  const d = Math.hypot(hit.peer.pos.x - player.pos.x, hit.peer.pos.z - player.pos.z);
+  if (d > 14) return false;
+  openPlayerInfo(hit.id, hit.peer);
+  return true;
+}
+
+// Open the player-info panel for a clicked peer: name, friend toggle, trade.
+function openPlayerInfo(id, peer) {
+  const name = peer.name || 'Player';
+  gameUI.openPlayerInfo({
+    id, name,
+    isFriend: isFriend(name),
+    onAddFriend: () => { addFriend(name); },
+    onRemoveFriend: () => { removeFriend(name); },
+    onTrade: () => { startTradeWith(id, name); },
+  });
+}
+
+// ----- Player-to-player TRADE (max 6 items per side) -----
+const MAX_TRADE_ITEMS = 6;
+let trade = null;   // active trade session or null
+
+function startTradeWith(peerId, peerName) {
+  if (trade) return;
+  trade = { peerId, peerName, myOffer: [], theirOffer: [], iConfirmed: false, theirConfirmed: false };
+  net.requestTrade(peerId);
+  renderTrade();
+}
+
+function renderTrade() {
+  if (!trade) { gameUI.closeContext(); return; }
+  gameUI.openTrade({
+    partnerName: trade.peerName,
+    myOffer: trade.myOffer, theirOffer: trade.theirOffer,
+    iConfirmed: trade.iConfirmed, theirConfirmed: trade.theirConfirmed,
+    onAdd: (i) => {
+      if (trade.myOffer.length >= MAX_TRADE_ITEMS) return;
+      const it = inv.backpack[i];
+      if (!it) return;
+      // Move the item out of the bag into the offer (so it can't be in two places).
+      inv.backpack.splice(i, 1);
+      trade.myOffer.push(it);
+      trade.iConfirmed = trade.theirConfirmed = false;  // changing the offer resets confirmations
+      net.setTradeOffer(trade.peerId, trade.myOffer);
+      recompute(); renderTrade();
+    },
+    onRemove: (i) => {
+      const it = trade.myOffer.splice(i, 1)[0];
+      if (it) inv.addToBackpack(it, player.level);
+      trade.iConfirmed = trade.theirConfirmed = false;
+      net.setTradeOffer(trade.peerId, trade.myOffer);
+      recompute(); renderTrade();
+    },
+    onConfirm: async () => {
+      trade.iConfirmed = true;
+      renderTrade();
+      const res = await net.confirmTrade(trade.peerId, trade.myOffer, trade.theirOffer);
+      if (res && res.ok) {
+        // Items I gave are already out of the bag; add what I received.
+        for (const it of trade.theirOffer) inv.addToBackpack(it, player.level);
+        gameUI.toast(t('tradeDone') || 'Trade complete', 'good');
+        endTrade(true);
+      } else if (res && res.reason !== 'offline') {
+        gameUI.toast(t('tradeFailed') || 'Trade failed', 'bad');
+      }
+    },
+    onCancel: () => { net.respondTrade(trade.peerId, false); endTrade(false); },
+  });
+}
+
+// Close the trade. On a non-completed cancel, return my offered items to the bag.
+function endTrade(completed) {
+  if (trade && !completed) {
+    for (const it of trade.myOffer) inv.addToBackpack(it, player.level);
+  }
+  trade = null;
+  recompute();
+  gameUI.closeContext();
+}
 
 // The connected players the GM can act on: each peer keyed by its network id,
 // with the latest name. Excludes the GM itself.
@@ -2162,7 +2300,12 @@ function tick() {
       // is lit by double-clicking it in the fire equip slot; F stays as a quick
       // keyboard shortcut for the same toggle.
       controls.consumeRightClick();
-      if (controls.consumeLeftClick() || controls.consumeAttack()) doAttack();
+      if (controls.consumeLeftClick() || controls.consumeAttack()) {
+        // Left-click on another PLAYER opens their info panel (add friend / trade)
+        // instead of attacking. Cast from the crosshair (screen centre, since the
+        // game is pointer-locked) and only catch peers within a short reach.
+        if (!tryClickPeer()) doAttack();
+      }
       if (controls.consumeToggleLight()) toggleTorch();
 
       const isNight = daynight.isNight();
@@ -2551,6 +2694,7 @@ function applyCharacterRow(row) {
   if (row.depot) depot.load(row.depot);
   if (row.stats) charStats.load(row.stats);
   if (row.quests) questLog.load(row.quests);
+  if (Array.isArray(row.friends)) { friends.clear(); for (const f of row.friends) friends.add(f); }
   applyVocationStats(true);
   if (row.pos && typeof row.pos.x === 'number') {
     player.spawnAt(row.pos.x, row.pos.z);
@@ -2566,7 +2710,7 @@ function saveToAccount() {
     level: player.level, exp: player.exp, gold: inv.gold,
     equipment: inv.serialize(), backpack: inv.backpack,
     depot: depot.serialize(), stats: charStats.serialize(),
-    quests: questLog.serialize(),
+    quests: questLog.serialize(), friends: [...friends],
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
   });
 }
