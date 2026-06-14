@@ -1021,7 +1021,7 @@ export class UI {
     const card = this.refs.contextCard;
     const store = this.depot.for(city.id);
     card.innerHTML = `<div class="ctx-head">${t('depot')} · ${city.name}</div>
-      <div class="ctx-sub">${t('depotHint')}</div>`;
+      <div class="ctx-sub">${t('depotHint')} (${store.length}/100)</div>`;
     const cols = document.createElement('div');
     cols.className = 'depot-cols';
 
@@ -1052,6 +1052,94 @@ export class UI {
     close.className = 'ctx-close';
     close.addEventListener('click', () => this.closeContext());
     card.appendChild(close);
+    card.classList.remove('hidden');
+  }
+
+  // Player-info panel shown when you left-click another player: their name, a
+  // friend toggle and a trade button.
+  openPlayerInfo(info) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">👤 ${info.name}</div>
+      <div class="ctx-sub">${t('playerInfo') || 'Jugador conectado'}</div>`;
+    const friendBtn = document.createElement('button');
+    friendBtn.className = 'ctx-action';
+    friendBtn.textContent = info.isFriend ? ('✓ ' + (t('removeFriend') || 'Quitar amigo')) : ('➕ ' + (t('addFriend') || 'Añadir amigo'));
+    friendBtn.addEventListener('click', () => {
+      if (info.isFriend) info.onRemoveFriend(); else info.onAddFriend();
+      this.closeContext();
+    });
+    const tradeBtn = document.createElement('button');
+    tradeBtn.className = 'ctx-action';
+    tradeBtn.textContent = '🤝 ' + (t('trade') || 'Intercambiar');
+    tradeBtn.addEventListener('click', () => { info.onTrade(); });
+    card.append(friendBtn, tradeBtn);
+    const close = document.createElement('button');
+    close.textContent = t('close'); close.className = 'ctx-close';
+    close.addEventListener('click', () => this.closeContext());
+    card.appendChild(close);
+    card.classList.remove('hidden');
+  }
+
+  // The trade window: your offer (up to 6 items picked from your backpack) on the
+  // left, the partner's offer on the right, with confirm/cancel. Hooks drive the
+  // networked negotiation; MAX 6 items per side.
+  openTrade(state) {
+    const MAX = 6;
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">🤝 ${t('trade') || 'Intercambio'} · ${state.partnerName}</div>
+      <div class="ctx-sub">${(t('tradeHint') || 'Máximo 6 objetos por lado')}</div>`;
+    const cols = document.createElement('div');
+    cols.className = 'depot-cols';
+
+    // Left: my backpack (click to add to offer) + my current offer.
+    const mine = document.createElement('div');
+    mine.innerHTML = `<div class="col-h">${t('yourOffer') || 'Tu oferta'} (${state.myOffer.length}/${MAX})</div>`;
+    state.myOffer.forEach((it, i) => {
+      const r = document.createElement('button');
+      r.className = 'depot-item ' + rarityClass(it);
+      r.innerHTML = `<span class="row-ico">${itemIcon(it)}</span> ${it.name} ✕`;
+      r.addEventListener('click', () => { state.onRemove(i); });
+      mine.appendChild(r);
+    });
+    const addH = document.createElement('div'); addH.className = 'col-h'; addH.textContent = t('backpack') || 'Mochila';
+    mine.appendChild(addH);
+    this.inv.backpack.forEach((it, i) => {
+      const r = document.createElement('button');
+      r.className = 'depot-item ' + rarityClass(it);
+      r.disabled = state.myOffer.length >= MAX;
+      r.innerHTML = `<span class="row-ico">${itemIcon(it)}</span> ${it.name}`;
+      r.addEventListener('click', () => { if (state.myOffer.length < MAX) state.onAdd(i); });
+      mine.appendChild(r);
+    });
+
+    // Right: the partner's offer (read-only).
+    const theirs = document.createElement('div');
+    theirs.innerHTML = `<div class="col-h">${state.partnerName}: ${(t('theirOffer') || 'su oferta')} (${state.theirOffer.length}/${MAX})</div>`;
+    state.theirOffer.forEach((it) => {
+      const r = document.createElement('div');
+      r.className = 'depot-item ' + rarityClass(it);
+      r.innerHTML = `<span class="row-ico">${itemIcon(it)}</span> ${it.name}`;
+      theirs.appendChild(r);
+    });
+
+    cols.append(mine, theirs);
+    card.appendChild(cols);
+
+    const status = document.createElement('div');
+    status.className = 'ctx-sub';
+    status.textContent = state.theirConfirmed ? (t('partnerReady') || 'El otro jugador está listo ✓') : '';
+    card.appendChild(status);
+
+    const confirm = document.createElement('button');
+    confirm.className = 'ctx-action';
+    confirm.textContent = state.iConfirmed ? ('✓ ' + (t('confirmed') || 'Confirmado')) : ('✅ ' + (t('confirmTrade') || 'Confirmar'));
+    confirm.disabled = state.iConfirmed;
+    confirm.addEventListener('click', () => state.onConfirm());
+    const cancel = document.createElement('button');
+    cancel.className = 'ctx-close';
+    cancel.textContent = t('cancel') || 'Cancelar';
+    cancel.addEventListener('click', () => state.onCancel());
+    card.append(confirm, cancel);
     card.classList.remove('hidden');
   }
 }
