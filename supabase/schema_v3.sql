@@ -34,6 +34,10 @@ begin
   end if;
 end $$;
 
+-- Friends list (an array of player names) persisted with the character so it
+-- survives logout. jsonb array, defaults to empty.
+alter table public.characters add column if not exists friends jsonb default '[]'::jsonb;
+
 
 -- A tiny single-row config table holding the GM's auth user id. RLS-locked so
 -- players may read it (the client can check "am I the GM?") but never write it.
