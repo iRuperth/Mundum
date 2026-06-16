@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { WEAPONS, ARMORS, CONTAINERS, POTIONS, LIGHTS } from './data/items.js';
+import { WEAPONS, ARMORS, CONTAINERS, POTIONS, LIGHTS, QUIVERS } from './data/items.js';
+import { stallLayout, buildStall, STALL_RADIUS } from './market.js';
 
 // Fixed city layout. Nominal positions are deterministic; each is then snapped
 // to the nearest flat grassland so cities never sit underwater. Every city has
@@ -41,20 +42,56 @@ export const CITIES = [
 export const CITY_STYLES = {
   capital:  { radius: 245, wall: 0xd8c9a8, wall2: 0xc6b48c, roof: 0x8e3f2c, roof2: 0x6e3b22, stone: 0xb9b2a2, pitched: true, castle: true, grid: true },
   // Oakvale — a big timbered forest town with green roofs and a great oak. Soft
-  // rounded heptagon.
-  village:  { radius: 110, wall: 0xcdb892, wall2: 0xb9a17e, roof: 0x6f8f3a, roof2: 0x55702c, stone: 0x9a9488, pitched: true,  castle: false, landmark: 'oak', shape: { sides: 7, rot: 0.2 } },
+  // rounded heptagon. Cozy small cottages with a handful of two-story mansions.
+  village:  { radius: 150, wall: 0xcdb892, wall2: 0xb9a17e, roof: 0x6f8f3a, roof2: 0x55702c, stone: 0x9a9488, pitched: true,  castle: false, landmark: 'oak', shape: { sides: 7, rot: 0.2 } },
   // Stonehaven — a slate-grey frozen mountain town with steep blue roofs. Angular
-  // hexagonal keep.
-  mountain: { radius: 108, wall: 0x9aa3ad, wall2: 0x808a96, roof: 0x49566a, roof2: 0x37425a, stone: 0x8d96a1, pitched: true,  castle: false, landmark: 'obelisk', shape: { sides: 6, rot: 0 } },
+  // hexagonal keep. Tall narrow houses, lots of 3-story stone keeps.
+  mountain: { radius: 152, wall: 0x9aa3ad, wall2: 0x808a96, roof: 0x49566a, roof2: 0x37425a, stone: 0x8d96a1, pitched: true,  castle: false, landmark: 'obelisk', shape: { sides: 6, rot: 0 } },
   // Dragonreach — a flat-roofed sandstone desert city: a hard PHARAONIC rectangle.
-  desert:   { radius: 112, wall: 0xe0c690, wall2: 0xcdaf76, roof: 0xc98b3e, roof2: 0xa66f2c, stone: 0xd2bd92, pitched: false, castle: false, landmark: 'pyramid', shape: { sides: 4, rot: Math.PI / 4, aspect: 1.35 } },
+  // Wide, low, flat-roofed blocks — broad mansions, no pitched roofs.
+  desert:   { radius: 158, wall: 0xe0c690, wall2: 0xcdaf76, roof: 0xc98b3e, roof2: 0xa66f2c, stone: 0xd2bd92, pitched: false, castle: false, landmark: 'pyramid', shape: { sides: 4, rot: Math.PI / 4, aspect: 1.35 } },
   // Westharbor — a teal-roofed river port with a lighthouse: a wide pentagon.
-  harbor:   { radius: 116, wall: 0xcfd6cf, wall2: 0xb6c2bd, roof: 0x2f7d77, roof2: 0x215c58, stone: 0x9aa6a4, pitched: true,  castle: false, landmark: 'lighthouse', shape: { sides: 5, rot: Math.PI, aspect: 1.2 } },
-  // Frostpeak — an icy mining outpost: a sharp DIAMOND.
-  frost:    { radius: 104, wall: 0xdfe9f0, wall2: 0xc4d4e0, roof: 0x7fb0cc, roof2: 0x5d90b4, stone: 0xbcccd6, pitched: true,  castle: false, landmark: 'icetower', shape: { sides: 4, rot: 0, aspect: 1 } },
-  // Sandport — an oasis town: an octagon around a palm pool.
-  oasis:    { radius: 110, wall: 0xe7c98c, wall2: 0xd2ad68, roof: 0x39a39a, roof2: 0x2b7d77, stone: 0xd8c193, pitched: false, castle: false, landmark: 'oasis', shape: { sides: 8, rot: Math.PI / 8 } },
+  // Mixed everything — the busiest, most varied silhouette of all the towns.
+  harbor:   { radius: 156, wall: 0xcfd6cf, wall2: 0xb6c2bd, roof: 0x2f7d77, roof2: 0x215c58, stone: 0x9aa6a4, pitched: true,  castle: false, landmark: 'lighthouse', shape: { sides: 5, rot: Math.PI, aspect: 1.2 } },
+  // Frostpeak — an icy mining outpost: a sharp DIAMOND. Steep-roofed and tall,
+  // packed tight against the cold.
+  frost:    { radius: 148, wall: 0xdfe9f0, wall2: 0xc4d4e0, roof: 0x7fb0cc, roof2: 0x5d90b4, stone: 0xbcccd6, pitched: true,  castle: false, landmark: 'icetower', shape: { sides: 4, rot: 0, aspect: 1 } },
+  // Sandport — an oasis town: an octagon around a palm pool. Low flat sand-brick
+  // homes, a few generous oasis mansions.
+  oasis:    { radius: 150, wall: 0xe7c98c, wall2: 0xd2ad68, roof: 0x39a39a, roof2: 0x2b7d77, stone: 0xd8c193, pitched: false, castle: false, landmark: 'oasis', shape: { sides: 8, rot: Math.PI / 8 } },
 };
+
+// Per-style house "recipe" — the knobs that make every round town read as its own
+// neighbourhood instead of the same ring of identical boxes. Each entry drives
+// buildRoundCity's house generator (and cityMapFeatures' map footprints, which
+// share roundHouseLots below):
+//   rings        : array of { f, gap } — ring radius as a fraction of R and the
+//                  angular phase offset, so towns differ in spacing/rhythm.
+//   baseW/baseD  : normal house footprint (a small per-house jitter is added).
+//   wallH        : ground-floor wall height (taller = grander streets).
+//   mansion      : fraction of lots that become MANSIONS (~2x footprint).
+//   twoStory     : fraction of the rest that are 2-story.
+//   threeStory   : fraction of the rest that are 3-story (only big lots qualify).
+//   basement     : fraction of the BIGGEST homes (mansion / 3-story) with a cellar.
+//   chimney/awning: how often those trims appear.
+// The fractions use a stable per-lot hash so a town looks the same every load.
+const ROUND_HOUSE_RECIPES = {
+  // Cozy forest village: small cottages, steep green roofs, a few proud mansions.
+  village:  { rings: [{ f: 0.84, gap: 0.40 }, { f: 0.64, gap: 0.95 }, { f: 0.44, gap: 1.55 }], baseW: 4.6, baseD: 4.6, wallH: 3.2, mansion: 0.14, twoStory: 0.30, threeStory: 0.06, basement: 0.20, chimney: 0.6, awning: 0.3 },
+  // Mountain keep-town: tall, narrow, steep slate roofs, lots of 3-story stone.
+  mountain: { rings: [{ f: 0.86, gap: 0.25 }, { f: 0.66, gap: 0.80 }, { f: 0.46, gap: 1.35 }], baseW: 4.2, baseD: 5.0, wallH: 3.8, mansion: 0.12, twoStory: 0.34, threeStory: 0.24, basement: 0.24, chimney: 0.75, awning: 0.1 },
+  // Desert blocks: wide, low, flat-roofed sandstone — broad mansions, no pitch.
+  desert:   { rings: [{ f: 0.83, gap: 0.50 }, { f: 0.62, gap: 1.05 }, { f: 0.41, gap: 1.70 }], baseW: 6.2, baseD: 5.4, wallH: 3.4, mansion: 0.20, twoStory: 0.22, threeStory: 0.08, basement: 0.20, chimney: 0.05, awning: 0.45 },
+  // Harbor: the most mixed town — every size and height, busy rooflines. A 4th
+  // inner ring (sparse, set via a low arc-density below) makes it the densest town.
+  harbor:   { rings: [{ f: 0.85, gap: 0.35 }, { f: 0.66, gap: 0.90 }, { f: 0.47, gap: 1.45 }, { f: 0.28, gap: 2.0, sparse: true }], baseW: 5.0, baseD: 5.0, wallH: 3.4, mansion: 0.18, twoStory: 0.30, threeStory: 0.14, basement: 0.22, chimney: 0.5, awning: 0.4 },
+  // Frost outpost: steep-roofed, tall and packed tight against the cold — also a
+  // 4-ring town, so the two snow/sea towns read denser than the others.
+  frost:    { rings: [{ f: 0.87, gap: 0.30 }, { f: 0.68, gap: 0.70 }, { f: 0.49, gap: 1.20 }, { f: 0.30, gap: 1.9, sparse: true }], baseW: 4.4, baseD: 4.8, wallH: 3.7, mansion: 0.10, twoStory: 0.36, threeStory: 0.18, basement: 0.20, chimney: 0.7, awning: 0.15 },
+  // Oasis: low flat sand-brick homes with a few generous mansions round the pool.
+  oasis:    { rings: [{ f: 0.82, gap: 0.55 }, { f: 0.61, gap: 1.10 }, { f: 0.40, gap: 1.65 }], baseW: 5.8, baseD: 5.2, wallH: 3.3, mansion: 0.22, twoStory: 0.20, threeStory: 0.06, basement: 0.18, chimney: 0.1, awning: 0.5 },
+};
+function houseRecipeFor(c) { return ROUND_HOUSE_RECIPES[c.style] || ROUND_HOUSE_RECIPES.village; }
 
 // The wall-outline polygon for a shaped town: `sides` world points around the
 // center at `radius`, rotated by shape.rot, squashed by shape.aspect on x. A
@@ -103,6 +140,7 @@ const TEMPLE_RADIUS = 5;
 const SHOP_RADIUS = 7;   // market hall is a big building; let you trade near it
 const DEPOT_RADIUS = 5;
 const PORTAL_RADIUS = 3.5;
+const HEAL_STATUE_RADIUS = 3;   // talk-to-heal range at the gate statue
 
 let citiesPlaced = false;
 
@@ -194,12 +232,13 @@ const buyableContainers = () => CONTAINERS.filter((c) => !c.shopTier || c.shopTi
 export function shopStock() {
   const weapons = WEAPONS.filter(buyable);
   const armors = ARMORS.filter(buyable);
+  const quivers = QUIVERS.filter(buyable);
   // Shops sell the flat-amount potions (not the rare % restores / elixirs).
   const potions = POTIONS.filter((p) => !p.restorePct);
   // Only the three shop-tier lights are sold (Torch, Glowing Pebble, Ruby); the
   // rest are quest rewards.
   const lights = LIGHTS.filter((l) => l.shopTier === 'shop');
-  return [...weapons, ...armors, ...buyableContainers(), ...potions, ...lights];
+  return [...weapons, ...armors, ...quivers, ...buyableContainers(), ...potions, ...lights];
 }
 
 // Normalize a def/instance to a coarse kind: 'weapon' | 'shield' | 'armor' |
@@ -210,6 +249,7 @@ function itemKind(it) {
   if (it.type === 'shield') return 'shield';
   if (it.type === 'container' || it.capacity != null) return 'container';
   if (['sword', 'axe', 'mace', 'lance', 'bow', 'wand'].includes(it.type)) return 'weapon';
+  if (it.type === 'quiver' || it.slot === 'quiver') return 'quiver';
   if (it.slot) return 'armor';
   return it.type || 'misc';
 }
@@ -232,6 +272,7 @@ export function shopStockFor(shop) {
   const sellable = [
     ...WEAPONS.filter(buyable),
     ...ARMORS.filter(buyable),
+    ...QUIVERS.filter(buyable),
     ...buyableContainers(),
     ...POTIONS.filter((p) => !p.restorePct),
   ];
@@ -377,6 +418,7 @@ export function buildCities(scene, world) {
   const props = [];
   const portals = [];
   const interiors = []; // { city, kind, x, z, y } — where a vendor NPC walks
+  const houses = [];    // flat list of round-town house lots (for interiors/basements)
   for (const c of CITIES) {
     const flat = c.groundY != null ? c.groundY : world.heightAt(c.x, c.z);
     const st = styleFor(c);
@@ -389,17 +431,53 @@ export function buildCities(scene, world) {
     // Two biome-themed soldiers stand watch at each gate of every city.
     buildGateGuards(group, c, flat);
 
+    // A healing statue just inside the main gate: talk to it to be patched up
+    // (low-level players only). Placed a couple of metres in from the first gate,
+    // facing into the town. Position returned for interaction + a map marker.
+    let healStatue = null;
+    const gates = cityGates(c);
+    if (gates.length) {
+      const g0 = gates[0];
+      const ox = g0.x - c.x, oz = g0.z - c.z;
+      const len = Math.hypot(ox, oz) || 1;
+      const dx = ox / len, dz = oz / len;          // outward (centre -> gate)
+      const sx = g0.x - dx * 3.5, sz = g0.z - dz * 3.5;   // 3.5m inside the gate
+      const face = Math.atan2(-dx, -dz);            // look inward (toward centre)
+      healStatue = buildHealStatue(group, world, sx, sz, flat, face, mats);
+    }
+
     for (const it of built.interiors) interiors.push(it);
+    if (built.houses) for (const h of built.houses) houses.push(h);
     portals.push({ city: c, mesh: built.portalMesh });
     props.push({
       city: c, temple: templePos(c),
       shop: built.shopPos, depot: built.depotPos, portal: built.portalPos,
       // Extra named POIs (bank, food, archer, townhall...) for the map markers.
       pois: built.pois || [],
+      // Free-market stalls (ring of { stallId, x, z, rot }) for interaction.
+      stalls: built.stalls || [],
+      // Gate healing statue ({ x, z }) — talk to it to heal (low level only).
+      healStatue,
     });
   }
   scene.add(group);
-  return { group, props, portals, interiors };
+  return { group, props, portals, interiors, houses };
+}
+
+// Nearest round-town house whose DOORWAY the player is standing at, else null.
+// `houses` is buildCities().houses; matches on the house's stored door world-pos
+// (doorX/doorZ, computed the same way buildHouse places the door) so the buy /
+// enter / descend prompt fires at the doorstep, not at the house centre. The
+// other module (house.js) calls this to know which lot to attach an interior to.
+export function houseLotAt(houses, x, z, radius = 2.2) {
+  if (!houses) return null;
+  let best = null, bestD2 = radius * radius;
+  for (const h of houses) {
+    const dx = h.doorX - x, dz = h.doorZ - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2) { bestD2 = d2; best = h; }
+  }
+  return best;
 }
 
 // Biome-themed soldier kit. Each city's guards wear gear that matches their
@@ -512,6 +590,61 @@ function buildGateGuards(group, city, flat) {
   }
 }
 
+// A benevolent HEALING STATUE for a city gate: a robed figure on a plinth
+// cradling a glowing green orb, with a soft green light and a faint aura ring, so
+// it reads as a shrine that tends weary low-level travellers. Talk to it (it's a
+// 'healStatue' interactable) to be patched up. Returns its position. `face` aims
+// the figure inward toward the city. Registers a small solid for the plinth.
+function buildHealStatue(group, world, x, z, y, face, mats) {
+  const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
+  const g = new THREE.Group();
+  // Tiered pedestal.
+  const step = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 1.8), mats.stoneDark);
+  step.position.set(0, 0.15, 0);
+  g.add(step);
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, 1.1, 12), mats.stone);
+  plinth.position.set(0, 0.85, 0);
+  g.add(plinth);
+  // A robed figure: a tapered robe body, rounded head, two arms cupped forward.
+  const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.62, 1.6, 12), mats.temple);
+  robe.position.set(0, 2.2, 0);
+  g.add(robe);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 10), mats.temple);
+  head.position.set(0, 3.15, 0);
+  g.add(head);
+  for (const s of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 8), mats.temple);
+    arm.position.set(s * 0.28, 2.45, 0.28);
+    arm.rotation.x = 1.1; arm.rotation.z = -s * 0.4;
+    g.add(arm);
+  }
+  // The glowing green healing orb cradled in the hands (additive so it reads as
+  // light), plus a soft halo and a point light.
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x66ffa0 }));
+  orb.position.set(0, 2.5, 0.55);
+  g.add(orb);
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x55ff88, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
+  halo.position.set(0, 2.5, 0.55);
+  g.add(halo);
+  const light = new THREE.PointLight(0x55ff88, 0.6, 8, 2);
+  light.position.set(0, 2.5, 0.55);
+  g.add(light);
+  // A faint aura ring on the ground so the heal zone reads from a distance.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.7, 24),
+    new THREE.MeshBasicMaterial({ color: 0x55ff88, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(0, 0.05, 0);
+  g.add(ring);
+
+  g.position.set(x, y, z);
+  g.rotation.y = face;
+  group.add(g);
+  if (world && world.addSolid) world.addSolid(x, z, 0.8);
+  return { x, z };
+}
+
 // A teleport portal ring + glowing disc at (x,z). Returns its mesh + position.
 function buildPortal(group, x, z, y, mats) {
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.3, 8, 18), mats.portal);
@@ -618,6 +751,76 @@ function buildLandmark(group, world, x, z, y, kind, mats) {
   }
 }
 
+// --- Round-town house layout (shared by builder + map) -----------------------
+// Deterministic per-city house plan. Returns one descriptor per house lot across
+// ALL the town's concentric rings — the SAME data the 3D builder and the minimap
+// read, so they never drift. Each town now packs 3-4 rings (was 2) to reach a
+// capital-sized ~45-55 houses, and the per-style ROUND_HOUSE_RECIPES knobs decide
+// each lot's size, height (1-3 floors), mansion-ness and basement. A small stable
+// hash per lot keeps the mix identical every load.
+// Descriptor: { x, z, rot, w, d, wallH, floors, mansion, basement, doorX, doorZ }.
+function roundHouseLots(c, R) {
+  const rec = houseRecipeFor(c);
+  const lots = [];
+  // FNV-ish stable hash of an index -> [0,1), so a town's mix is fixed per load.
+  const rand = (k) => {
+    let h = (k * 2654435761) ^ ((R | 0) * 40503) ^ 0x9e3779b9;
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+    h = (h ^ (h >>> 13)) >>> 0;
+    return h / 4294967296;
+  };
+  let hi = 0, bigCount = 0;
+  for (let ri = 0; ri < rec.rings.length; ri++) {
+    const ring = rec.rings[ri];
+    const rr = R * ring.f;
+    // Pack each ring at a roughly constant arc-spacing so inner rings hold fewer
+    // houses than outer ones and nothing overlaps; clamp so a town lands around
+    // capital-sized ~45-55 homes. `sparse` rings (the 4th ring of the densest
+    // towns) use a wider spacing so adding a ring doesn't blow past ~55.
+    const spacing = ring.sparse ? 20 : 13;
+    const n = Math.max(5, Math.min(18, Math.round((2 * Math.PI * rr) / spacing)));
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + ring.gap;
+      // Keep the gate corridors clear on the two OUTER rings (inner houses sit
+      // well clear of the gate openings already).
+      if (rr > R * 0.6 && nearAnyGate(a, ROUND_GATE_BEARINGS, 0.22)) continue;
+      // Four INDEPENDENT hash draws per lot so size/floors/basement don't
+      // correlate (a separate r4 for the basement, not the mansion roll).
+      const r1 = rand(hi * 11 + 1), r2 = rand(hi * 11 + 3), r3 = rand(hi * 11 + 5), r4 = rand(hi * 11 + 7);
+      const hx0 = c.x + Math.cos(a) * rr, hz0 = c.z + Math.sin(a) * rr;
+      const facing = Math.atan2(c.x - hx0, c.z - hz0); // door faces the plaza
+      const mansion = r1 < rec.mansion;
+      // Size: mansions get ~2x footprint; normals get the base + a little jitter.
+      let w = rec.baseW + (r2 * 1.6 - 0.4);
+      let d = rec.baseD + (r3 * 1.6 - 0.4);
+      if (mansion) { w *= 2.0 + r2 * 0.2; d *= 1.6 + r3 * 0.2; }
+      // Floors: mansions and 3-story candidates get extra storeys.
+      let floors = 1;
+      if (mansion) floors = r3 < 0.5 ? 2 : 3;
+      else if (r2 < rec.threeStory && (w >= 5 && d >= 5)) floors = 3;
+      else if (r2 < rec.threeStory + rec.twoStory) floors = 2;
+      // Basement only on the BIGGEST/best homes (mansion or 3-story), ~recipe% of
+      // THEM (its own r4 roll, so it's ~20% of big homes, not tied to mansion-ness).
+      // The FIRST big home in every town is always given a cellar so no town ends
+      // up with zero basements just from small-sample hash variance.
+      const big = mansion || floors >= 3;
+      if (big) bigCount++;
+      const basement = big && (bigCount === 1 || r4 < rec.basement);
+      // Door world-pos: replicate buildHouse (front +z face at d/2, post-rotation).
+      const fx = Math.sin(facing), fz = Math.cos(facing);
+      lots.push({
+        x: hx0, z: hz0, rot: facing, w, d, wallH: rec.wallH,
+        floors, mansion, basement,
+        chimney: r2 < rec.chimney, awning: r3 < rec.awning,
+        idx: (hi + ri) % 2, // alternates the wall/roof tone for stripe variety
+        doorX: hx0 + fx * (d / 2 + 0.02), doorZ: hz0 + fz * (d / 2 + 0.02),
+      });
+      hi++;
+    }
+  }
+  return lots;
+}
+
 // --- Small round town (Oakvale, Stonehaven, Dragonreach) ---------------------
 // The original radial layout: temple at center, themed districts at bearings,
 // a ring of homes, props and a stone wall with one gate.
@@ -668,30 +871,29 @@ function buildRoundCity(group, world, c, flat, mats, st) {
     if (dp) pois.push({ x: dx, z: dz, icon: dp.icon, label: dp.label });
   }
 
-  // Houses fill two concentric rings whose counts scale with the (now large)
-  // radius, so the big towns read as packed neighbourhoods, not a thin outer ring
-  // around an empty field. The outer ring sits just inside the wall; the inner
-  // ring at ~0.55R fills the mid-town. A couple of gaps are left for the gate.
-  const ringDefs = [
-    { rr: R * 0.80, n: Math.max(12, Math.round(R / 7)) },
-    { rr: R * 0.55, n: Math.max(8, Math.round(R / 11)) },
-  ];
-  let hi = 0;
-  for (const ring of ringDefs) {
-    for (let i = 0; i < ring.n; i++) {
-      const a = (i / ring.n) * Math.PI * 2 + 0.4;
-      // keep all three gate corridors clear on the outer ring
-      if (ring.rr > R * 0.7 && nearAnyGate(a, ROUND_GATE_BEARINGS, 0.22)) continue;
-      const hx = c.x + Math.cos(a) * ring.rr, hz = c.z + Math.sin(a) * ring.rr;
-      buildHouse(group, world, hx, hz, flat, {
-        w: 4.5 + (hi % 3), d: 4.5 + (hi % 2), wall: hi % 2 ? mats.wall : mats.wall2,
-        roof: hi % 2 ? mats.roof : mats.roof2, door: mats.door, glass: mats.glass,
-        beam: mats.beam, ridge: mats.ridge, stone: mats.stone, wood: mats.wood,
-        rot: Math.atan2(c.x - hx, c.z - hz), pitched: st.pitched, solid: true,
-        twoFloor: hi % 3 === 0, chimney: hi % 2 === 0,
-      });
-      hi++;
-    }
+  // Houses fill 3-4 concentric rings (via the shared roundHouseLots plan) so the
+  // big towns reach a capital-sized ~45-55 homes and read as packed
+  // neighbourhoods, not a thin outer ring around an empty field. Each lot's size,
+  // floor count, mansion-ness and basement come from the per-style recipe, so
+  // Oakvale ≠ Stonehaven ≠ Dragonreach. We collect a descriptor per house and
+  // return them so another module can attach interiors / basement stairs.
+  const houses = [];
+  const lots = roundHouseLots(c, R);
+  for (let i = 0; i < lots.length; i++) {
+    const L = lots[i];
+    buildHouse(group, world, L.x, L.z, flat, {
+      w: L.w, d: L.d, wallH: L.wallH, floors: L.floors, mansion: L.mansion,
+      wall: L.idx ? mats.wall : mats.wall2, wall2: L.idx ? mats.wall2 : mats.wall,
+      roof: L.idx ? mats.roof : mats.roof2, roof2: L.idx ? mats.roof2 : mats.roof,
+      door: mats.door, glass: mats.glass, beam: mats.beam, ridge: mats.ridge,
+      stone: mats.stone, stoneDark: mats.stoneDark, wood: mats.wood, awning: L.awning ? mats.awning : null,
+      rot: L.rot, pitched: st.pitched, solid: true, chimney: L.chimney,
+    });
+    houses.push({
+      id: `${c.id}:h${i}`, city: c.id, x: L.x, z: L.z, y: flat, rot: L.rot,
+      w: L.w, d: L.d, floors: L.floors, mansion: L.mansion, basement: L.basement,
+      style: c.style, doorX: L.doorX, doorZ: L.doorZ,
+    });
   }
 
   for (let i = 0; i < 10; i++) {
@@ -726,7 +928,14 @@ function buildRoundCity(group, world, c, flat, mats, st) {
   const portalPos = { x: c.x, z: c.z + 13 };
   const portal = buildPortal(group, portalPos.x, portalPos.z, flat, mats);
 
-  return { interiors, shopPos, depotPos, portalPos, portalMesh: portal.mesh, pois };
+  // Free-market stalls ring the market hall (the 'market' interior). They sit at
+  // STALL_RING_R (9m), well outside SHOP_RADIUS (7m), so touching a stall never
+  // collides with the shop interaction.
+  const marketCenter = market ? { x: market.x, z: market.z } : { x: c.x + 12, z: c.z };
+  const stalls = stallLayout(marketCenter.x, marketCenter.z);
+  for (const s of stalls) group.add(buildStall(s, flat, mats, world));
+
+  return { interiors, shopPos, depotPos, portalPos, portalMesh: portal.mesh, pois, houses, stalls };
 }
 
 // Map markers for a round town's themed districts and signature landmark, keyed
@@ -832,6 +1041,7 @@ function buildGridCity(group, world, c, flat, mats, st) {
   const { cell } = GRID;
   const interiors = [];
   const pois = [];
+  const houses = [];   // buyable house lots in the capital (same shape as round towns)
 
   // Grid cell (col,row) -> world center. Center cell is (0,0).
   const cellPos = (col, row) => ({ x: c.x + col * cell, z: c.z + row * cell });
@@ -852,13 +1062,18 @@ function buildGridCity(group, world, c, flat, mats, st) {
   buildProp(group, world, c.x - 8, c.z, flat, 'fountain', mats);
   buildProp(group, world, c.x + 8, c.z, flat, 'fountain', mats);
   buildProp(group, world, c.x, c.z + 9, flat, 'statue', mats);
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    buildProp(group, world, c.x + Math.cos(a) * 11, c.z + Math.sin(a) * 11, flat, i % 2 ? 'bench' : 'flowers', mats);
-    buildProp(group, world, c.x + Math.cos(a + 0.5) * 13, c.z + Math.sin(a + 0.5) * 13, flat, 'tree', mats);
-  }
+  // Portal first, so the plaza ring below can KEEP CLEAR of it (a ring tree used
+  // to land right on the portal and hide it).
   const portalPos = { x: c.x, z: c.z + cell * 0.5 };
   const portal = buildPortal(group, portalPos.x, portalPos.z, flat, mats);
+  const clearOfPortal = (x, z) => Math.hypot(x - portalPos.x, z - portalPos.z) > 4;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const bx = c.x + Math.cos(a) * 11, bz = c.z + Math.sin(a) * 11;
+    if (clearOfPortal(bx, bz)) buildProp(group, world, bx, bz, flat, i % 2 ? 'bench' : 'flowers', mats);
+    const tx = c.x + Math.cos(a + 0.5) * 13, tz = c.z + Math.sin(a + 0.5) * 13;
+    if (clearOfPortal(tx, tz)) buildProp(group, world, tx, tz, flat, 'tree', mats);
+  }
   buildNameLabel(group, c, flat + 20);
   // The capital keeps its castle, set back in the northern keep spur.
   if (st.castle) buildCastle(group, world, c.x, c.z + (CAPITAL_CELLS.minR - 0.3) * cell, flat, mats);
@@ -915,14 +1130,27 @@ function buildGridCity(group, world, c, flat, mats, st) {
     const w = big ? 9 + (seed % 3) : 6 + (seed % 3);
     const d = big ? 8 + ((seed >> 2) % 3) : 6 + ((seed >> 2) % 2);
     const twoFloor = big || r > 0.5;
+    const rot = row < 0 ? 0 : Math.PI;
     buildHouse(group, world, p.x, p.z, flat, {
       w, d, wallH: twoFloor ? 5.6 : 3.4,
       wall: (col + row) % 2 ? mats.wall : mats.wall2,
       roof: (col + row) % 2 ? mats.roof : mats.roof2,
       door: mats.door, glass: mats.glass, wood: mats.wood, awning: mats.awning,
       beam: mats.beam, ridge: mats.ridge, stone: mats.stone,
-      rot: row < 0 ? 0 : Math.PI,
+      rot,
       pitched: st.pitched, solid: true, twoFloor, chimney: r > 0.4,
+    });
+    // Make the capital's homes buyable too (players spawn here, so the housing
+    // feature has to be reachable from the home city, not only the round towns).
+    // Same descriptor shape as roundHouseLots; door pos replicates buildHouse
+    // (front +z face at d/2, post-rotation). ~30% of the bigger capital homes get
+    // a basement for extra value.
+    const fx = Math.sin(rot), fz = Math.cos(rot);
+    houses.push({
+      id: `${c.id}:h${col}_${row}`, city: c.id, x: p.x, z: p.z, y: flat, rot,
+      w, d, floors: twoFloor ? 2 : 1, mansion: big,
+      basement: big && ((seed >>> 7) % 10) < 3,
+      style: c.style, doorX: p.x + fx * (d / 2 + 0.02), doorZ: p.z + fz * (d / 2 + 0.02),
     });
     const yard = ['flowers', 'bush', 'planter', 'bench'][(seed >>> 5) % 4];
     const front = row < 0 ? 1 : -1;
@@ -949,7 +1177,11 @@ function buildGridCity(group, world, c, flat, mats, st) {
   // Decoration belt + a lamp-lit approach road outside the south gate.
   buildOutskirts(group, world, c.x, c.z, flat, cell, mats);
 
-  return { interiors, shopPos, depotPos, portalPos, portalMesh: portal.mesh, pois };
+  // Free-market stalls ring the market hall (shopPos), same as the round towns.
+  const stalls = stallLayout(shopPos.x, shopPos.z);
+  for (const s of stalls) group.add(buildStall(s, flat, mats, world));
+
+  return { interiors, shopPos, depotPos, portalPos, portalMesh: portal.mesh, pois, houses, stalls };
 }
 
 // A cell with no house: a themed little open lot full of greenery / props.
@@ -1283,26 +1515,61 @@ function makeStyleMats(st) {
   };
 }
 
-// A small house: a solid box with a roof, door and windows. Not enterable, so
-// when `solid` is set it registers one collision circle over its footprint.
+// A house: a solid box (or a stacked tower) with a roof, door and windows. Not
+// enterable in the mesh, so when `solid` is set it registers collision circles
+// over its footprint. Supports SIZE/HEIGHT variety for the bigger round towns:
+//   opts.floors  = 1 | 2 | 3   (number of storeys; defaults to twoFloor?2:1 for
+//                              backward-compatible capital/district callers)
+//   opts.mansion = true        (a grander home — extra collision + a taller roof)
+// Per-floor window rows and a cornice band between storeys are generated so a
+// 3-story house reads as three real levels, not one tall box.
 function buildHouse(group, world, x, z, y, opts = {}) {
-  const w = opts.w || 5, d = opts.d || 5, wallH = opts.wallH || 3.2;
+  const w = opts.w || 5, d = opts.d || 5;
   const rot = opts.rot || 0;
+  // Floors: explicit `floors` wins; else fall back to the old twoFloor flag (so
+  // every existing capital/district call renders exactly as before).
+  const floors = Math.max(1, Math.min(3, opts.floors || (opts.twoFloor ? 2 : 1)));
+  // Height contract (kept backward-compatible):
+  //  - NEW callers pass `floors` + a PER-FLOOR `wallH`; total = perFloor*floors.
+  //  - OLD callers (capital/districts) pass `wallH` as the TOTAL body height (or
+  //    nothing), with no `floors` field; we keep that total and derive perFloor
+  //    so per-storey windows/cornices still place correctly.
+  const wallH = opts.floors ? (opts.wallH || 3.2) * floors : (opts.wallH || 3.2);
+  const perFloor = wallH / floors;   // one storey's height
   // Relief tones: a dark timber beam and a roof-ridge cap. Fall back to the
   // wall/roof tones for callers that don't pass the dedicated relief mats.
   const beamMat = opts.beam || opts.wood || opts.door || opts.roof;
   const ridgeMat = opts.ridge || opts.roof;
+  const corniceMat = opts.stoneDark || opts.stone || ridgeMat;
   const wall = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, d), opts.wall);
   wall.position.set(x, y + wallH / 2, z);
   wall.rotation.y = rot;
   const pitched = opts.pitched !== false;
+  const roofH = pitched ? (opts.mansion ? 2.8 : 2.2) : 0.5;
   const roof = pitched
-    ? new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.8, 2.2, 4), opts.roof)
+    ? new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.8, roofH, 4), opts.roof)
     : new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.5, d + 0.4), opts.roof);
-  roof.position.set(x, y + wallH + (pitched ? 1.1 : 0.25), z);
+  roof.position.set(x, y + wallH + (pitched ? roofH / 2 : 0.25), z);
   roof.rotation.y = rot + (pitched ? Math.PI / 4 : 0);
   group.add(wall, roof);
-  if (opts.solid && world) world.addSolid(x, z, Math.max(w, d) * 0.5);
+  // Collision: a single circle leaves the rectangular footprint's CORNERS open
+  // (a box reaches hypot(w/2,d/2) at the corner, past a radius of max/2), which is
+  // how players slipped through house corners. Instead, tile the whole footprint
+  // with a grid of small overlapping circles so every corner and edge is solid.
+  if (opts.solid && world) {
+    const sxw = Math.cos(rot), szw = -Math.sin(rot);   // side axis (along width = w)
+    const fxw = Math.sin(rot), fzw = Math.cos(rot);    // front axis (along depth = d)
+    const cr = 0.95;                                    // per-cell collision radius
+    const nx = Math.max(1, Math.round(w / (cr * 1.5))); // cells across width
+    const nz = Math.max(1, Math.round(d / (cr * 1.5))); // cells across depth
+    for (let ix = 0; ix < nx; ix++) {
+      for (let iz = 0; iz < nz; iz++) {
+        const lw = (nx === 1) ? 0 : (ix / (nx - 1) - 0.5) * (w - cr);   // -w/2..+w/2 inset by radius
+        const ld = (nz === 1) ? 0 : (iz / (nz - 1) - 0.5) * (d - cr);
+        world.addSolid(x + sxw * lw + fxw * ld, z + szw * lw + fzw * ld, cr);
+      }
+    }
+  }
 
   // Local axes shared by every relief piece below: front normal + side axis.
   const fx = Math.sin(rot), fz = Math.cos(rot);   // front normal
@@ -1320,22 +1587,30 @@ function buildHouse(group, world, x, z, y, opts = {}) {
   // house grows out of solid ground instead of floating on the dirt.
   piece(0, 0.25, 0, w + 0.5, 0.5, d + 0.5, opts.stone || opts.door || beamMat);
 
-  // Half-timber frame: dark beams up the two front wall corners and a mid-band
-  // across the front, for the Tibian look. Kept to 3 thin boxes (front-facing
-  // only) so houses stay cheap when built in bulk.
+  // Half-timber frame: dark beams up the two front wall corners running the full
+  // height. Kept to a few thin front-facing boxes so houses stay cheap in bulk.
   for (const s of [-1, 1]) {
     piece(s * (w / 2 - 0.1), wallH / 2, d / 2 - 0.05, 0.2, wallH, 0.12, beamMat); // front corner posts
   }
-  piece(0, wallH * 0.5, d / 2 - 0.04, w, 0.22, 0.14, beamMat); // horizontal mid-band
+  // NEW multistory homes (round towns, which pass `floors`) get a stone cornice
+  // band at every floor line so the storeys read as separate masonry courses.
+  // OLD callers (capital/districts) keep the original single timber mid-band so
+  // they render exactly as before.
+  if (opts.floors && floors > 1) {
+    for (let f = 1; f < floors; f++) {
+      piece(0, perFloor * f, d / 2 - 0.04, w + 0.3, 0.24, 0.18, corniceMat);
+    }
+  } else {
+    piece(0, wallH * 0.5, d / 2 - 0.04, w, 0.22, 0.14, beamMat);
+  }
 
   if (pitched) {
     // A thin overhang eave just under the pyramid roof (a flat box a touch wider
-    // than the walls). A 4-sided cone is a pyramid with a POINT, not a ridge
-    // line, so instead of a bar across the top we cap the apex with a small
-    // finial knob — a horizontal ridge box would poke out past the slopes.
+    // than the walls), then a finial knob capping the apex (a 4-sided cone is a
+    // point, not a ridge, so a knob reads better than a ridge bar would).
     piece(0, wallH + 0.1, 0, w + 0.7, 0.18, d + 0.7, ridgeMat);
     const finial = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), ridgeMat);
-    finial.position.set(x, y + wallH + 2.3, z);
+    finial.position.set(x, y + wallH + roofH + 0.1, z);
     group.add(finial);
   } else {
     // Flat roof: a thin parapet rim around all four edges.
@@ -1354,32 +1629,41 @@ function buildHouse(group, world, x, z, y, opts = {}) {
   piece(0, 1.78, d / 2 + 0.05, 1.2, 0.16, 0.1, beamMat);          // lintel
   for (const s of [-1, 1]) piece(s * 0.55, 0.9, d / 2 + 0.05, 0.14, 1.7, 0.1, beamMat); // jambs
 
-  // Ground-floor windows flank the door; two-floor houses add an upper row.
-  const rows = opts.twoFloor ? [wallH * 0.42, wallH * 0.78] : [wallH * 0.62];
+  // Window rows: NEW multistory homes get one row per storey (mid-floor). OLD
+  // callers keep the exact original placement (one band, or the 0.42/0.78 split
+  // for twoFloor) so the capital/districts are pixel-for-pixel unchanged.
+  let rows;
+  if (opts.floors) {
+    rows = [];
+    for (let f = 0; f < floors; f++) rows.push(perFloor * f + perFloor * 0.6);
+  } else {
+    rows = opts.twoFloor ? [wallH * 0.42, wallH * 0.78] : [wallH * 0.62];
+  }
+  const cols = opts.mansion && w > 8 ? [-1, 0, 1] : [-1, 1];
   for (const wy of rows) {
-    for (const s of [-1, 1]) {
+    for (const s of cols) {
+      if (s === 0 && wy < perFloor) continue;            // ground-floor centre is the door
+      const ox = s * (w * (cols.length > 2 ? 0.32 : 0.28));
       const win = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.08), opts.glass);
       win.position.set(
-        x + fx * (d / 2 + 0.02) + sx * s * (w * 0.28),
+        x + fx * (d / 2 + 0.02) + sx * ox,
         y + wy,
-        z + fz * (d / 2 + 0.02) + sz * s * (w * 0.28));
+        z + fz * (d / 2 + 0.02) + sz * ox);
       win.rotation.y = rot;
       group.add(win);
       // Muntins: a cross of thin beams over the pane that splits it into four
-      // lights, plus a sill + lintel, so the window reads framed and recessed
-      // instead of a flat blue square.
-      const wox = sx * s * (w * 0.28), woz = sz * s * (w * 0.28);
+      // lights, plus a sill + lintel, so the window reads framed and recessed.
+      const wox = sx * ox, woz = sz * ox;
       const mull = (mw, mh) => {
         const b = new THREE.Mesh(new THREE.BoxGeometry(mw, mh, 0.1), beamMat);
         b.position.set(x + fx * (d / 2 + 0.05) + wox, y + wy, z + fz * (d / 2 + 0.05) + woz);
         b.rotation.y = rot; group.add(b);
       };
       mull(0.08, 0.86); mull(0.86, 0.08);                 // vertical + horizontal bar
-      piece(s * (w * 0.28), wy - 0.5, d / 2 + 0.04, 0.96, 0.1, 0.12, beamMat);  // sill
-      piece(s * (w * 0.28), wy + 0.5, d / 2 + 0.04, 0.96, 0.1, 0.1, beamMat);   // lintel
-      // Shutters either side of each window for a Tibian timbered look: a thin
-      // dark board flush against the wall on the outer side of the pane.
-      piece(s * (w * 0.28 + 0.55), wy, d / 2 + 0.03, 0.34, 0.9, 0.06, beamMat);
+      piece(ox, wy - 0.5, d / 2 + 0.04, 0.96, 0.1, 0.12, beamMat);  // sill
+      piece(ox, wy + 0.5, d / 2 + 0.04, 0.96, 0.1, 0.1, beamMat);   // lintel
+      // Shutters on the outer side of each pane for a Tibian timbered look.
+      if (s !== 0) piece(s * (w * 0.28 + 0.55), wy, d / 2 + 0.03, 0.34, 0.9, 0.06, beamMat);
     }
   }
   // A small awning over the door (uses the wood tone if provided).
@@ -1510,19 +1794,11 @@ export function cityMapFeatures(city) {
       const dd = R * dist.distF;
       buildings.push({ x: city.x + Math.cos(dist.angle) * dd, z: city.z + Math.sin(dist.angle) * dd, w: 9, d: 9 });
     }
-    // The two house rings (mirrors buildRoundCity's ringDefs + gate clearing).
-    const ringDefs = [
-      { rr: R * 0.80, n: Math.max(12, Math.round(R / 7)) },
-      { rr: R * 0.55, n: Math.max(8, Math.round(R / 11)) },
-    ];
-    let hi = 0;
-    for (const ring of ringDefs) {
-      for (let i = 0; i < ring.n; i++) {
-        const a = (i / ring.n) * Math.PI * 2 + 0.4;
-        if (ring.rr > R * 0.7 && nearAnyGate(a, ROUND_GATE_BEARINGS, 0.22)) continue;
-        buildings.push({ x: city.x + Math.cos(a) * ring.rr, z: city.z + Math.sin(a) * ring.rr, w: 4.5 + (hi % 3), d: 4.5 + (hi % 2) });
-        hi++;
-      }
+    // Every house lot, drawn from the SAME plan buildRoundCity uses (3-4 rings,
+    // mansion/multistory sizes, gate corridors cleared), so the map footprints
+    // match the real town exactly.
+    for (const L of roundHouseLots(city, R)) {
+      buildings.push({ x: L.x, z: L.z, w: L.w, d: L.d });
     }
     // Town hall block just north of the plaza.
     buildings.push({ x: city.x, z: city.z + 18, w: 9, d: 7 });
@@ -2411,33 +2687,108 @@ function buildNameLabel(group, city, y) {
   group.add(sprite);
 }
 
-// A small marble temple at the city center: stepped base, pillars and a roof.
+// A small marble temple at the city center: stepped base, columns and a roof.
+//
+// OPEN PAVILION collision. The old design had two bugs the user hit: (1) an
+// invisible perimeter wall registered FAR outside the drawn pillars snagged you
+// when walking PAST the temple ("se traba pasando cerca"); (2) that wall was a
+// thick ring of OVERLAPPING blockers, so a player standing in it counted as
+// _blocked, which trips player.js's stuck-escape clause and DISABLES collision —
+// letting you phase straight through ("se traspasa"). It also mis-used a stand-on
+// platform (dead code: the city flat-core resolves heightAt to `flat` before the
+// platform check), leaving the player sunk ~0.5m below the visible floor.
+//
+// The fix is a true open-sided gazebo: NO perimeter wall, ONLY the 8 columns are
+// solid, each solid sized to MATCH the drawn column (r=0.3) and spaced so the
+// blocked bands NEVER merge into a ring. Verified by a numerical solidAt sweep
+// (PLAYER_RADIUS=0.35): max solid radius 4.04m (INSIDE the 4.2m floor disc, so
+// nothing solid past the drawn stone → no snag); max azimuthal coverage 49% at
+// any radius (never a full ring → the stuck clause can never fire → no
+// phase-through); 1.37m clear gap between every pair of columns so you walk in
+// anywhere; interior fully standable; +Z straight-in path clear for the priest.
+// Geometry is lowered so the base/floor TOPS sit exactly at `flat` — you stand ON
+// the marble, no sink, no step (MAX_STEP never even matters).
 function buildTemple(group, cx, cz, flat, matTemple, matStone, world) {
+  // Base plinth: top sits at `flat` (centre flat-0.4, height 0.8). Cosmetic only.
   const base = new THREE.Mesh(new THREE.CylinderGeometry(5, 5.5, 0.8, 16), matStone);
-  base.position.set(cx, flat + 0.4, cz);
+  base.position.set(cx, flat - 0.4, cz);
   group.add(base);
+  // Floor disc: top sits at `flat` (centre flat-0.2, height 0.4) — flush with the
+  // ground the player actually walks on, so feet are ON the marble, not sunk in.
   const floor = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 0.4, 16), matTemple);
-  floor.position.set(cx, flat + 0.9, cz);
+  floor.position.set(cx, flat - 0.2, cz);
   group.add(floor);
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    const px = cx + Math.cos(a) * 3.4;
-    const pz = cz + Math.sin(a) * 3.4;
+
+  // 8 columns, rooted on the floor (bottom at `flat`, centre flat+2, height 4).
+  // Rotated a half-step (22.5°) so the FRONT (+Z, toward the steps / priest) lands
+  // in the GAP between two columns — a clear straight-in entrance.
+  const N = 8, R = 3.4, off = Math.PI / N;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + off;
+    const px = cx + Math.cos(a) * R;
+    const pz = cz + Math.sin(a) * R;
     const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 4, 8), matTemple);
-    pillar.position.set(px, flat + 3, pz);
+    pillar.position.set(px, flat + 2, pz);
     group.add(pillar);
-    // Each pillar is solid — you can walk between them and stand inside, but you
-    // can't pass through a column.
-    if (world) world.addSolid(px, pz, 0.42);
+    // Solid radius MATCHES the drawn column (0.3). Effective block 0.3+0.35=0.65m;
+    // column centres are 2π·3.4/8 = 2.67m apart >> 2·0.65=1.30m, so the blocked
+    // bands never merge into a ring (no stuck-blob), leaving a ~1.37m clear gap
+    // between every pair, and the outermost block reaches only 4.05m — inside the
+    // 4.2m floor disc, so there is no invisible wall to snag you when walking past.
+    if (world) world.addSolid(px, pz, 0.3);
   }
-  // The temple floor is a STAND-ON platform: stepping onto it lifts the player
-  // onto its top (~0.6 up) instead of letting them phase through the floor. The
-  // radius (3.8) stays INSIDE the floor disc (4.2) and clear of the priest NPC
-  // that stands at z=-4 by the steps, so that NPC isn't left sunk in the rim.
-  if (world) world.registerPlatform(cx, cz, flat + 0.6, 3.8);
+
+  // Roof cone lowered in tandem with the floor so the gazebo keeps its profile
+  // (apex ~flat+6.2, eaves at the column tops ~flat+4).
   const roof = new THREE.Mesh(new THREE.ConeGeometry(5, 2.4, 16), matTemple);
-  roof.position.set(cx, flat + 6.2, cz);
+  roof.position.set(cx, flat + 5, cz);
   group.add(roof);
+
+  // Healing AURA: a soft green glow on and around the temple so it reads as a
+  // sanctuary that mends you. A translucent ground disc, a faint dome of light,
+  // a ring of motes, and a warm green point light. Purely cosmetic; the actual
+  // ×10 regeneration is applied in main.js by temple proximity.
+  buildTempleAura(group, cx, cz, flat);
+}
+
+// The green healing aura around a temple. Grouped under `auraGroup` and tagged
+// so main.js can find it (userData.templeAura) and gently pulse it each frame.
+function buildTempleAura(group, cx, cz, flat) {
+  const aura = new THREE.Group();
+  aura.userData.templeAura = true;
+  const GREEN = 0x55ff88;
+  // A glowing disc lying on the temple floor (additive so it reads as light, not
+  // paint). Slightly above the marble to avoid z-fighting.
+  const discMat = new THREE.MeshBasicMaterial({
+    color: GREEN, transparent: true, opacity: 0.22,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(4.6, 32), discMat);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.set(cx, flat + 0.06, cz);
+  aura.add(disc);
+  // A soft translucent dome of light enclosing the gazebo.
+  const domeMat = new THREE.MeshBasicMaterial({
+    color: GREEN, transparent: true, opacity: 0.1,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(5, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
+  dome.position.set(cx, flat + 0.05, cz);
+  aura.add(dome);
+  // A ring of floating motes (little glowing specks) for a "blessing" feel.
+  const moteMat = new THREE.MeshBasicMaterial({ color: 0xbfffd4, blending: THREE.AdditiveBlending, depthWrite: false });
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2;
+    const rr = 3.6 + (i % 3) * 0.4;
+    const mote = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 6), moteMat);
+    mote.position.set(cx + Math.cos(a) * rr, flat + 0.6 + (i % 4) * 0.5, cz + Math.sin(a) * rr);
+    aura.add(mote);
+  }
+  // A warm green point light so nearby surfaces tint toward the heal colour.
+  const light = new THREE.PointLight(GREEN, 0.7, 14, 2);
+  light.position.set(cx, flat + 2.2, cz);
+  aura.add(light);
+  group.add(aura);
 }
 
 // Returns the interactable kind the player stands on, or null.
@@ -2446,6 +2797,19 @@ export function interactableAt(props, x, z) {
     if (Math.hypot(p.shop.x - x, p.shop.z - z) < SHOP_RADIUS) return { kind: 'shop', city: p.city };
     if (Math.hypot(p.depot.x - x, p.depot.z - z) < DEPOT_RADIUS) return { kind: 'depot', city: p.city };
     if (Math.hypot(p.portal.x - x, p.portal.z - z) < PORTAL_RADIUS) return { kind: 'portal', city: p.city };
+    // Gate healing statue — talk to it to be patched up (low-level only).
+    if (p.healStatue && Math.hypot(p.healStatue.x - x, p.healStatue.z - z) < HEAL_STATUE_RADIUS) {
+      return { kind: 'healStatue', city: p.city };
+    }
+    // Free-market stalls sit on a ring outside SHOP_RADIUS, so they never clash
+    // with the shop interaction. Touch one to open / browse it.
+    if (p.stalls) {
+      for (const s of p.stalls) {
+        if (Math.hypot(s.x - x, s.z - z) < STALL_RADIUS) {
+          return { kind: 'stall', stallId: s.stallId, city: p.city };
+        }
+      }
+    }
   }
   return null;
 }
