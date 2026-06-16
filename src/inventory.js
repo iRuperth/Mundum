@@ -480,13 +480,26 @@ export class Inventory {
 }
 
 // Per-city depot storage. Items in one city's depot are not in another's.
+// Each city's depot (bank vault) holds up to DEPOT_CAPACITY items. A bigger
+// vault than the backpack so it's the place to stash loot between trips.
+export const DEPOT_CAPACITY = 100;
+
 export class DepotStore {
   constructor() { this.cities = {}; }
   for(city) {
     if (!this.cities[city]) this.cities[city] = [];
     return this.cities[city];
   }
-  deposit(city, item) { this.for(city).push(item); }
+  // How full a city's vault is, and whether it can take one more item.
+  count(city) { return this.for(city).length; }
+  isFull(city) { return this.for(city).length >= DEPOT_CAPACITY; }
+  // Deposit returns true on success, false if the vault is full (100 items).
+  deposit(city, item) {
+    const list = this.for(city);
+    if (list.length >= DEPOT_CAPACITY) return false;
+    list.push(item);
+    return true;
+  }
   withdraw(city, index) { return this.for(city).splice(index, 1)[0] || null; }
   serialize() { return this.cities; }
   load(data) { if (data && typeof data === 'object') this.cities = data; }
