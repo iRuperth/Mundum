@@ -1390,6 +1390,11 @@ async function startGame() {
 
   connectOnline();
 
+  // Free market: claim any sales made while we were offline (credits gold to the
+  // character row, then shows a "X bought your item" toast for each). Uses the
+  // account session (auth), independent of the realtime net session above.
+  claimMarketPayouts();
+
   // Ambient bots: fake players that populate the cities and zones. Built once;
   // they have no HP and live entirely client-side.
   if (place === 'surface' && !bots.bots.length) bots.spawn(CITIES, ZONES, { lang: getLang() });
