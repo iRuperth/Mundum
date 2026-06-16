@@ -47,6 +47,8 @@ export class Net {
       gmSummon: null,    // teleport me to a world position
       gmKick: null,      // I have been banned: leave the world
       disconnect: null,  // the realtime channel dropped after connecting
+      houseSync: null,   // a player published their house state (colours/items)
+      houseInside: null, // a player entered/left their own house
     };
 
     // outgoing position throttle
@@ -128,6 +130,8 @@ export class Net {
       .on('broadcast', { event: 'gm_announce' }, ({ payload }) => this._onGmAnnounce(payload))
       .on('broadcast', { event: 'gm_summon' }, ({ payload }) => this._onGmSummon(payload))
       .on('broadcast', { event: 'gm_kick' }, ({ payload }) => this._onGmKick(payload))
+      .on('broadcast', { event: 'house_sync' }, ({ payload }) => this._onHouseSync(payload))
+      .on('broadcast', { event: 'house_inside' }, ({ payload }) => this._onHouseInside(payload))
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
         if (key === id) return;
         const meta = (newPresences && newPresences[0]) || {};
@@ -214,6 +218,18 @@ export class Net {
   _onGmKick(payload) {
     if (!payload || payload.to !== this.user.id) return;
     if (this._cb.gmKick) this._cb.gmKick(payload);
+  }
+
+  // House broadcasts. house_sync carries a player's public house snapshot so
+  // others can render a visit; house_inside flags when an owner is home. Houses
+  // are display-only now — selling moved to the city free market.
+  _onHouseSync(payload) {
+    if (!payload || payload.from === this.user.id) return;
+    if (this._cb.houseSync) this._cb.houseSync(payload.from, payload);
+  }
+  _onHouseInside(payload) {
+    if (!payload || payload.from === this.user.id) return;
+    if (this._cb.houseInside) this._cb.houseInside(payload.from, payload);
   }
 
   // The local player's own auth id (used to map peers / identify self). Null
@@ -368,6 +384,33 @@ export class Net {
     }
     return names;
   }
+
+  // houses
+  //
+  // A player's house (colours, light, the items on display and the ban list) is
+  // broadcast so others can walk to the door and visit the real room. Houses are
+  // display-only — selling moved to the city free market (see auth.js market_*
+  // methods). All ephemeral over Realtime — durable persistence is the owner's
+  // own account save.
+
+  // Publish my house's public state to everyone (call on edit / item changes).
+  houseSync(state) {
+    if (!this._online || !this.channel) return;
+    const last = this._lastHouseSync;
+    // Keep the latest snapshot so a late-joining peer can be answered on join.
+    this._lastHouseSync = state;
+    this.channel.send({ type: 'broadcast', event: 'house_sync', payload: { from: this.user.id, ...state } });
+    void last;
+  }
+
+  // Flag that I just entered / left my own house (so visitors know it's occupied).
+  houseInside(lotId, inside) {
+    if (!this._online || !this.channel) return;
+    this.channel.send({ type: 'broadcast', event: 'house_inside', payload: { from: this.user.id, lotId, inside: !!inside } });
+  }
+
+  onHouseSync(cb) { this._cb.houseSync = cb; }
+  onHouseInside(cb) { this._cb.houseInside = cb; }
 
   // trade
   //
