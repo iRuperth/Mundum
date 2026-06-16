@@ -5,12 +5,14 @@ import { Controls } from './controls.js';
 import { DayNight } from './daynight.js';
 import { HAIR_STYLES } from './character.js';
 import { initLang, getLang, setLang, applyStaticDom, t } from './i18n.js';
-import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor } from './inventory.js';
+import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor, instanceFromQuiver } from './inventory.js';
 import { EquipVisuals, buildWeaponMesh, buildArrowMesh } from './equipVisuals.js';
-import { wandColorForLevel, coinLootLabel } from './data/items.js';
+import { wandColorForLevel, coinLootLabel, mmCoins } from './data/items.js';
 import { CombatSystem } from './combat.js';
 import { PlayerStatus } from './statusEffects.js';
-import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, CITIES } from './cities.js';
+import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, CITIES, houseLotAt } from './cities.js';
+import { HouseStore, HouseInterior, housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, buildForSaleSign, buildExteriorSkin, buildFacadeDisplay, FACADE_SLOTS } from './house.js';
+import { MarketStore, MarketDisplay, STALL_CAP } from './market.js';
 import { Minimap } from './minimap.js';
 import { UI } from './ui.js';
 import { Peers } from './peers.js';
@@ -347,6 +349,25 @@ placeCities(world);
 const citiesBuild = buildCities(scene, world);
 const cityProps = citiesBuild.props;
 const citiesGroup = citiesBuild.group;
+// Temple healing auras (tagged in cities.js), collected once so the tick can
+// gently pulse them without traversing the whole city group every frame.
+const templeAuras = [];
+citiesGroup.traverse((o) => { if (o.userData && o.userData.templeAura) templeAuras.push(o); });
+// Buyable house lots in the round towns (cities.js owns the shells; house.js
+// owns ownership, interiors and decoration). The player owns at most one.
+const houseLots = citiesBuild.houses || [];
+const houseLotById = new Map(houseLots.map((h) => [h.id, h]));
+const houseStore = new HouseStore();
+// Free market: cache each city's stall ring (positions built in cities.js) so
+// interacting can find the stall the player stands at. The stall CONTENTS live
+// in Supabase (auth.js market_* methods), never here.
+const marketStore = new MarketStore();
+for (const p of cityProps) marketStore.setLayout(p.city.id, p.stalls || []);
+// The 3D goods shown ON the stall counters (rebuilt per city as listings load).
+const marketDisplay = new MarketDisplay(scene, marketStore);
+// Ground height per city, so stall goods stand at the right level.
+const cityGroundY = new Map();
+for (const c of CITIES) cityGroundY.set(c.id, c.groundY != null ? c.groundY : world.heightAt(c.x, c.z));
 const dungeonBuild = buildDungeonEntrances(scene, world);
 const dungeonEntrances = dungeonBuild.entrances;
 const dungeonChests = dungeonBuild.chests;
@@ -587,9 +608,22 @@ let _cloudSavedAt = 0;       // updated_at (ms) of the cloud row applied this se
 
 // Cave/underground state (see caves.js). 'surface' or 'cave'.
 // NB: named `place`, not `location`, so it never shadows window.location.
+// 'surface', 'cave', or 'house' (inside an instanced house interior).
 let place = 'surface';
 let activeCave = null;
 let caveTransitioning = false;
+// House interior state. activeHouse is the HouseInterior the player is inside;
+// houseReturn is where they spawn back outside; activeHouseLot is its lot.
+let activeHouse = null;
+let activeHouseLot = null;
+let houseTransitioning = false;
+const houseReturn = new THREE.Vector3();
+let _camBeforeHouse = false;   // outdoor camera mode, restored when leaving a house
+// Remote visitors' house snapshots: lotId -> { owner, colors, light, walls, bans }.
+const visitedHouses = new Map();
+// The exterior dressing (for-sale signs + the owner's recolour skin) added to the
+// surface, rebuilt whenever ownership / colours change.
+let houseExteriorGroup = null;
 // Which floor the cave minimap is currently SHOWING (lets you peek up/down a
 // floor on the map without moving). Reset to the player's floor on each descent.
 let caveViewFloor = 0;
@@ -744,6 +778,14 @@ const gameUI = new UI(panelRefs, inv, depot, {
     if (item && inv.addToBackpack(item, player.level) !== 'ok') depot.deposit(city, item);
     recompute();
   },
+  // --- House hooks (display-only showcase items; selling moved to the market) ---
+  houseStore: () => houseStore,
+  houseHangItem: (wallId, index, bpIndex) => houseHangItem(wallId, index, bpIndex),
+  houseTakeItem: (wallId, index) => houseTakeItem(wallId, index),
+  // --- Free-market hooks (place item, take it back, buy from a stall) ---
+  marketPlace: (stall, bpIndex, price) => marketPlace(stall, bpIndex, price),
+  marketTake: (listingId, stall) => marketTake(listingId, stall),
+  marketBuy: (listingId, item, price, stall) => marketBuy(listingId, item, price, stall),
 });
 
 const minimapCanvas = document.getElementById('minimap');
@@ -1292,6 +1334,7 @@ async function startGame() {
   giveStarterGear();
   if (player.level >= 20) upgradeTorchToBright();   // already past 20 on load → bright torch
   recompute();
+  refreshHouseExteriors();   // FOR SALE signs + the owner's recolour skin
   gameUI.setName(profile.name);
   onQuestProgress();
 
@@ -1453,6 +1496,33 @@ async function connectOnline() {
     gameUI.toast('✨ The GM summoned you');
   });
   net.onGmKick(async () => { await net.disconnect(); showBanScreen(); });
+
+  // Houses: a peer published their house → remember its public snapshot so the
+  // local player can walk to that lot's door and visit. ownerId is carried so a
+  // visitor's purchase can route back to the owner.
+  net.onHouseSync((fromId, snap) => {
+    if (!snap || !snap.lotId) {
+      // The owner gave up / sold: drop any snapshot they previously published.
+      for (const [lotId, s] of visitedHouses) if (s.ownerId === fromId) visitedHouses.delete(lotId);
+      refreshHouseExteriors();
+      return;
+    }
+    visitedHouses.set(snap.lotId, { ...snap, ownerId: fromId });
+    // If we're currently visiting this very house, refresh the live room.
+    if (place === 'house' && activeHouseLot && activeHouseLot.id === snap.lotId && activeHouse && activeHouse.readOnly) {
+      activeHouse.state = visitedHouses.get(snap.lotId);
+      activeHouse.rebuild();
+    }
+    refreshHouseExteriors();
+  });
+  net.onHouseInside((fromId, payload) => {
+    // Purely informational for now (could show "X is home"); snapshot already
+    // tells us the house exists. Kept as a hook for future presence polish.
+    void fromId; void payload;
+  });
+
+  // On connect, publish our own house so already-online peers can see it.
+  broadcastHouse();
 
   // NOTE: the authoritative cloud copy of this character (exp/gold/items) is the
   // ACCOUNT row, already fetched at character-select via auth.listCharacters and
@@ -2939,8 +3009,12 @@ function screenFade(toBlack) {
   });
 }
 
-// The active world provider for height/camera math (surface or cave).
-function activeWorld() { return place === 'cave' ? activeCave : world; }
+// The active world provider for height/camera math (surface, cave or house).
+function activeWorld() {
+  if (place === 'cave') return activeCave;
+  if (place === 'house') return activeHouse;
+  return world;
+}
 
 // The minimap's underground context, or null on the surface. Carries the floor
 // the player is on, the floor the map is currently SHOWING (caveViewFloor, which
@@ -2967,12 +3041,207 @@ function pageCaveMap(dir) {
   caveViewFloor = Math.max(0, Math.min(activeCave.floorCount - 1, caveViewFloor + dir));
 }
 
+// --- Houses: buy, enter, exit, decorate -----------------------------------
+
+// Rebuild the surface exterior dressing: a FOR SALE sign over every unowned lot
+// the local player could buy, and the owner's recolour skin over their own house.
+// Cheap enough to rebuild whenever ownership or colours change.
+function refreshHouseExteriors() {
+  if (houseExteriorGroup) { scene.remove(houseExteriorGroup); houseExteriorGroup = null; }
+  const g = new THREE.Group();
+  for (const lot of houseLots) {
+    if (houseStore.ownsLot(lot.id)) {
+      g.add(buildExteriorSkin(lot, houseStore.colors));
+      // The owner's facade: up to two display items on the front wall.
+      g.add(buildFacadeDisplay(lot, houseStore.facade));
+    } else if (visitedHouses.has(lot.id)) {
+      // A neighbour's house we've seen over the network: show their facade items
+      // so passers-by see the best pieces without entering. Display-only.
+      const snap = visitedHouses.get(lot.id);
+      if (snap && Array.isArray(snap.facade)) g.add(buildFacadeDisplay(lot, snap.facade));
+    } else if (!houseStore.ownsAny()) {
+      // Only advertise FOR SALE while the player owns nothing (one house each).
+      // The board just says "En venta"/"For sale"; the price + buy shows when you
+      // walk to the door and press E (openHouseBuy).
+      g.add(buildForSaleSign(lot, t('houseForSale')));
+    }
+  }
+  houseExteriorGroup = g;
+  scene.add(g);
+  g.visible = place === 'surface';
+}
+
+// The lot the player is standing at the doorstep of, or null.
+function houseAtPlayer() {
+  // 3.2m doorstep radius: the house's own solid (footprint circle) stops the
+  // player ~0.3m short of a normal door and further for wide mansions, so the
+  // detection radius has to be generous enough to fire while you're pressed up
+  // against the front wall by the door. Houses are ring-spaced several metres
+  // apart, so this never picks the wrong house.
+  return houseLotAt(houseLots, player.pos.x, player.pos.z, 3.2);
+}
+
+// Buy the lot the player is at. One house per player; deduct gold by size.
+function buyHouse(lot) {
+  if (houseStore.ownsAny()) { gameUI.toast(t('houseAlreadyOwn'), 'bad'); return; }
+  const price = housePrice(lot);
+  if (inv.gold < price) { gameUI.toast(t('noGold'), 'bad'); return; }
+  inv.spendGold(price);
+  player.gold = inv.gold;
+  houseStore.buy(lot);
+  audio.sfx.levelUp();
+  const cityName = (CITIES.find((c) => c.id === lot.city) || {}).name || '';
+  gameUI.toast(t('houseBought', cityName), 'levelup');
+  recompute();
+  refreshHouseExteriors();
+  persistProgress();
+  broadcastHouse();
+  gameUI.closeContext();
+}
+
+// Enter a house interior (your own, or a visit to someone else's snapshot).
+async function enterHouse(lot, state, opts = {}) {
+  if (houseTransitioning || place !== 'surface') return;
+  houseTransitioning = true;
+  await screenFade(true);
+  // Spawn back just outside the door on exit. The house footprint is now FULLY
+  // solid (buildHouse tiles the whole box with collision circles, reaching to
+  // ~max(w,d)/2 + ~0.5 along the front axis), so spawning AT the doorstep
+  // (lot.doorX/doorZ) drops the player against/inside that solid and they get
+  // stuck. Push the return point OUT along the door's outward normal — the front
+  // face direction (fx, fz), same axis buildHouse uses to place the door — far
+  // enough to clear the footprint plus the player's body radius, and nudge it
+  // further out if that landing spot still reports solid.
+  {
+    const rot = lot.rot || 0;
+    const fx = Math.sin(rot), fz = Math.cos(rot);          // outward door normal
+    const clear = Math.max(lot.w || 5, lot.d || 5) / 2 + 1.5; // footprint half + body
+    let rx = lot.doorX + fx * clear;
+    let rz = lot.doorZ + fz * clear;
+    // If we'd still land in a solid (a neighbouring wall, a fence, a slope), keep
+    // stepping outward along the normal until we find clear ground.
+    for (let extra = 0; extra < 8 && world.solidAt(rx, rz, 0.4); extra++) {
+      rx += fx * 0.6; rz += fz * 0.6;
+    }
+    houseReturn.set(rx, world.heightAt(rx, rz) + 0.2, rz);
+  }
+  combat.clear();
+  mounts.dismount();
+
+  if (activeHouse) activeHouse.dispose();
+  activeHouse = new HouseInterior(scene, lot, state, { readOnly: !!opts.readOnly });
+  activeHouseLot = lot;
+  setSurfaceVisible(false);
+  if (houseExteriorGroup) houseExteriorGroup.visible = false;
+  activeHouse.setVisible(true);
+  savedFog = scene.fog; savedBg = scene.background;
+  scene.fog = null;
+  scene.background = new THREE.Color(0x14110d);
+
+  player.world = activeHouse;
+  combat.world = activeHouse;
+  const entry = activeHouse.entryPoint();
+  player.spawnAt(entry.x, entry.z);
+  player.yaw = entry.yaw;
+  place = 'house';
+  // The room is small; a third-person pull-back fights the walls and shows the
+  // black void outside. Force FIRST person indoors so you always see the lit
+  // room, and remember the outdoor camera mode to restore it on the way out.
+  _camBeforeHouse = firstPerson;
+  firstPerson = true; introCam = 0;
+  audio.setMood('overworld');
+  const title = opts.readOnly
+    ? t('houseOwnerOf', state.owner || t('houseName'))
+    : t('houseYours');
+  gameUI.toast('🏠 ' + title);
+  if (!opts.readOnly) broadcastHouseInside(lot.id, true);
+  await screenFade(false);
+  houseTransitioning = false;
+}
+
+// Walk-out check: at the interior door → leave; on the basement stair → swap floor.
+async function maybeLeaveHouse() {
+  if (houseTransitioning || place !== 'house' || !activeHouse) return;
+  // Basement stair.
+  const stair = activeHouse.stairTrigger();
+  if (stair && activeHouse.activeFloor === 0
+      && Math.hypot(player.pos.x - stair.x, player.pos.z - stair.z) < stair.r) {
+    houseTransitioning = true;
+    await screenFade(true);
+    const land = activeHouse.enterBasement();
+    player.spawnAt(land.x, land.z); player.yaw = land.yaw;
+    await screenFade(false);
+    houseTransitioning = false;
+    return;
+  }
+  // From the basement, the same stair goes back up.
+  if (stair && activeHouse.activeFloor === 1
+      && Math.hypot(player.pos.x - stair.x, player.pos.z - stair.z) < stair.r) {
+    houseTransitioning = true;
+    await screenFade(true);
+    const land = activeHouse.enterGround();
+    player.spawnAt(land.x, land.z); player.yaw = land.yaw;
+    await screenFade(false);
+    houseTransitioning = false;
+    return;
+  }
+  // Exit door (ground floor only). Instead of auto-firing when you brush the
+  // doorway (which felt buggy and could re-trigger), ask "leave?" once while
+  // you're at the door; on Yes, teleport OUTSIDE. The prompt is shown once per
+  // approach (cleared when you step away) so it never spams.
+  if (activeHouse.activeFloor !== 0) { _exitPromptShown = false; return; }
+  const ex = activeHouse.exitTrigger();
+  const atDoor = Math.hypot(player.pos.x - ex.x, player.pos.z - ex.z) < ex.r;
+  if (atDoor && !_exitPromptShown && !houseTransitioning) {
+    _exitPromptShown = true;
+    gameUI.confirmPrompt('🚪 ' + (t('houseLeaveTitle') || 'Salir de la casa'),
+      t('houseLeavePrompt') || '¿Quieres salir?',
+      t('houseLeave') || 'Salir',
+      async () => { if (houseTransitioning) return; houseTransitioning = true; await exitHouse(); houseTransitioning = false; });
+  } else if (!atDoor) {
+    _exitPromptShown = false;   // stepped away from the door: allow the prompt again next time
+  }
+}
+let _exitPromptShown = false;
+
+async function exitHouse() {
+  await screenFade(true);
+  const wasOwn = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+  const leftId = activeHouseLot ? activeHouseLot.id : null;
+  if (activeHouse) { activeHouse.dispose(); activeHouse = null; }
+  setSurfaceVisible(true);
+  if (houseExteriorGroup) houseExteriorGroup.visible = true;
+  if (savedFog !== null) scene.fog = savedFog;
+  if (savedBg) scene.background = savedBg;
+  player.world = world;
+  combat.world = world;
+  place = 'surface';
+  firstPerson = _camBeforeHouse; introCam = 0;   // restore the outdoor camera mode
+  player.spawnAt(houseReturn.x, houseReturn.z);
+  player.yaw = 0;
+  world.update(player.pos.x, player.pos.z, true);
+  audio.setMood('overworld');
+  activeHouseLot = null;
+  if (wasOwn && leftId) broadcastHouseInside(leftId, false);
+  await screenFade(false);
+}
+
+// Re-hang / repaint the live interior after the owner changes colours, light or
+// items, so edits show immediately without leaving the house.
+function refreshActiveHouse() {
+  if (place === 'house' && activeHouse && !activeHouse.readOnly) {
+    activeHouse.state = houseStore;
+    activeHouse.rebuild();
+  }
+}
+
 // Toggle visibility of every surface root so only the cave renders underground.
 function setSurfaceVisible(v) {
   world.setVisible(v);
   if (dungeonBuild.group) dungeonBuild.group.visible = v;
   if (ruinsBuild.group) ruinsBuild.group.visible = v;
   citiesGroup.visible = v;
+  marketDisplay.setVisible(v);   // the 3D goods on the stall counters
   worldNpcs.setVisible?.(v);
   seaFauna.setVisible?.(v);
   bots.setVisible?.(v);
@@ -3112,18 +3381,61 @@ function updateCamera() {
     camera.rotation.x = player.pitch;
     camera.rotation.y = player.yaw;
   } else {
-    const d = 4.4;
+    // Indoors the room is small, so a full third-person pull-back would shove the
+    // camera through a wall (or out the door gap) and show the black void. Start
+    // closer inside a house so it stays in the room.
+    let d = (place === 'house') ? 2.4 : 4.4;
     const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
     // introCam swings the camera from in front of the hero (welcome view, you
     // see your face) to behind as you start moving.
     const side = 1 - 2 * introCam; // +1 behind, -1 front
-    const cx = player.pos.x + Math.sin(player.yaw) * cp * d * side;
-    const cz = player.pos.z + Math.cos(player.yaw) * cp * d * side;
+    // Camera-wall collision: march from the hero out to the desired camera spot
+    // and pull the camera IN if a wall/building solid blocks the line, so backing
+    // into a wall and turning the mouse can't push the camera through it (which
+    // let you see the void/sky beyond). March in small steps; stop just short of
+    // the first solid, keeping a small skin so the near plane never pokes through.
+    const dirX = Math.sin(player.yaw) * cp * side;
+    const dirZ = Math.cos(player.yaw) * cp * side;
+    const w = activeWorld();
+    if (w && w.solidAt) {
+      const SKIN = 0.45;            // keep the camera this far in front of a wall
+      const step = 0.3;
+      let hit = d;
+      for (let dist = step; dist <= d; dist += step) {
+        const sx = player.pos.x + dirX * dist;
+        const sz = player.pos.z + dirZ * dist;
+        if (w.solidAt(sx, sz, 0.2)) { hit = Math.max(0.6, dist - SKIN); break; }
+      }
+      d = Math.min(d, hit);
+    }
+    let cx = player.pos.x + dirX * d;
+    let cz = player.pos.z + dirZ * d;
+    // Inside a house, keep the camera INSIDE the room box (the wall-march can slip
+    // out through the door gap, and looking up/down can push it through the
+    // ceiling/floor — which is what "broke" the view while walking). Clamp X/Z
+    // here and Y below (after cy is computed).
+    let houseBounds = null;
+    if (place === 'house' && activeHouse && activeHouse.cameraBounds) {
+      houseBounds = activeHouse.cameraBounds();
+      cx = Math.min(Math.max(cx, houseBounds.minX), houseBounds.maxX);
+      cz = Math.min(Math.max(cz, houseBounds.minZ), houseBounds.maxZ);
+    }
     // Minecraft-style: raise the camera and aim past the hero's shoulder so the
     // body sits low in frame and the crosshair points at clear ground ahead,
     // not at the character's head.
     let cy = eyeY - sp * d + 0.9 + introCam * 0.4;
-    cy = Math.max(cy, activeWorld().heightAt(cx, cz) + 0.35, WATER_LEVEL + 0.25);
+    // Floor the camera just above the ground so it never dips below the terrain.
+    // ROOT CAUSE of the "third-person house is all black" bug: the old code also
+    // floored cy at WATER_LEVEL + 0.25 (WATER_LEVEL = 0) to keep the camera above
+    // the ocean — but a house interior lives at y = -400, so that surface-only
+    // floor yanked the indoor camera up to y ~= 0.25, roughly 400 m ABOVE the
+    // room, pointing at empty void → black screen. The waterline floor only makes
+    // sense on the surface, so apply it only there.
+    cy = Math.max(cy, activeWorld().heightAt(cx, cz) + 0.35);
+    if (place === 'surface') cy = Math.max(cy, WATER_LEVEL + 0.25);
+    // Keep the indoor camera between the floor and ceiling so it never pokes out
+    // the top/bottom of the room while you walk and look around.
+    if (houseBounds) cy = Math.min(Math.max(cy, houseBounds.minY), houseBounds.maxY);
     camera.position.set(cx, cy, cz);
     const fwd = introCam > 0.5 ? 0 : 2.2; // look ahead once we're behind the hero
     const lookX = player.pos.x - Math.sin(player.yaw) * fwd;
@@ -3228,6 +3540,8 @@ function tick() {
   if (place === 'surface') {
     daynight.update(player.pos, dt);
     world.update(player.pos.x, player.pos.z);
+  } else if (place === 'house' && activeHouse) {
+    activeHouse.update();
   } else if (activeCave) {
     activeCave.update(player.pos.x, player.pos.z);
   }
@@ -3686,8 +4000,10 @@ function serializeSave() {
     level: player.level, exp: player.exp, gold: inv.gold,
     equipment: inv.serialize(), depot: depot.serialize(), quests: questLog.serialize(), stats: charStats.serialize(),
     mounts: mounts.serialize(),
+    house: houseStore.serialize(),    // owned house: walls, colours, light, bans
     hotbar: hotbar.serialize(),       // quickslot bar contents (number row)
     keyboard: keyboardPanel.serialize(), // MapleStory-style key→action binds
+    keymap: controls.keymap.serialize(), // rebound game-action keys (per character)
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
     // Stamp every local save so, on reload, we can tell whether the (async, often
     // lagging) cloud row is actually fresher than what we last wrote locally.
@@ -3709,7 +4025,11 @@ function applyCloudSave(data) {
   if (data.quests) questLog.load(data.quests);
   if (data.stats) charStats.load(data.stats);
   if (data.mounts) mounts.load(data.mounts);
+  if (data.house) { houseStore.load(data.house); refreshHouseExteriors(); }
   if (data.hotbar) hotbar.load(data.hotbar, resolveHotbarEntry);
+  // Rebound game-action keys load BEFORE the skill/potion binds so reserved-key
+  // filtering reflects the player's actual movement/jump layout.
+  if (data.keymap) controls.keymap.load(data.keymap);
   if (data.keyboard) keyboardPanel.load(data.keyboard, resolveHotbarEntry);
   applyVocationStats(true);
   recompute();
@@ -3731,7 +4051,9 @@ function applyCharacterRow(row) {
   if (row.stats) charStats.load(row.stats);
   if (row.quests) questLog.load(row.quests);
   if (row.mounts) mounts.load(row.mounts);
+  if (row.house) { houseStore.load(row.house); refreshHouseExteriors(); }
   if (row.hotbar) hotbar.load(row.hotbar, resolveHotbarEntry);
+  if (row.keymap) controls.keymap.load(row.keymap);   // rebound game-action keys
   if (row.keyboard) keyboardPanel.load(row.keyboard, resolveHotbarEntry);
   if (Array.isArray(row.friends)) { friends.clear(); for (const f of row.friends) friends.add(f); }
   applyVocationStats(true);
@@ -3751,6 +4073,11 @@ function saveToAccount() {
     depot: depot.serialize(), stats: charStats.serialize(),
     quests: questLog.serialize(), friends: [...friends],
     mounts: mounts.serialize(),
+    house: houseStore.serialize(),
+    // Rebound game-action keys, per character. OPTIONAL column (ADD_keymap_column
+    // .sql); auth.saveCharacter strips it if the DB lacks it, and the local save
+    // keeps it regardless.
+    keymap: controls.keymap.serialize(),
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
   });
 }
