@@ -127,6 +127,9 @@ export class World {
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.y = WATER_LEVEL - 0.04;
     scene.add(this.water);
+    // Only the surface world has water; house/cave worlds don't set this, so the
+    // player never reads them as underwater (see Player.inWater).
+    this.hasWater = true;
   }
 
   // Register a flat city pad. Inside `radius` the ground is exactly `y`; over

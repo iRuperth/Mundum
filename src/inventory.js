@@ -1,8 +1,8 @@
-import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, instanceFromCoin, rollWeaponInstance, RARITY, COINS, getCoin, getLight, instanceFromLight } from './data/items.js';
+import { getWeapon, getArmor, getContainer, getQuiver, getPotion, instanceFromPotion, instanceFromCoin, rollWeaponInstance, RARITY, COINS, getCoin, getLight, instanceFromLight } from './data/items.js';
 import { getTrophy, instanceFromTrophy } from './data/trophies.js';
 import { getMaterial, instanceFromMaterial, genericMaterial } from './data/materials.js';
 
-export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra', 'ring'];
+export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra', 'ring', 'quiver'];
 const BASE_CAPACITY = 400;
 const CAP_PER_LEVEL = 12;
 
@@ -17,6 +17,11 @@ function isStackable(item) {
   return !!item && (item.kind === 'coin' || item.kind === 'potion'
     || item.kind === 'trophy' || item.kind === 'material');
 }
+
+// Tibia-style hard cap: no single slot ever holds more than 100 of a stackable.
+// Past 100 the overflow spills into a new slot (100 + 100 + …). Coins also obey
+// this, with 100 of a tier being exactly one "convert up" to the next coin.
+export const MAX_STACK = 100;
 
 // Effective weight of an item: a stack weighs per-unit × count, and a container
 // weighs its own shell PLUS everything inside it. So a 18-weight backpack holding
@@ -89,6 +94,16 @@ export function instanceFromContainer(c) {
   };
 }
 
+// Archer quiver instance: occupies the 'quiver' slot, gives no defense, carries
+// a flat `arrowAtk` bonus the combat formula adds to the bow's attack.
+export function instanceFromQuiver(q) {
+  return {
+    baseId: q.id, name: q.name, type: 'quiver', slot: 'quiver',
+    arrowAtk: q.arrowAtk || 0, defense: 0, weight: q.weight, levelReq: q.levelReq || 1,
+    color: q.color, vocation: q.vocation || 'archer', rarity: RARITY.NORMAL,
+  };
+}
+
 const WEAPON_TYPES = ['sword', 'axe', 'mace', 'lance', 'bow', 'wand'];
 function isWeapon(item) {
   return !!item && (item.type === 'weapon' || WEAPON_TYPES.includes(item.type));
@@ -98,6 +113,7 @@ function slotForItem(item) {
   if (!item) return null;
   if (item.type === 'armor') return item.slot;
   if (item.type === 'container') return 'bag';
+  if (item.type === 'quiver') return 'quiver';
   if (isWeapon(item)) return 'weapon';
   if (item.type === 'shield') return 'shield';
   if (item.kind === 'light') return 'extra'; // torches/lanterns go in the extra slot
@@ -183,15 +199,23 @@ export class Inventory {
     let v = Math.max(0, Math.floor(total));
     for (let i = COINS.length - 1; i >= 0; i--) {
       const c = COINS[i];
-      const n = Math.floor(v / c.value);
-      if (n > 0) { this.backpack.push(instanceFromCoin(c, n)); v -= n * c.value; }
+      let n = Math.floor(v / c.value);
+      v -= n * c.value;
+      // Lay the tier down in stacks of at most MAX_STACK (no slot holds 101).
+      while (n > 0) {
+        const chunk = Math.min(MAX_STACK, n);
+        this.backpack.push(instanceFromCoin(c, chunk));
+        n -= chunk;
+      }
     }
   }
 
-  // Add `count` coins of a tier (merges into the existing stack).
+  // Add `count` coins of a tier, capped at MAX_STACK per slot (overflow to new
+  // slots), so a coin stack is never above 100 — convert 100→next tier manually.
   addCoins(id, count) {
-    const s = this._coinStack(id, true);
-    if (s) s.count += Math.max(0, Math.floor(count));
+    const c = getCoin(id);
+    if (!c) return;
+    this._addStackable(instanceFromCoin(c, Math.max(0, Math.floor(count))));
   }
 
   // Add a flat bronze amount as bronze coins (loot/quests drop a bronze value).
@@ -267,9 +291,11 @@ export class Inventory {
   // checked separately by canCarry.)
   _hasSlotAnywhere(item) {
     if (isStackable(item)) {
-      if (this.backpack.some((it) => it.kind === item.kind && it.baseId === item.baseId)) return true;
+      // Room exists if a matching stack is below the cap (can top up)…
+      const hasRoom = (it) => it.kind === item.kind && it.baseId === item.baseId && (it.count || 1) < MAX_STACK;
+      if (this.backpack.some(hasRoom)) return true;
       for (const bag of this._nestedBags()) {
-        if (bag.contents.some((it) => it.kind === item.kind && it.baseId === item.baseId)) return true;
+        if (bag.contents.some(hasRoom)) return true;
       }
     }
     if (this.backpack.length < this.bagCapacity) return true;
@@ -294,28 +320,59 @@ export class Inventory {
   // inside a backpack inside a backpack really does give you that much space.
   addToBackpack(item, level) {
     if (!this.canCarry(item, level)) return 'heavy';
-    // 1) Merge into an existing stack, top level first, then any nested bag.
-    if (isStackable(item)) {
-      const top = this.backpack.find((it) => it.kind === item.kind && it.baseId === item.baseId);
-      if (top) { top.count = (top.count || 1) + (item.count || 1); return 'ok'; }
-      for (const bag of this._nestedBags()) {
-        const s = bag.contents.find((it) => it.kind === item.kind && it.baseId === item.baseId);
-        if (s) { s.count = (s.count || 1) + (item.count || 1); return 'ok'; }
-      }
-    }
-    // 2) A free cell at the top level.
+    // Stackables fill existing stacks UP TO MAX_STACK, then spill into new cells
+    // (100 + 100 + …). A single put of >100 may need several slots.
+    if (isStackable(item)) return this._addStackable(item);
+    // Non-stackable: a free cell at the top level, else overflow into a nested bag.
     if (this.backpack.length < this.bagCapacity) {
       this.backpack.unshift(item); // newest item shows up first in the backpack
       return 'ok';
     }
-    // 3) Top level full → overflow into the first nested bag with a free cell.
-    //    (A container itself never nests, so only non-containers overflow.)
     if (item.type !== 'container') {
       for (const bag of this._nestedBags()) {
         if (bag.contents.length < (bag.capacity || 0)) { bag.contents.unshift(item); return 'ok'; }
       }
     }
     return 'full';
+  }
+
+  // Add a stackable, respecting the MAX_STACK per-slot cap. Tops up existing
+  // matching stacks first (top level, then nested bags), then opens new cells for
+  // the remainder. Returns 'ok' if it all fit, else 'full' (with whatever fit
+  // already merged — matching the old best-effort behaviour, just capped).
+  _addStackable(item) {
+    let remaining = item.count || 1;
+    const match = (it) => it.kind === item.kind && it.baseId === item.baseId;
+    // 1) Top up every existing stack of this kind, top level then nested bags.
+    const topUp = (arr) => {
+      for (const it of arr) {
+        if (remaining <= 0) break;
+        if (!match(it)) continue;
+        const room = MAX_STACK - (it.count || 1);
+        if (room <= 0) continue;
+        const add = Math.min(room, remaining);
+        it.count = (it.count || 1) + add;
+        remaining -= add;
+      }
+    };
+    topUp(this.backpack);
+    for (const bag of this._nestedBags()) topUp(bag.contents);
+    // 2) Open new cells (capped at MAX_STACK each) for the rest.
+    while (remaining > 0) {
+      const chunk = Math.min(MAX_STACK, remaining);
+      const cell = { ...item, count: chunk };
+      if (this.backpack.length < this.bagCapacity) {
+        this.backpack.unshift(cell);
+      } else {
+        let placed = false;
+        for (const bag of this._nestedBags()) {
+          if (bag.contents.length < (bag.capacity || 0)) { bag.contents.unshift(cell); placed = true; break; }
+        }
+        if (!placed) return 'full';   // out of cells; the rest didn't fit
+      }
+      remaining -= chunk;
+    }
+    return 'ok';
   }
 
   removeFromBackpack(index) {
@@ -633,6 +690,47 @@ export class Inventory {
       }
       if (bronze > 0) this._setGoldTotal(bronze);
     }
+    // Migration: the Tibia-7.4 rebalance compressed every weapon's attack and
+    // every armor's defense. Saved item instances bake those numbers, so an old
+    // save can hold e.g. an Excalibur instance with atk 210. Clamp each baked
+    // atk/defense down to the new base item's cap (legendaries collapse cleanly
+    // to the new atkMax of 50/53). Idempotent — a Math.min against the new cap.
+    const clampToBase = (it) => {
+      if (!it || !it.baseId) return;
+      const wb = getWeapon(it.baseId);
+      if (wb && typeof it.atk === 'number') {
+        it.atk = Math.min(it.atk, wb.atkMax);
+        if (it.defense != null && wb.defense != null) it.defense = Math.min(it.defense, wb.defense);
+      }
+      const ab = getArmor(it.baseId);
+      if (ab && typeof it.defense === 'number') it.defense = Math.min(it.defense, ab.defense);
+    };
+    for (const s of EQUIP_SLOTS) clampToBase(this.equip[s]);
+    for (const it of this.backpack) { clampToBase(it); if (it && it.contents) it.contents.forEach(clampToBase); }
+    // Migration: enforce the MAX_STACK cap on saves written before it existed.
+    // Any stack above 100 is split into extra ≤100 cells (in the same container,
+    // appended; if it's somehow out of room the surplus is dropped rather than
+    // kept as an illegal 101+ stack).
+    const splitOverCap = (arr, cap) => {
+      for (let i = 0; i < arr.length; i++) {
+        const it = arr[i];
+        if (!it || !isStackable(it) || (it.count || 1) <= MAX_STACK) continue;
+        let overflow = it.count - MAX_STACK;
+        const newCells = [];
+        while (overflow > 0 && (arr.length + newCells.length) < cap) {
+          const chunk = Math.min(MAX_STACK, overflow);
+          newCells.push({ ...it, count: chunk });
+          overflow -= chunk;
+        }
+        // Cap the original and append the split-off cells. If there was no room at
+        // all (no spare cells), leave the surplus on the stack rather than DROP it
+        // — better an over-cap stack than lost items; it re-splits once there's room.
+        it.count = MAX_STACK + overflow;
+        arr.push(...newCells);
+      }
+    };
+    splitOverCap(this.backpack, this.bagCapacity);
+    for (const it of this.backpack) if (it && it.contents) splitOverCap(it.contents, it.capacity || 0);
   }
 }
 
