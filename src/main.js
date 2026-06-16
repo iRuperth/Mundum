@@ -940,6 +940,15 @@ const controls = new Controls(canvas, ui, {
   },
 });
 
+// Built after `controls` so the keyboard panel shares its keymap (the rebindable
+// game-action keys). onHotbarKeyCode (above) references keyboardPanel lazily.
+const keyboardPanel = new KeyboardPanel({
+  getOptions: () => hotbarOptions(),
+  activate: (entry) => activateEntry(entry),
+  onChange: () => { saveLocal(); saveToAccount(); },
+  keymap: controls.keymap,
+});
+
 // Apply the effective touch mode (auto/on/off) live: flips the body.touch class
 // the CSS keys off of, keeps controls.isTouch in sync so input routing matches,
 // and tidies the crosshair / pointer lock so switching never leaves a stuck
