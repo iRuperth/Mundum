@@ -1,5 +1,7 @@
 // Unified input: keyboard, pointer-lock mouse, and touch (left half = virtual
 // joystick, right half = drag to look).
+import { Keymap } from './keymap.js';
+
 const LOOK_MOUSE = 0.0024;
 const LOOK_TOUCH = 0.005;
 const STICK_RADIUS = 52;
@@ -12,9 +14,17 @@ export class Controls {
   constructor(canvas, ui, opts) {
     this.canvas = canvas;
     this.ui = ui;
-    this.isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+    // Touch as the PRIMARY input: coarse pointer with no fine pointer (a finger,
+    // not a mouse). Avoids forcing the joystick on a touchscreen laptop. main.js
+    // overrides at runtime via setTouch() (the mobile-mode toggle / resolveTouch).
+    this.isTouch = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
     this.opts = opts;
     this.enabled = false;
+
+    // Player-rebindable game-action keys (movement, jump, camera, …). Defaults
+    // match the classic layout; the keyboard panel can reassign them and main.js
+    // persists keymap.serialize() per character.
+    this.keymap = new Keymap();
 
     this.keys = new Set();
     this.move = { x: 0, z: 0 };
@@ -36,19 +46,20 @@ export class Controls {
       if (!this.enabled) return;
       if (this.chatting) return;
       if (e.code === 'Enter') { opts.onChat?.(); return; }
-      if (e.code === 'Space') {
+      const km = this.keymap;
+      if (km.isAction('jump', e.code)) {
         e.preventDefault();
         if (!e.repeat) this._jumpQueued = true;
         this.jumpHeld = true;
       }
-      if (e.code === 'KeyC' && !e.repeat) opts.onToggleCamera();
-      if (e.code === 'KeyR' && !e.repeat) opts.onToggleRange?.();
-      if (e.code === 'KeyF' && !e.repeat) this._lightToggleQueued = true;
-      // G mounts / dismounts the active mount (M is the map, so G is the mount key).
-      if (e.code === 'KeyG' && !e.repeat) opts.onToggleMount?.();
-      // Tab (or M) frees / re-grabs the mouse, like Escape but without the
-      // browser's "press Esc to exit" overlay — a clearer way to reach the UI.
-      if ((e.code === 'Tab' || e.code === 'KeyM') && !e.repeat) {
+      if (km.isAction('camera', e.code) && !e.repeat) opts.onToggleCamera();
+      if (km.isAction('range', e.code) && !e.repeat) opts.onToggleRange?.();
+      if (km.isAction('torch', e.code) && !e.repeat) this._lightToggleQueued = true;
+      // Mount / dismount the active mount.
+      if (km.isAction('mount', e.code) && !e.repeat) opts.onToggleMount?.();
+      // Tab (or the map key) frees / re-grabs the mouse, like Escape but without
+      // the browser's "press Esc to exit" overlay — a clearer way to reach the UI.
+      if ((e.code === 'Tab' || km.isAction('map', e.code)) && !e.repeat) {
         e.preventDefault();
         opts.onToggleMouse?.();
       }
@@ -60,7 +71,7 @@ export class Controls {
     });
     addEventListener('keyup', (e) => {
       this.keys.delete(e.code);
-      if (e.code === 'Space') this.jumpHeld = false;
+      if (this.keymap.isAction('jump', e.code)) this.jumpHeld = false;
     });
     addEventListener('blur', () => { this.keys.clear(); this.jumpHeld = false; });
 
@@ -208,10 +219,14 @@ export class Controls {
   updateMove() {
     let x = 0, z = 0;
     const k = this.chatting ? new Set() : this.keys;
-    if (k.has('KeyW') || k.has('ArrowUp')) z += 1;
-    if (k.has('KeyS') || k.has('ArrowDown')) z -= 1;
-    if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) x += 1;
+    const km = this.keymap;
+    // A movement key counts if any held key maps to that action (primary or the
+    // fixed arrow-key fallback).
+    const held = (action) => { for (const c of k) if (km.isAction(action, c)) return true; return false; };
+    if (held('forward')) z += 1;
+    if (held('back')) z -= 1;
+    if (held('left')) x -= 1;
+    if (held('right')) x += 1;
     // Apply a deadzone + rescale so the joystick gives smooth full-range control
     // past the deadzone instead of an abrupt jump, and never drifts near centre.
     let sx = this._stick.x, sy = this._stick.y;
