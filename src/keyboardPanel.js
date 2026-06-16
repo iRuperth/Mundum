@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { iconFor } from './itemIcons.js';
+import { KEY_ACTIONS, codeLabel } from './keymap.js';
 
 // MapleStory-style KEYBOARD SETTINGS panel. A full on-screen keyboard you drag
 // skills and potions onto: drop a skill/potion icon on a key and pressing that
@@ -21,15 +22,12 @@ const ROWS = [
   [['Space', 'ESPACIO', 6]],
 ];
 
-// Keys the game already needs (movement, jump, camera, map, chat, interaction,
-// mount, mouse-free, wiki). They show on the keyboard but can't hold an action.
-const RESERVED = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD',     // movement
-  'Space',                             // jump
-  'KeyC', 'KeyR', 'KeyF', 'KeyG',     // camera / range / torch / mount
-  'KeyM', 'KeyK', 'KeyE', 'KeyY',     // map / skills / interact / wiki
-  'Enter', 'Tab', 'Escape', 'Backspace',
-]);
+// System keys that can NEVER hold a skill/potion or be rebound to a game action,
+// so the game always stays playable (chat, menu/mouse-free, back).
+const SYSTEM_KEYS = new Set(['Enter', 'Tab', 'Escape', 'Backspace']);
+// Panels that keep a fixed key (skills, wiki) — not rebindable here, and a skill
+// can't sit on them either.
+const PANEL_KEYS = new Set(['KeyK', 'KeyY']);
 
 function entryIcon(entry) {
   if (!entry) return '';
@@ -39,14 +37,28 @@ function entryIcon(entry) {
 }
 
 export class KeyboardPanel {
-  // hooks: { getOptions(), activate(entry), getCooldown(entry), getMana(), onChange() }
+  // hooks: { getOptions(), activate(entry), getCooldown(entry), getMana(),
+  //          onChange(), keymap }  — keymap is the shared Keymap (game actions).
   constructor(hooks) {
     this.hooks = hooks;
-    this.binds = new Map();        // code -> entry
+    this.keymap = hooks.keymap || null;   // rebindable game-action keys
+    this.binds = new Map();        // code -> entry (skill/potion)
     this.keyEls = new Map();       // code -> the rendered key element
     this._drag = null;             // active drag { entry, ghost }
+    this._awaitAction = null;      // actionId waiting for the next key press
     this._build();
   }
+
+  // A key is reserved (can't hold a skill/potion) when it's a system key, a fixed
+  // panel key, or currently bound to a rebindable GAME ACTION.
+  _isReserved(code) {
+    if (SYSTEM_KEYS.has(code) || PANEL_KEYS.has(code)) return true;
+    if (this.keymap && this.keymap.reservedCodes().has(code)) return true;
+    return false;
+  }
+
+  // The game action a key currently drives (for the keyboard label), or null.
+  _actionAt(code) { return this.keymap ? this.keymap.actionForCode(code) : null; }
 
   _build() {
     const root = document.createElement('div');
@@ -58,6 +70,7 @@ export class KeyboardPanel {
       '  <div class="kb-hint"></div>' +
       '  <div class="kb-body">' +
       '    <div class="kb-keys"></div>' +
+      '    <div class="kb-actions"><div class="kb-actions-title"></div><div class="kb-actions-list"></div></div>' +
       '    <div class="kb-tray"><div class="kb-tray-title"></div><div class="kb-tray-items"></div></div>' +
       '  </div>' +
       '</div>';
@@ -65,28 +78,53 @@ export class KeyboardPanel {
     this.root = root;
     this.win = root.querySelector('#kb-window');
     this.keysWrap = root.querySelector('.kb-keys');
+    this.actionsList = root.querySelector('.kb-actions-list');
     this.tray = root.querySelector('.kb-tray-items');
     root.querySelector('.kb-close').addEventListener('click', () => this.close());
     // Click the dim backdrop (not the window) to close.
     root.addEventListener('pointerdown', (e) => { if (e.target === root) this.close(); });
 
-    // Build the key grid once; contents (assigned icons) refresh on open.
+    // Capture the NEXT key press while waiting to rebind a game action. Runs in
+    // the capture phase so it beats the in-game controls; only active when the
+    // panel is open AND an action is awaiting a key.
+    addEventListener('keydown', (e) => {
+      if (!this._awaitAction || this.root.classList.contains('hidden')) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.code === 'Escape') { this._awaitAction = null; this._renderActions(); return; }
+      // System/panel keys can't be claimed by a game action.
+      if (SYSTEM_KEYS.has(e.code) || PANEL_KEYS.has(e.code)) return;
+      const action = this._awaitAction;
+      this._awaitAction = null;
+      if (this.keymap) {
+        // If this key held a skill/potion, free that bind (a key drives one thing).
+        if (this.binds.has(e.code)) { this.binds.delete(e.code); }
+        this.keymap.rebind(action, e.code);
+      }
+      this._changed();
+      // Reserved state changed across the board → refresh keys + the action list.
+      for (const code of this.keyEls.keys()) this._refreshKey(code);
+      this._renderActions();
+    }, true);
+
+    // Build the key grid once; reserved state + assigned icons refresh on open
+    // and whenever a game action is rebound (so handlers must check live state).
     for (const row of ROWS) {
       const r = document.createElement('div');
       r.className = 'kb-row';
       for (const [code, label, w] of row) {
         const key = document.createElement('div');
-        key.className = 'kb-key' + (RESERVED.has(code) ? ' kb-reserved' : '');
+        key.className = 'kb-key';
         key.style.flexGrow = String(w);
         key.dataset.code = code;
         key.innerHTML = `<span class="kb-key-label">${label}</span><span class="kb-key-ico"></span>`;
-        if (!RESERVED.has(code)) {
-          // Drop target for the HTML5-ish pointer drag from the tray.
-          key.addEventListener('pointerenter', () => { if (this._drag) key.classList.add('kb-drop'); });
-          key.addEventListener('pointerleave', () => key.classList.remove('kb-drop'));
-          // Click a bound key to clear it.
-          key.addEventListener('click', () => { if (this.binds.has(code)) { this.binds.delete(code); this._refreshKey(code); this._changed(); } });
-        }
+        // Drop target for the pointer drag from the tray (only when not reserved).
+        key.addEventListener('pointerenter', () => { if (this._drag && !this._isReserved(code)) key.classList.add('kb-drop'); });
+        key.addEventListener('pointerleave', () => key.classList.remove('kb-drop'));
+        // Click a key holding a skill/potion to clear it (reserved keys do nothing).
+        key.addEventListener('click', () => {
+          if (this._isReserved(code)) return;
+          if (this.binds.has(code)) { this.binds.delete(code); this._refreshKey(code); this._changed(); }
+        });
         r.appendChild(key);
         this.keyEls.set(code, key);
       }
@@ -100,13 +138,37 @@ export class KeyboardPanel {
     this.root.querySelector('.kb-title').textContent = t('keyboardTitle') || 'Teclado — arrastra poderes a las teclas';
     this.root.querySelector('.kb-hint').textContent = t('keyboardHint') || 'Arrastra un poder o poción a una tecla. Toca una tecla asignada para quitarla.';
     this.root.querySelector('.kb-tray-title').textContent = t('keyboardTray') || 'Poderes y pociones';
+    this.root.querySelector('.kb-actions-title').textContent = t('keyboardActions') || 'Teclas del juego';
     if (document.pointerLockElement) document.exitPointerLock();
+    this._renderActions();
     this._renderTray();
     for (const code of this.keyEls.keys()) this._refreshKey(code);
     this.root.classList.remove('hidden');
   }
-  close() { this.root.classList.add('hidden'); }
+  close() { this._awaitAction = null; this.root.classList.add('hidden'); }
   toggle() { if (this.isOpen) this.close(); else this.open(); }
+
+  // The game-action rows: each shows the action name + its current key. Click a
+  // row to arm it ("press a key…"); the next key press rebinds it (see _build).
+  _renderActions() {
+    if (!this.actionsList) return;
+    this.actionsList.innerHTML = '';
+    if (!this.keymap) return;
+    for (const [id, , labelKey] of KEY_ACTIONS) {
+      const code = this.keymap.code(id);
+      const armed = this._awaitAction === id;
+      const row = document.createElement('button');
+      row.className = 'kb-actrow' + (armed ? ' armed' : '');
+      row.innerHTML =
+        `<span class="kb-actname">${t(labelKey) || id}</span>` +
+        `<span class="kb-actkey">${armed ? (t('keyboardPressKey') || 'Pulsa una tecla…') : codeLabel(code)}</span>`;
+      row.addEventListener('click', () => {
+        this._awaitAction = armed ? null : id;   // toggle arm
+        this._renderActions();
+      });
+      this.actionsList.appendChild(row);
+    }
+  }
 
   // The draggable source list: every castable skill + every carried potion.
   _renderTray() {
@@ -154,7 +216,7 @@ export class KeyboardPanel {
         const under = document.elementFromPoint(ev.clientX, ev.clientY);
         const keyEl = under && under.closest && under.closest('.kb-key');
         for (const k of this.keyEls.values()) k.classList.remove('kb-drop');
-        if (keyEl && !keyEl.classList.contains('kb-reserved')) keyEl.classList.add('kb-drop');
+        if (keyEl && !this._isReserved(keyEl.dataset.code)) keyEl.classList.add('kb-drop');
       };
       const onUp = (ev) => {
         el.removeEventListener('pointermove', onMove);
@@ -168,7 +230,7 @@ export class KeyboardPanel {
         if (!dragging) return;
         const under = document.elementFromPoint(ev.clientX, ev.clientY);
         const keyEl = under && under.closest && under.closest('.kb-key');
-        if (keyEl && !keyEl.classList.contains('kb-reserved')) {
+        if (keyEl && !this._isReserved(keyEl.dataset.code)) {
           this.bind(keyEl.dataset.code, entry);
         }
       };
@@ -178,9 +240,9 @@ export class KeyboardPanel {
     });
   }
 
-  // Assign an entry to a key (one action per key). Persists via onChange.
+  // Assign a skill/potion entry to a key (one per key). Persists via onChange.
   bind(code, entry) {
-    if (!code || RESERVED.has(code)) return;
+    if (!code || this._isReserved(code)) return;
     this.binds.set(code, entry);
     this._refreshKey(code);
     this._changed();
@@ -190,6 +252,18 @@ export class KeyboardPanel {
     const el = this.keyEls.get(code);
     if (!el) return;
     const ico = el.querySelector('.kb-key-ico');
+    const reserved = this._isReserved(code);
+    el.classList.toggle('kb-reserved', reserved);
+    // A key driving a game action shows that action's short label instead of a
+    // skill icon, so the keyboard reads as the live control map.
+    const action = this._actionAt(code);
+    if (action) {
+      const labelKey = (KEY_ACTIONS.find((a) => a[0] === action) || [])[2];
+      ico.innerHTML = `<span class="kb-actlabel">${labelKey ? t(labelKey) : action}</span>`;
+      el.classList.remove('kb-bound');
+      el.title = labelKey ? t(labelKey) : action;
+      return;
+    }
     const entry = this.binds.get(code);
     ico.innerHTML = entry ? entryIcon(entry) : '';
     el.classList.toggle('kb-bound', !!entry);
@@ -221,7 +295,7 @@ export class KeyboardPanel {
     this.binds.clear();
     if (data && typeof data === 'object') {
       for (const code of Object.keys(data)) {
-        if (RESERVED.has(code)) continue;
+        if (this._isReserved(code)) continue;
         const e = resolve(data[code]);
         if (e) this.binds.set(code, e);
       }
