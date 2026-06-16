@@ -1856,11 +1856,34 @@ function paintMaterial(p, item) {
   }
 }
 
+// An archer's quiver: a leather tube with a fan of arrows poking out the top. A
+// band rim and the arrowheads turn gold on the legendary tiers (levelReq >= 90).
+function paintQuiver(p, item, t) {
+  const c = hexStr(item.color);
+  const tube = c, o = outline(tube), lt = shade(tube, 1.3), band = shade(tube, 0.6);
+  const legendary = (item.levelReq || 1) >= 90;
+  const head = legendary ? '#ffe066' : '#c8cdd4';
+  const rim = legendary ? '#ffe066' : band;
+  // Quiver tube (slightly tapered), tilted in the hand.
+  p.poly('5.8,14.4 9.6,14.4 9.0,7.2 6.4,7.2', tube, o);
+  p.line(6.8, 13.6, 8.6, 13.6, lt, 0.5);             // sheen down the tube
+  p.line(6.1, 8.0, 9.3, 8.0, rim, 0.7);              // rim band at the mouth
+  p.line(6.0, 11.4, 9.4, 11.4, band, 0.5);           // lower strap
+  // Arrows fanned out of the top (shafts + heads + a couple of red fletches).
+  const arrows = [[6.7, 1.6, -0.4], [7.7, 1.0, 0.0], [8.7, 1.8, 0.4]];
+  for (const [ax, ay, dx] of arrows) {
+    p.line(ax, 7.4, ax + dx, ay + 1.6, '#8a5a2b', 0.7);    // shaft
+    p.poly(`${ax + dx},${ay} ${ax + dx - 0.7},${ay + 1.5} ${ax + dx + 0.7},${ay + 1.5}`, head, outline(head)); // head
+  }
+  p.poly('6.4,6.6 7.0,7.6 5.9,7.6', '#e23b3b', null);      // fletch hint
+  p.poly('9.0,6.6 9.6,7.6 8.5,7.6', '#e23b3b', null);
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch.
 // ---------------------------------------------------------------------------
 const WEAPON_PAINTERS = { sword: paintSword, axe: paintAxe, mace: paintMace, lance: paintLance, bow: paintBow, wand: paintWand, shield: paintShield };
-const SLOT_PAINTERS = { helmet: paintHelmet, armor: paintArmor, legs: paintLegs, boots: paintBoots, amulet: paintAmulet, ring: paintRing };
+const SLOT_PAINTERS = { helmet: paintHelmet, armor: paintArmor, legs: paintLegs, boots: paintBoots, amulet: paintAmulet, ring: paintRing, quiver: paintQuiver };
 
 function paintItem(p, item) {
   addRarityGlow(p, item);

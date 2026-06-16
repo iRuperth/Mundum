@@ -304,7 +304,31 @@ export function buildCharacter(profile) {
   let weaponType = null;
   let isBow = false;
   let bowMesh = null; // the bow group, exposing userData.setDraw for the string
-  function setWeaponPose(type, bow) { weaponType = type; isBow = !!bow; }
+  let heldArrow = null; // a nocked arrow carried in the off (left) hand while walking
+  // A small arrow held in the bow-user's off hand. Hidden while drawing (it
+  // "loads" into the bow), shown while walking/idle so the archer always reads as
+  // carrying ammo.
+  function buildHeldArrow() {
+    const g = new THREE.Group();
+    const shaftMat = new THREE.MeshLambertMaterial({ color: 0x8a5a2b });
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xc4c9cf, metalness: 0.6, roughness: 0.4 });
+    const fletchMat = new THREE.MeshLambertMaterial({ color: 0xe23b3b });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.4, 5), shaftMat);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 5), headMat);
+    head.position.y = 0.23;
+    const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.06, 0.03), fletchMat);
+    fletch.position.set(0, -0.15, 0.018);
+    g.add(shaft, head, fletch);
+    // Lie the arrow roughly horizontal, pointing forward, as if pinched in the hand.
+    g.rotation.x = Math.PI / 2;
+    g.position.set(0, -0.42, 0.05);
+    return g;
+  }
+  function setWeaponPose(type, bow) {
+    weaponType = type; isBow = !!bow;
+    if (isBow && !heldArrow) { heldArrow = buildHeldArrow(); armL.hand.add(heldArrow); }
+    else if (!isBow && heldArrow) { armL.hand.remove(heldArrow); heldArrow = null; }
+  }
   function setBowMesh(mesh) { bowMesh = mesh; if (bowMesh && bowMesh.userData.setDraw) bowMesh.userData.setDraw(0); }
 
   // Idle breathing: a small, fast rise/fall of the chest and head that only
@@ -420,8 +444,10 @@ export function buildCharacter(profile) {
 
   function updateAttack(dt) {
     if (swingT <= 0) {
-      // Idle: keep the bow string relaxed so it isn't stuck drawn.
+      // Idle: keep the bow string relaxed so it isn't stuck drawn, and show the
+      // arrow held in the off hand (it only hides while actually drawing).
       if (bowMesh && bowMesh.userData.setDraw) bowMesh.userData.setDraw(0);
+      if (heldArrow) heldArrow.visible = true;
       return;
     }
     swingT = Math.max(0, swingT - dt);
@@ -432,6 +458,9 @@ export function buildCharacter(profile) {
       // draw ramps up over the first 55%, releases sharply after.
       const draw = p < 0.55 ? p / 0.55 : Math.max(0, 1 - (p - 0.55) / 0.18);
       if (bowMesh && bowMesh.userData.setDraw) bowMesh.userData.setDraw(draw);
+      // The hand-held arrow "loads" into the bow as the draw builds, so hide it
+      // once the draw is underway; it reappears when the shot is released/idle.
+      if (heldArrow) heldArrow.visible = draw < 0.15;
       // Bow arm (R) RISES from its lowered walking spot up to a forward aim as the
       // draw builds; string hand (L) comes up and pulls back toward the cheek.
       armR.pivot.rotation.set(-draw * 1.45, 0, -0.12 - draw * 0.06);

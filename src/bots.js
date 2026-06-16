@@ -354,7 +354,9 @@ export class Bots {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
     ctx.strokeText(text, 160, 34);
-    ctx.fillStyle = '#cfe3ff';
+    // Bots are stand-in "players", so they wear a WHITE name tag like real peers
+    // (peers.js). Only NPCs are yellow.
+    ctx.fillStyle = '#fff';
     ctx.fillText(text, 160, 34);
     tex.needsUpdate = true;
     return { canvas, tex, sprite };
@@ -377,8 +379,15 @@ export class Bots {
     const d = Math.hypot(dx, dz);
     if (d < 0.15) return false;
     const step = Math.min(d, speed * dt);
-    bot.x += (dx / d) * step;
-    bot.z += (dz / d) * step;
+    const nx = bot.x + (dx / d) * step, nz = bot.z + (dz / d) * step;
+    // Don't walk through buildings/walls/trees. If the next step hits a solid,
+    // try sliding along one axis; if still blocked, give up this target and pick a
+    // new roam spot so the bot never ends up standing inside a house.
+    const solid = this.world.solidAt ? (x, z) => this.world.solidAt(x, z, 0.4) : () => false;
+    if (!solid(nx, nz)) { bot.x = nx; bot.z = nz; }
+    else if (!solid(nx, bot.z)) { bot.x = nx; }
+    else if (!solid(bot.x, nz)) { bot.z = nz; }
+    else { this._pickRoam(bot); return false; }
     bot.yaw = turnToward(bot.yaw, Math.atan2(dx, dz), dt * 6);
     return true;
   }
