@@ -63,6 +63,11 @@ export class Player {
   }
 
   get inWater() {
+    // Only the SURFACE world has water. House interiors and caves are built far
+    // below y=0, so the old absolute "pos.y < WATER_LEVEL" wrongly read them as
+    // underwater — which let holding Space "swim up" forever (the infinite-jump
+    // bug indoors). Gate on the current world actually having water.
+    if (!this.world || !this.world.hasWater) return false;
     return this.pos.y + 0.4 < WATER_LEVEL;
   }
 
