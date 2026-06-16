@@ -31,9 +31,14 @@ export class EquipVisuals {
     if (this.char.isGM) { this._clearAll(); return; }
     this.setWeapon(equip.weapon, level);
     // Off-hand: an archer holds a quiver of arrows (no shield); everyone else
-    // shows the equipped shield, if any.
+    // shows the equipped shield, if any. The quiver's look scales with its tier
+    // (equipped quiver item drives colour/arrow count); fall back to a plain
+    // quiver when a bow is held with no quiver equipped.
     const isBow = equip.weapon && equip.weapon.type === 'bow';
-    this.setOffhand(isBow ? { arrows: true } : equip.shield, level);
+    const quiver = equip.quiver
+      ? { arrows: true, color: equip.quiver.color, levelReq: equip.quiver.levelReq || 1 }
+      : { arrows: true };
+    this.setOffhand(isBow ? quiver : equip.shield, level);
     this.setHelmet(equip.helmet);
     this.setArmor(equip.armor);
     this.setLegs(equip.legs);
@@ -107,7 +112,7 @@ export class EquipVisuals {
     if (!item) return;
     const isWeapon = item.type === 'weapon' || OFFHAND_WEAPON_TYPES.has(item.type);
     if (item.arrows) {
-      this.shieldMesh = buildArrowsMesh();
+      this.shieldMesh = buildArrowsMesh(item.color, item.levelReq || 1);
     } else if (isWeapon) {
       // A weapon held in the LEFT (off) hand — same build + hold pose as the main
       // hand but NOT mirrored, so the blade leads outward to the left. The mirror
@@ -1821,21 +1826,32 @@ function circleShape(r, seg) {
 
 // A quiver of arrows worn at the hand for archers (replaces the shield slot).
 // Arrows fan upward and slightly back so they read clearly behind the bow hand.
-function buildArrowsMesh() {
+// `tubeColor` tints the quiver to match the equipped item; `levelReq` drives the
+// tier read — higher tiers carry more arrows and a metallic band/rim, and the two
+// legendary quivers (levelReq >= 90) get a golden band and golden arrowheads.
+function buildArrowsMesh(tubeColor, levelReq = 1) {
   const g = new THREE.Group();
+  const tier = levelReq >= 125 ? 5 : levelReq >= 90 ? 4 : levelReq >= 50 ? 3 : levelReq >= 25 ? 2 : levelReq >= 10 ? 1 : 0;
+  const legendary = levelReq >= 90;
+  const tubeCol = tubeColor != null ? tubeColor : 0x5a3a22;
+  const bandCol = legendary ? 0xf0d878 : (tier >= 3 ? 0x8a8f96 : 0x3a2414);
+  const headCol = legendary ? 0xf0d878 : 0xc4c9cf;
   // The quiver tube itself.
-  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.34, 10), mat(0x5a3a22));
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.34, 10), mat(tubeCol));
   tube.position.y = -0.05;
   g.add(tube);
-  const band = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 12), mat(0x3a2414));
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 12), legendary || tier >= 3 ? metalMat(bandCol) : mat(bandCol));
   band.rotation.x = Math.PI / 2;
   band.position.y = 0.06;
   g.add(band);
-  const offsets = [[-0.025, 0, 0.015], [0.025, 0, 0.015], [0, 0, -0.025], [0, 0, 0.03]];
-  for (const [ox, , oz] of offsets) {
+  // Higher-tier quivers carry more arrows fanned in the tube.
+  const allOffsets = [[-0.025, 0, 0.015], [0.025, 0, 0.015], [0, 0, -0.025], [0, 0, 0.03], [-0.03, 0, -0.01], [0.03, 0, -0.005]];
+  const count = Math.min(allOffsets.length, 4 + Math.floor(tier / 2));   // 4..6 arrows
+  for (let i = 0; i < count; i++) {
+    const [ox, , oz] = allOffsets[i];
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.34, 5), mat(0x8a5a2b));
     shaft.position.set(ox, 0.16, oz);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 5), metalMat(0xc4c9cf));
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 5), metalMat(headCol));
     head.position.set(ox, 0.36, oz);
     const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.06, 0.03), mat(0xe23b3b));
     fletch.position.set(ox, 0.27, oz + 0.02);
