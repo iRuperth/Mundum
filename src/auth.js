@@ -311,6 +311,13 @@ export class Auth {
       // if the DB lacks it the resilient retry below strips it and the rest still
       // saves. Local storage keeps it regardless. See supabase/ADD_mounts_column.sql.
       if (s.mounts != null) row.mounts = s.mounts;
+      // Owned house (lot, showcase walls, colours, light, ban list). OPTIONAL
+      // column (schema_v5); the resilient retry below strips it if the DB lacks
+      // it, and localStorage keeps it regardless. See supabase/ADD_house_column.sql.
+      if (s.house != null) row.house = s.house;
+      // Rebound game-action keys, per character. OPTIONAL column; the resilient
+      // retry below strips it if the DB lacks it. See ADD_keymap_column.sql.
+      if (s.keymap != null) row.keymap = s.keymap;
       if (s.pos != null) row.pos = s.pos;
       else if (s.x != null) row.pos = { x: s.x, y: s.y, z: s.z };
 
@@ -337,6 +344,107 @@ export class Auth {
       return { ok: false, error: errMsg(err) };
     }
   }
+
+  // free market
+  //
+  // The marketplace lives entirely on THIS session (the email/password client),
+  // because auth.uid() here owns the character row — only this session may read
+  // its gold/items under RLS. (net.js is a separate ANONYMOUS realtime session
+  // and cannot.) Every method degrades to a safe empty/failed result when the
+  // backend is offline OR the optional market_* tables/RPCs are not installed
+  // yet (see marketMissing), so a project that hasn't run ADD_market.sql simply
+  // has no working market rather than throwing.
+
+  // All listings in a city (every stall), ordered by stall then slot. [] when
+  // offline or the market backend is missing.
+  async listListings(city) {
+    if (!this.isAvailable() || !city) return [];
+    try {
+      const { data, error } = await this.client
+        .from('market_listings').select('*')
+        .eq('city', String(city))
+        .order('stall_id', { ascending: true })
+        .order('slot', { ascending: true });
+      if (error) { if (!marketMissing(error)) console.warn('[auth] listListings:', error.message); return []; }
+      return data || [];
+    } catch (err) { console.warn('[auth] listListings:', errMsg(err)); return []; }
+  }
+
+  // The current player's own listings (the stall they are running), any city.
+  async listMyStall() {
+    if (!this.isAvailable()) return [];
+    try {
+      const user = await this.currentUser();
+      if (!user) return [];
+      const { data, error } = await this.client
+        .from('market_listings').select('*')
+        .eq('seller_id', user.id)
+        .order('slot', { ascending: true });
+      if (error) { if (!marketMissing(error)) console.warn('[auth] listMyStall:', error.message); return []; }
+      return data || [];
+    } catch (err) { console.warn('[auth] listMyStall:', errMsg(err)); return []; }
+  }
+
+  // Put one item on sale in (stallId, city) at `slot` for `price` gold.
+  // `sellerName` is the character display name stored on the row for browsing.
+  // Returns { ok, error?, row? }.
+  async placeListing(stallId, city, slot, item, price, sellerName) {
+    if (!this.isAvailable()) return { ok: false, error: 'offline' };
+    if (!item) return { ok: false, error: 'no item' };
+    try {
+      const user = await this.currentUser();
+      if (!user) return { ok: false, error: 'not signed in' };
+      const row = {
+        seller_id: user.id,
+        seller_name: String(sellerName || 'someone').slice(0, 24),
+        city: String(city),
+        stall_id: Math.floor(stallId),
+        slot: Math.floor(slot),
+        item,
+        price: Math.max(0, Math.floor(price)),
+      };
+      const { data, error } = await this.client
+        .from('market_listings').insert(row).select().single();
+      if (error) { return { ok: false, error: marketMissing(error) ? 'no-market' : error.message }; }
+      return { ok: true, row: data };
+    } catch (err) { return { ok: false, error: errMsg(err) }; }
+  }
+
+  // Unsell: delete my own listing and hand the item back. RLS only lets a player
+  // delete their OWN rows, so this can never pull another seller's stock.
+  // Returns { ok, item } (item is the instance that was on display) or { ok:false }.
+  async takeListing(listingId) {
+    if (!this.isAvailable() || !listingId) return { ok: false, error: 'offline' };
+    try {
+      const { data, error } = await this.client
+        .from('market_listings').delete().eq('id', listingId).select().single();
+      if (error) { return { ok: false, error: marketMissing(error) ? 'no-market' : error.message }; }
+      return { ok: true, item: data ? data.item : null };
+    } catch (err) { return { ok: false, error: errMsg(err) }; }
+  }
+
+  // Buy a listing through the atomic, server-authoritative RPC. Returns the
+  // RPC's own result object: { ok, item?, price? } or { ok:false, reason }.
+  async buyListing(listingId) {
+    if (!this.isAvailable() || !listingId) return { ok: false, reason: 'offline' };
+    try {
+      const { data, error } = await this.client.rpc('market_buy', { p_listing: listingId });
+      if (error) { return { ok: false, reason: marketMissing(error) ? 'no-market' : error.message }; }
+      return data || { ok: false, reason: 'unknown' };
+    } catch (err) { return { ok: false, reason: errMsg(err) }; }
+  }
+
+  // On login: atomically credit every unclaimed payout to the character's gold
+  // and return the claimed list so the client can show "X bought Y" toasts.
+  // Returns [{ buyer_name, item_name, gold }] (empty when nothing is owed).
+  async claimPayouts() {
+    if (!this.isAvailable()) return [];
+    try {
+      const { data, error } = await this.client.rpc('claim_payouts');
+      if (error) { if (!marketMissing(error)) console.warn('[auth] claimPayouts:', error.message); return []; }
+      return Array.isArray(data) ? data : [];
+    } catch (err) { console.warn('[auth] claimPayouts:', errMsg(err)); return []; }
+  }
 }
 
 // If a Supabase/PostgREST error means "this column doesn't exist", return the
@@ -351,6 +459,19 @@ function columnNotFound(error) {
   let m = msg.match(/find the '([^']+)' column/i);
   if (!m) m = msg.match(/column (?:[\w.]*\.)?["']?([a-z_][a-z0-9_]*)["']?\s+does not exist/i);
   return m ? m[1] : null;
+}
+
+// The market_* tables and RPCs are OPTIONAL backend (added by ADD_market.sql).
+// Mirroring columnNotFound, treat "relation/function does not exist" as
+// "feature off" so a project that hasn't installed the market degrades to a
+// no-op market rather than surfacing errors. Covers undefined_table (42P01),
+// undefined_function (42883) and PostgREST's not-found / schema-cache codes.
+function marketMissing(error) {
+  if (!error) return false;
+  const code = error.code || '';
+  const msg = error.message || '';
+  if (code === '42P01' || code === '42883' || code === 'PGRST202' || code === 'PGRST205') return true;
+  return /does not exist|find the (table|function)|schema cache/i.test(msg);
 }
 
 // Lowest slot index in 0..MAX-1 not yet taken, or null when full.
