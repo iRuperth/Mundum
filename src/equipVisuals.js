@@ -93,6 +93,8 @@ export class EquipVisuals {
 
   setHelmet(item) {
     if (this.helmetMesh) { this.char.parts.helmet.remove(this.helmetMesh); disposeTree(this.helmetMesh); this.helmetMesh = null; }
+    // A worn helmet hides the hair (covered by the casco); removing it shows it.
+    if (this.char.parts.hairGroup) this.char.parts.hairGroup.visible = !item;
     if (!item) return;
     // Prefer the detailed per-item helmet (real cascos with crests/visors/horns);
     // fall back to the generic style builder for any id without a bespoke design.

@@ -49,6 +49,11 @@ export class Peers {
       colors: { ...DEFAULT_COLORS, ...(state.colors || {}) },
       sex: state.sex || 'male',
       hair: state.hair || 'short',
+      nose: state.nose || 'small',
+      mouth: state.mouth || 'smile',
+      eyes: state.eyes || 'normal',
+      brows: state.brows || 'normal',
+      ears: state.ears || 'normal',
     };
     const char = buildCharacter(profile);
     this.scene.add(char.group);

@@ -12,40 +12,37 @@
 import { getLang, setLang, t } from './i18n.js';
 import { PROFESSIONS } from './data/professions.js';
 import { renderPortrait } from './portrait.js';
+import { CharPreview } from './charPreview.js';
+import { HAIR_STYLES, NOSE_STYLES, MOUTH_STYLES, EYE_STYLES, BROW_STYLES, EAR_STYLES } from './character.js';
 
 const MAX_CHARACTERS = 3;
 
 // Color palettes mirror the in-game creation screen (main.js).
 const COLOR_PARTS = [
-  { key: 'shirt', colors: ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ecf0f1', '#34495e', '#ff6fa5'] },
-  { key: 'pants', colors: ['#34495e', '#2c3e50', '#5d4037', '#1565c0', '#2e7d32', '#616161', '#8e24aa', '#bf360c'] },
-  { key: 'skin', colors: ['#ffdbac', '#f2c79b', '#e0ac7e', '#c68a5a', '#9c6b43', '#7a4f2e'] },
-  { key: 'hair', colors: ['#1a1a1a', '#2c1b10', '#4a2f1b', '#7a4a21', '#b3823e', '#e8c04a', '#d9b380', '#992222', '#555555', '#ff7043'] },
+  { key: 'shirt', labelKey: 'colorTop', colors: ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ecf0f1', '#34495e', '#ff6fa5'] },
+  { key: 'pants', labelKey: 'colorBottom', colors: ['#34495e', '#2c3e50', '#5d4037', '#1565c0', '#2e7d32', '#616161', '#8e24aa', '#bf360c'] },
+  { key: 'skin', labelKey: 'colorSkin', colors: ['#ffdbac', '#f2c79b', '#e0ac7e', '#c68a5a', '#9c6b43', '#7a4f2e'] },
+  { key: 'hair', labelKey: 'colorHair', colors: ['#1a1a1a', '#2c1b10', '#4a2f1b', '#7a4a21', '#b3823e', '#e8c04a', '#d9b380', '#992222', '#555555', '#ff7043'] },
 ];
 
 const DEFAULT_COLORS = { skin: '#f2c79b', shirt: '#3498db', pants: '#34495e', hair: '#4a2f1b' };
 
-// Choice sets that drive the segmented pickers on the create screen.
+// Choice sets that drive the segmented pickers on the create screen. Most are
+// derived from the character.js catalogues so the UI never drifts from the
+// model: add a style there and it appears here. The i18n key is the camelCased
+// "<group><Id>" (e.g. hair 'ponytail' -> hairPonytail).
 const SEX_OPTS = [
   { id: 'male', key: 'male' },
   { id: 'female', key: 'female' },
 ];
-const HAIR_OPTS = [
-  { id: 'short', key: 'hairShort' },
-  { id: 'long', key: 'hairLong' },
-  { id: 'spiky', key: 'hairSpiky' },
-  { id: 'bald', key: 'hairBald' },
-];
-const NOSE_OPTS = [
-  { id: 'small', key: 'noseSmall' },
-  { id: 'round', key: 'noseRound' },
-  { id: 'pointy', key: 'nosePointy' },
-];
-const MOUTH_OPTS = [
-  { id: 'smile', key: 'mouthSmile' },
-  { id: 'neutral', key: 'mouthNeutral' },
-  { id: 'open', key: 'mouthOpen' },
-];
+const cap = (s) => s.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+const optsFrom = (prefix, ids) => ids.map((id) => ({ id, key: prefix + cap(id) }));
+const HAIR_OPTS = optsFrom('hair', HAIR_STYLES);
+const NOSE_OPTS = optsFrom('nose', NOSE_STYLES);
+const MOUTH_OPTS = optsFrom('mouth', MOUTH_STYLES);
+const EYE_OPTS = optsFrom('eyes', EYE_STYLES);
+const BROW_OPTS = optsFrom('brows', BROW_STYLES);
+const EAR_OPTS = optsFrom('ears', EAR_STYLES);
 
 // Local fallback strings for keys not yet in i18n.js. tt() prefers t().
 const FALLBACK = {
@@ -208,6 +205,7 @@ export class AuthUI {
   }
 
   hide() {
+    this._disposePreview();
     this.root.classList.add('hidden');
     this.root.innerHTML = '';
   }
@@ -413,56 +411,94 @@ export class AuthUI {
       hair: defaults.hair || 'short',
       nose: defaults.nose || 'small',
       mouth: defaults.mouth || 'smile',
+      eyes: defaults.eyes || 'normal',
+      brows: defaults.brows || 'normal',
+      ears: defaults.ears || 'normal',
       colors: { ...DEFAULT_COLORS, ...(defaults.colors || {}) },
       profession: defaults.profession || null,
     };
 
-    const card = this._card();
-    card.appendChild(el('h1', { text: 'MUNDUM' }));
-    card.appendChild(el('p', { class: 'auth-sub', text: tt('createCharacter') }));
+    this._disposePreview();
 
-    // Live 2D preview of the character, refreshed whenever a look option changes.
-    const portrait = el('img', { class: 'auth-portrait' });
-    const updatePortrait = () => {
-      try { portrait.src = renderPortrait(state, 220); } catch (_) { /* webgl unavailable */ }
-    };
-    card.appendChild(portrait);
-    updatePortrait();
+    // A full-viewport card (edge to edge, no page scroll). Title row, then a
+    // two-column body that fills the height: rotatable 3D preview on the left,
+    // all the option groups (scroll only if needed) on the right; footer pinned.
+    const card = this._card();
+    card.classList.add('auth-card-create');
+
+    const head = el('div', { class: 'create-head' }, [
+      el('h1', { text: 'MUNDUM' }),
+      el('p', { class: 'auth-sub', text: tt('createCharacter') }),
+    ]);
+    card.appendChild(head);
+
+    const cols = el('div', { class: 'create-cols' });
+
+    // ---- Left: live drag-to-rotate 3D preview --------------------------------
+    const stageWrap = el('div', { class: 'create-stage' });
+    const preview = new CharPreview(state, { size: 320, autoRotate: true, interactive: true });
+    this._preview = preview;
+    stageWrap.appendChild(preview.el);
+    stageWrap.appendChild(el('div', { class: 'create-stage-hint', text: '↻ ' + tt('dragToRotate') }));
+    preview.start();
+    cols.appendChild(stageWrap);
+    const refresh = () => preview.setProfile(state);
+
+    // ---- Right: options -------------------------------------------------------
+    const opts = el('div', { class: 'create-opts' });
 
     const nameInput = this._input('text', tt('name'), 16);
     nameInput.value = state.name;
     nameInput.addEventListener('input', () => { state.name = nameInput.value; });
-    card.appendChild(this._labeled(tt('name'), nameInput));
+    opts.appendChild(this._labeled(tt('name'), nameInput));
 
-    card.appendChild(this._seg(SEX_OPTS, state.sex, (id) => { state.sex = id; updatePortrait(); }));
-    card.appendChild(this._seg(HAIR_OPTS, state.hair, (id) => { state.hair = id; updatePortrait(); }));
-    card.appendChild(this._seg(NOSE_OPTS, state.nose, (id) => { state.nose = id; updatePortrait(); }));
-    card.appendChild(this._seg(MOUTH_OPTS, state.mouth, (id) => { state.mouth = id; updatePortrait(); }));
+    opts.appendChild(this._seg(SEX_OPTS, state.sex, (id) => { state.sex = id; refresh(); }));
 
+    opts.appendChild(el('div', { class: 'auth-section', text: tt('sectionHair') }));
+    opts.appendChild(this._seg(HAIR_OPTS, state.hair, (id) => { state.hair = id; refresh(); }));
+
+    opts.appendChild(el('div', { class: 'auth-section', text: tt('sectionFace') }));
+    opts.appendChild(this._seg(EYE_OPTS, state.eyes, (id) => { state.eyes = id; refresh(); }));
+    opts.appendChild(this._seg(BROW_OPTS, state.brows, (id) => { state.brows = id; refresh(); }));
+    opts.appendChild(this._seg(NOSE_OPTS, state.nose, (id) => { state.nose = id; refresh(); }));
+    opts.appendChild(this._seg(MOUTH_OPTS, state.mouth, (id) => { state.mouth = id; refresh(); }));
+    opts.appendChild(this._seg(EAR_OPTS, state.ears, (id) => { state.ears = id; refresh(); }));
+
+    opts.appendChild(el('div', { class: 'auth-section', text: tt('sectionColors') }));
     for (const part of COLOR_PARTS) {
-      card.appendChild(this._swatchRow(part, state.colors[part.key], (color) => { state.colors[part.key] = color; updatePortrait(); }));
+      opts.appendChild(this._swatchRow(part, state.colors[part.key], (color) => { state.colors[part.key] = color; refresh(); }));
     }
 
-    card.appendChild(el('div', { class: 'auth-section', text: tt('chooseProfession') }));
+    opts.appendChild(el('div', { class: 'auth-section', text: tt('chooseProfession') }));
     const profErr = el('p', { class: 'auth-error' });
-    card.appendChild(this._professionPicker(state, () => { profErr.textContent = ''; }));
+    opts.appendChild(this._professionPicker(state, () => { profErr.textContent = ''; }));
 
+    cols.appendChild(opts);
+    card.appendChild(cols);
+
+    // ---- Footer (full width, pinned) -----------------------------------------
+    const footer = el('div', { class: 'create-foot' });
     const err = el('p', { class: 'auth-error' });
-    card.appendChild(err);
-
+    footer.appendChild(err);
     const confirm = el('button', {
       class: 'auth-primary', text: tt('confirm'),
       on: { click: () => this._doCreate(state, err, confirm) },
     });
-    card.appendChild(confirm);
-
+    footer.appendChild(confirm);
     const offline = !this.auth || !this.auth.isAvailable();
-    card.appendChild(el('button', {
+    footer.appendChild(el('button', {
       class: 'auth-ghost', text: tt('back'),
-      on: { click: () => (offline ? this._renderLogin() : this._renderSelect()) },
+      on: { click: () => { this._disposePreview(); offline ? this._renderLogin() : this._renderSelect(); } },
     }));
-    card.appendChild(this._langRow(() => this._renderCreate(slot)));
+    footer.appendChild(this._langRow(() => this._renderCreate(slot)));
+    card.appendChild(footer);
+
     this._mount(card);
+  }
+
+  // Stop and free the live creation preview (its WebGL scene + RAF loop).
+  _disposePreview() {
+    if (this._preview) { try { this._preview.destroy(); } catch (_) { /* ignore */ } this._preview = null; }
   }
 
   _professionPicker(state, onPick) {
@@ -498,6 +534,10 @@ export class AuthUI {
     if (!state.profession) { err.textContent = tt('pickProfession'); return; }
     err.textContent = '';
 
+    // Extended appearance (nose/mouth/eyes/brows/ears) is packed into the colors
+    // jsonb under a reserved `_look` key so it persists to Supabase WITHOUT a
+    // schema migration (the table only has sex/hair/colors). auth.js unpacks it.
+    const look = { nose: state.nose, mouth: state.mouth, eyes: state.eyes, brows: state.brows, ears: state.ears };
     const fields = {
       slot: state.slot,
       name,
@@ -505,13 +545,18 @@ export class AuthUI {
       hair: state.hair,
       nose: state.nose,
       mouth: state.mouth,
-      colors: state.colors,
+      eyes: state.eyes,
+      brows: state.brows,
+      ears: state.ears,
+      colors: { ...state.colors, _look: look },
       profession: state.profession,
     };
+    this._disposePreview();
 
-    // Offline / guest: no backend, just build a fresh profile object.
+    // Offline / guest: no backend, just build a fresh profile object (clean
+    // colors, the look fields are already top-level).
     if (!this.auth || !this.auth.isAvailable()) {
-      this._play({ ...fields, level: 1, exp: 0 });
+      this._play({ ...fields, colors: { ...state.colors }, level: 1, exp: 0 });
       return;
     }
 
@@ -576,6 +621,8 @@ export class AuthUI {
   // One color swatch row for a body part.
   _swatchRow(part, selected, onPick) {
     const row = el('div', { class: 'auth-swatch-row' });
+    // Label which part this colour row controls (top, bottom, skin, hair).
+    if (part.labelKey) row.appendChild(el('span', { class: 'auth-swatch-label', text: tt(part.labelKey) }));
     const swatches = el('div', { class: 'auth-swatches' });
     for (const color of part.colors) {
       const b = el('button', {

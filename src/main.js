@@ -812,7 +812,7 @@ ui.hint.textContent = t('hintDesktop');
 const auth = new Auth();
 const authUI = new AuthUI(auth, {
   onPlay: (character) => enterWithCharacter(character),
-  getProfileDefaults: () => ({ colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' }),
+  getProfileDefaults: () => ({ colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile', eyes: 'normal', brows: 'normal', ears: 'normal' }),
 });
 ui.creation.classList.add('hidden');
 authUI.show();
@@ -842,8 +842,13 @@ function enterWithCharacter(character) {
     hair: character.hair || 'short',
     nose: character.nose || 'small',
     mouth: character.mouth || 'smile',
+    eyes: character.eyes || 'normal',
+    brows: character.brows || 'normal',
+    ears: character.ears || 'normal',
     profession: getProfession(character.profession) ? character.profession : 'knight',
   };
+  // The DB-packing key must never leak into the material colors.
+  if (profile.colors && profile.colors._look) { profile.colors = { ...profile.colors }; delete profile.colors._look; }
   saveProfile();
   player.profession = profile.profession;
   // Fresh stats for this character's vocation. A returning character loads its
@@ -2659,6 +2664,7 @@ function sendNetState() {
   net.sendState({
     x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw,
     level: player.level, name: profile.name, sex: profile.sex, hair: profile.hair, colors: profile.colors,
+    nose: profile.nose, mouth: profile.mouth, eyes: profile.eyes, brows: profile.brows, ears: profile.ears,
     profession: player.profession,
   });
 }
@@ -2718,7 +2724,7 @@ function saveToAccount() {
 function loadProfile() {
   try {
     const p = JSON.parse(localStorage.getItem(PROFILE_KEY));
-    if (p && p.colors) return { name: p.name || '', colors: { ...DEFAULT_COLORS, ...p.colors }, sex: p.sex === 'female' ? 'female' : 'male', hair: HAIR_STYLES.includes(p.hair) ? p.hair : 'short', nose: p.nose || 'small', mouth: p.mouth || 'smile', profession: getProfession(p.profession) ? p.profession : 'knight', homeCityId: p.homeCityId || null };
+    if (p && p.colors) { const colors = { ...DEFAULT_COLORS, ...p.colors }; delete colors._look; return { name: p.name || '', colors, sex: p.sex === 'female' ? 'female' : 'male', hair: HAIR_STYLES.includes(p.hair) ? p.hair : 'short', nose: p.nose || 'small', mouth: p.mouth || 'smile', eyes: p.eyes || 'normal', brows: p.brows || 'normal', ears: p.ears || 'normal', profession: getProfession(p.profession) ? p.profession : 'knight', homeCityId: p.homeCityId || null }; }
   } catch (_) { /* corrupt profile is regenerated */ }
   return { name: '', colors: { ...DEFAULT_COLORS }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile', profession: 'knight', homeCityId: null };
 }
