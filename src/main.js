@@ -1465,7 +1465,7 @@ async function connectOnline() {
     if (trade && trade.peerId === id) { gameUI.toast(t('partnerLeft') || 'Partner left', 'bad'); endTrade(false); }
   });
   net.onPeerJoin((id, meta) => { if (meta && meta.name) gameUI.toast(t('connected', meta.name)); });
-  net.onChat((m) => addChatLine(m.name, m.text));
+  net.onChat((m) => { if (chatBlocked.has(m.name)) return; addChatLine(m.name, m.text); });
 
   // Incoming trade request: a peer wants to trade. Auto-open the window if I'm
   // free (a friendly kid game; no spam guard needed beyond one trade at a time).
@@ -1563,6 +1563,43 @@ function removeFriend(name) {
   if (friends.delete(name)) { gameUI.toast(`${name} removed`, 'info'); saveToAccount(); }
 }
 
+// Chat block list (names whose messages are hidden) and a follow target (a peer
+// id the player auto-walks after). Both toggle from the player-info panel.
+const chatBlocked = new Set();
+function isBlocked(name) { return chatBlocked.has(name); }
+function toggleBlock(name) {
+  if (!name) return;
+  if (chatBlocked.delete(name)) gameUI.toast(`${name}: ${t('unblockChat') || 'chat unblocked'}`, 'info');
+  else { chatBlocked.add(name); gameUI.toast(`${name}: ${t('blockChat') || 'chat blocked'}`, 'info'); }
+}
+let followingPeerId = null;
+function toggleFollow(id) {
+  followingPeerId = (followingPeerId === id) ? null : id;
+  gameUI.toast(followingPeerId ? (t('following') || 'Following') : (t('stopFollow') || 'Stopped following'), 'info');
+}
+// When following a peer, steer the player toward them by writing controls.move
+// (camera-relative), so the normal movement + collision path carries it. Manual
+// WASD input wins (cancels follow for that frame); follow ends if the peer is
+// gone or you arrive within ~2m.
+function applyFollow(controls) {
+  if (!followingPeerId) return;
+  const peer = peers && peers.peers.get(followingPeerId);
+  if (!peer) { followingPeerId = null; return; }
+  // Don't fight the player: if they're pressing a direction, let them drive.
+  if (controls.move && (Math.abs(controls.move.x) > 0.01 || Math.abs(controls.move.z) > 0.01)) return;
+  const dx = peer.pos.x - player.pos.x, dz = peer.pos.z - player.pos.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 2.0) { if (controls.move) { controls.move.x = 0; controls.move.z = 0; } return; } // close enough
+  // Convert the world-space direction to camera-relative move (the inverse of the
+  // forward/right basis player.update uses), so steering matches the camera yaw.
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const ux = dx / dist, uz = dz / dist;
+  if (controls.move) {
+    controls.move.z = ux * fx + uz * fz;      // forward component
+    controls.move.x = ux * (-fz) + uz * fx;   // right component
+  }
+}
+
 // Left-click reach for selecting another player (metres). A reusable raycaster
 // fires from the crosshair (screen centre) since the game is pointer-locked.
 const _peerRay = new THREE.Raycaster();
@@ -1585,9 +1622,13 @@ function openPlayerInfo(id, peer) {
   gameUI.openPlayerInfo({
     id, name,
     isFriend: isFriend(name),
+    isBlocked: isBlocked(name),
+    isFollowing: followingPeerId === id,
     onAddFriend: () => { addFriend(name); },
     onRemoveFriend: () => { removeFriend(name); },
     onTrade: () => { startTradeWith(id, name); },
+    onBlock: () => { toggleBlock(name); },
+    onFollow: () => { toggleFollow(id); },
   });
 }
 
@@ -3567,6 +3608,7 @@ function tick() {
 
     if (player.alive) {
       const wasGrounded = player.grounded;
+      applyFollow(controls);                 // auto-walk after a followed peer
       player.update(dt, controls);
       mounts.update(dt);   // place + animate the ridden beast under the player
       if (wasGrounded && !player.grounded && player.vel.y > 1) audio.sfx.jump();
