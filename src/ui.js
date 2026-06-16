@@ -912,6 +912,7 @@ export class UI {
       if ((item.count || 1) > 1) lines.push(`× ${item.count}`);
     }
     if (item.atk != null) lines.push(`${t('attack')}: ${item.atk}`);
+    if (item.arrowAtk) lines.push(`${t('attack')}: +${item.arrowAtk}`);
     if (item.defense) lines.push(`${t('defense')}: ${item.defense}`);
     if (item.element && item.element !== 'none') lines.push(`${t('element')}: ${elementName(item.element)}`);
     if (item.speedBonus) lines.push(`+${Math.round(item.speedBonus * 100)}% ${t('boots') || ''}`.trim());
@@ -1034,6 +1035,7 @@ export class UI {
     if (def.atkMin != null || def.atkMax != null) {
       parts.push(`<span class="st">⚔ ${t('stAtk')} ${r(def.atkMin || 0, def.atkMax || def.atkMin || 0)}</span>`);
     }
+    if (def.arrowAtk) parts.push(`<span class="st">⚔ ${t('stAtk')} +${def.arrowAtk}</span>`);
     if (def.defense) parts.push(`<span class="st">🛡 ${t('stDef')} ${def.defense}</span>`);
     if (def.element && def.element !== 'none') parts.push(`<span class="st">✦ ${elementName(def.element)}</span>`);
     if (def.twoHanded) parts.push(`<span class="st">✋ ${t('stTwoH')}</span>`);
