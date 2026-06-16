@@ -1081,8 +1081,10 @@ for (let i = 0; i < REMAINS_CITIES.length; i++) {
   const city = REMAINS_CITIES[i];
   NPCS.push({
     id: `${city}_remains_buyer`, name: REMAINS_NAMES[city] || 'Remains Buyer', city, role: 'vendor',
-    model: 'merchant', color: 0x7a6a4a, district: 'food',
-    offset: { x: 14 + (i % 3) * 3, z: -14 - (i % 2) * 3 },
+    // Stands at his OWN stall (no district building) so he never shares the food
+    // shop with the cook — placed off to the side of the plaza by his offset.
+    model: 'merchant', color: 0x7a6a4a,
+    offset: { x: 16 + (i % 3) * 3, z: 12 + (i % 2) * 3 },
     // Buys trophies AND crafting materials (silk, hides, scales, fangs, essences…),
     // paying value × sellMult — a steady grind-and-sell income loop.
     shop: { buyMult: 1, sellMult: 0.5, sells: {}, buys: { kinds: ['trophy', 'material'] } },
