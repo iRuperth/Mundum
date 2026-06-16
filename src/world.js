@@ -368,6 +368,42 @@ export class World {
     return false;
   }
 
+  // True if the straight line from (x1,z1) to (x2,z2) is interrupted by a
+  // permanent obstacle — a city WALL or building (fixedSolids), not trees/rocks.
+  // Used for line-of-sight so a name tag hides when a wall stands between the
+  // player and the NPC. Walks the chunks the segment crosses and does a cheap
+  // 2D segment-vs-circle test against each wall footprint in them.
+  lineBlocked(x1, z1, x2, z2) {
+    const dx = x2 - x1, dz = z2 - z1;
+    const len2 = dx * dx + dz * dz || 1e-6;
+    // Collect the chunk keys the segment passes through (sample along it; a span
+    // shorter than a chunk just checks its two endpoints' chunks).
+    const seen = new Set();
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / CHUNK));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const sx = x1 + dx * t, sz = z1 + dz * t;
+      const cx = Math.floor(sx / CHUNK), cz = Math.floor(sz / CHUNK);
+      // Include the 3x3 around each sample so a wall straddling a chunk edge is
+      // never missed.
+      for (let ox = -1; ox <= 1; ox++)
+        for (let oz = -1; oz <= 1; oz++) seen.add(`${cx + ox},${cz + oz}`);
+    }
+    for (const key of seen) {
+      const list = this.fixedSolids.get(key);
+      if (!list) continue;
+      for (const s of list) {
+        // Distance from the wall circle's center to the segment. If it's within
+        // the wall radius, the line of sight is blocked.
+        const t = Math.max(0, Math.min(1, ((s.x - x1) * dx + (s.z - z1) * dz) / len2));
+        const px = x1 + dx * t, pz = z1 + dz * t;
+        const ddx = s.x - px, ddz = s.z - pz;
+        if (ddx * ddx + ddz * ddz < s.r * s.r) return true;
+      }
+    }
+    return false;
+  }
+
   update(px, pz, buildAll = false) {
     const cx = Math.floor(px / CHUNK), cz = Math.floor(pz / CHUNK);
     if (cx !== this._cx || cz !== this._cz) {

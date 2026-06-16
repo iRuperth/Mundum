@@ -4,6 +4,7 @@ import { NPCS } from './data/npcs.js';
 import { CITIES } from './cities.js';
 
 const NPC_RADIUS = 2.6;
+const NAME_RANGE = 18;     // only show a name tag within this many meters (and with line of sight)
 const HOME_RADIUS = 3.4;   // how far an NPC strolls from its spawn spot
 const WALK_SPEED = 0.7;    // meters per second while strolling
 const FACE_HOLD = 4;       // seconds an NPC keeps facing the player after talking
@@ -195,7 +196,7 @@ export class WorldNpcs {
     }
   }
 
-  tick(dt) {
+  tick(dt, playerPos = null) {
     for (const e of this.entries) {
       let moving = false;
       if (e.faceT > 0) {
@@ -215,7 +216,24 @@ export class WorldNpcs {
       // quest '!' marker shares the same airspace, so the name sits a touch
       // higher when the marker is showing.
       e.nameTag.position.set(e.x, e.y + (e.mark.visible ? 3.3 : 2.9) + bob * 0.4, e.z);
+      // Only show the name when the player is CLOSE and there's a clear line of
+      // sight — a city wall between them hides it, so names no longer bleed
+      // through walls or read from across the map. (Fades via opacity; the
+      // sprite's own `.visible` still gates the whole NPC underground.)
+      e.nameTag.material.opacity = this._tagVisible(e, playerPos) ? 1 : 0;
     }
+  }
+
+  // A name tag shows only within NAME_RANGE and with nothing solid between the
+  // player and the NPC. Skips the line-of-sight raycast when out of range (cheap
+  // early-out) and when the player is essentially on top of the NPC.
+  _tagVisible(e, playerPos) {
+    if (!playerPos) return true;
+    const dx = e.x - playerPos.x, dz = e.z - playerPos.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > NAME_RANGE * NAME_RANGE) return false;
+    if (d2 < 4) return true;   // right next to them — skip the LoS check
+    return !this.world.lineBlocked(playerPos.x, playerPos.z, e.x, e.z);
   }
 }
 
@@ -256,7 +274,11 @@ function makeNpcNameTag(text, role) {
   ctx.lineWidth = 6;
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.strokeText(text, w / 2, h / 2);
-  ctx.fillStyle = ROLE_COLOR[role] || '#e8e0cf';
+  // NPC names are always YELLOW so they read instantly as non-player characters;
+  // real players and bots wear white name tags (see peers.js / bots.js). The
+  // per-role palette is kept around in case a future map key wants it.
+  ctx.fillStyle = '#ffd34d';
+  void role;
   ctx.fillText(text, w / 2, h / 2);
   const tex = new THREE.CanvasTexture(c);
   tex.minFilter = THREE.LinearFilter;
