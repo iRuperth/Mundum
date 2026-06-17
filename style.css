@@ -1217,9 +1217,20 @@ body.touch #crosshair { display: none !important; }
 }
 .sp-stat-name { width: 96px; font-weight: 800; }
 .sp-stat-val { width: 34px; font-size: 16px; text-align: right; }
-/* Tibia-style use-skill progress bar to the next level. */
-.sp-skillbar { flex: 1; height: 8px; border-radius: 5px; background: rgba(255,255,255,.12); overflow: hidden; }
-.sp-skillbar-fill { display: block; height: 100%; background: linear-gradient(90deg,#5dd6ff,#3a9bdd); }
+/* The use-skill rows are tighter than generic stat rows: the narrow side panel
+   (~158px usable) can't fit a 96px name + 34px value + a visible bar on one line,
+   so name/value shrink and gaps tighten to leave the Tibia fill bar real width. */
+.sp-stat-row { flex-wrap: wrap; gap: 4px 8px; }
+.sp-stat-row .sp-stat-name { width: auto; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-stat-row .sp-stat-val { width: auto; min-width: 22px; }
+/* Tibia-style use-skill progress bar to the next level. It takes the FULL row
+   width on its own line so it's always visible no matter how narrow the panel. */
+.sp-skillbar { flex: 1 0 100%; height: 7px; border-radius: 5px;
+  background: rgba(255,255,255,.12); overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); }
+.sp-skillbar-fill { display: block; height: 100%;
+  background: linear-gradient(90deg,#5dd6ff,#3a9bdd); transition: width .25s ease; }
 .sp-skill.locked { opacity: .5; }
 /* A learned, castable spell row can be dragged onto the hotbar. The grab cursor
    and a faint dotted handle on hover signal it. */
@@ -1564,9 +1575,29 @@ body.touch #crosshair { display: none !important; }
 .kb-key-ico { font-size: 22px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .kb-key-ico svg { width: 26px; height: 26px; }
 .kb-key.kb-bound { border-color: rgba(126,201,255,.7); background: linear-gradient(180deg, rgba(40,64,104,.95), rgba(20,30,58,.95)); }
-.kb-key.kb-reserved { opacity: .4; cursor: default; }
+/* Reserved = a game action sits here. Dimmed a little, with a small action label
+   so the keyboard reads as the live control map. */
+.kb-key.kb-reserved { opacity: .62; cursor: default; background: rgba(60,40,30,.55); }
 .kb-key.kb-reserved .kb-key-label { color: #ffae8a; }
+.kb-actlabel { font-size: 8px; line-height: 1.05; color: #ffcf9a; font-weight: 700; text-align: center;
+  padding: 0 2px; word-break: break-word; }
 .kb-key.kb-drop { outline: 2px solid #7ec9ff; box-shadow: 0 0 10px rgba(126,201,255,.6); }
+
+/* Game-action rebind list ("click an action, then press a key"). */
+.kb-actions { flex: 1 1 200px; min-width: 180px; background: rgba(8,12,28,.6);
+  border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 10px; max-height: 360px; overflow-y: auto; }
+.kb-actions-title { font-size: 12px; font-weight: 800; color: #ffe27a; margin-bottom: 8px; }
+.kb-actions-list { display: flex; flex-direction: column; gap: 5px; }
+.kb-actrow { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 9px; border-radius: 8px; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.12); cursor: pointer; color: #fff; font-size: 13px; text-align: left; }
+.kb-actrow:hover { border-color: rgba(126,201,255,.5); }
+.kb-actrow.armed { border-color: #ffd27a; box-shadow: 0 0 8px rgba(255,210,122,.5); }
+.kb-actname { opacity: .9; }
+.kb-actkey { font-weight: 800; color: #7ec9ff; background: rgba(0,0,0,.3); border-radius: 6px;
+  padding: 2px 8px; min-width: 34px; text-align: center; }
+.kb-actrow.armed .kb-actkey { color: #ffd27a; }
+
 /* The drag source tray */
 .kb-tray { flex: 1 1 220px; min-width: 200px; background: rgba(8,12,28,.6); border: 1px solid rgba(255,255,255,.1);
   border-radius: 10px; padding: 10px; max-height: 360px; overflow-y: auto; }
