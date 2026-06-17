@@ -159,9 +159,12 @@ export const NPCS = [
   },
   // Stable Master: sells the two starter mounts (horse + wolf) and points the
   // way to the mount-quest givers. role:'stable' opens the mount shop UI (it has
-  // no item `shop`, so it skips the normal vendor path). Stands by the south gate.
+  // no item `shop`, so it skips the normal vendor path). district:'stable' homes
+  // him INSIDE The Stable building (a corner barn) so he stays put there instead
+  // of roaming the streets.
   {
     id: 'rivertown_stablemaster', name: 'Stable Master Brent', city: 'rivertown', role: 'stable',
+    district: 'stable',
     model: 'merchant', color: 0x7a5a30, offset: { x: 12, z: -10 },
     greeting: { es: '¿Buscas montura? Tengo las mejores bestias domadas.', en: 'Looking for a mount? I have the finest tamed beasts.' },
     lines: {
