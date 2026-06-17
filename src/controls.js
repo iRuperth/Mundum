@@ -52,10 +52,10 @@ export class Controls {
         e.preventDefault();
         opts.onToggleMouse?.();
       }
-      // Number keys 1-9 and 0 trigger the matching hotbar slot.
-      if (!e.repeat && /^(Digit|Numpad)[0-9]$/.test(e.code)) {
-        opts.onHotbarKey?.(parseInt(e.code.slice(-1), 10));
-      }
+      // Hotbar: forward the raw key code so the bar can fire whichever slot the
+      // player bound to it (keys are configurable now, not just 1-0). The hotbar
+      // also captures the next key when rebinding a slot.
+      if (!e.repeat && opts.onHotbarKeyCode) opts.onHotbarKeyCode(e.code);
       this.keys.add(e.code);
     });
     addEventListener('keyup', (e) => {
