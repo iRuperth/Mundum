@@ -255,16 +255,19 @@ export class Net {
   // chat
 
   sendChat(text) {
-    if (!this._online || !this.channel) return;
     const clean = String(text || '').slice(0, 200).trim();
     if (!clean) return;
     const payload = {
-      from: this.user.id,
+      from: this.user ? this.user.id : 'local',
       name: (this.profile && this.profile.name) || 'Adventurer',
       text: clean,
     };
-    this.channel.send({ type: 'broadcast', event: 'chat', payload });
-    // Echo locally since broadcast self is off.
+    // Broadcast to others when online (self-broadcast is off in the channel
+    // config), then ALWAYS echo locally here — online or offline — so the caller
+    // must NOT echo again (that was the double-message bug).
+    if (this._online && this.channel) {
+      this.channel.send({ type: 'broadcast', event: 'chat', payload });
+    }
     if (this._cb.chat) this._cb.chat(payload);
   }
 
