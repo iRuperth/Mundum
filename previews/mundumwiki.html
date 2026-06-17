@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MundumWiki</title>
+<style>
+  :root { --bg:#161b21; --panel:#20262d; --line:#3a434d; --ink:#e7ecf2; --dim:#9fb0c2; --accent:#3b6ea5; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px system-ui, sans-serif; overflow:hidden; }
+  #wiki { display:flex; height:100vh; }
+  /* Sidebar */
+  #side { width:208px; flex:none; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+  #brand { padding:16px 16px 10px; font-size:20px; font-weight:800; letter-spacing:.02em; }
+  #brand span { color:#7fb0e8; }
+  #brand small { display:block; font-size:11px; font-weight:400; color:var(--dim); margin-top:2px; letter-spacing:.04em; }
+  nav { padding:8px; display:flex; flex-direction:column; gap:4px; overflow-y:auto; }
+  nav button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:10px 12px;
+    border:1px solid transparent; background:transparent; color:var(--ink); border-radius:9px; cursor:pointer; font-size:14px; }
+  nav button:hover { background:#2a313a; }
+  nav button.on { background:var(--accent); border-color:#5a90c8; font-weight:600; }
+  nav button .em { font-size:18px; width:22px; text-align:center; }
+  nav .hint { margin-top:auto; padding:12px; color:var(--dim); font-size:11px; line-height:1.5; }
+  /* Content */
+  #content { flex:1; position:relative; }
+  #content iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:var(--bg); }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:14px; }
+  #loading.hidden { display:none; }
+  /* Mobile: sidebar becomes a top bar */
+  @media (max-width:680px) {
+    #wiki { flex-direction:column; }
+    #side { width:100%; height:auto; border-right:0; border-bottom:1px solid var(--line); }
+    #brand { padding:10px 14px 4px; font-size:17px; }
+    nav { flex-direction:row; flex-wrap:wrap; gap:4px; }
+    nav button { width:auto; padding:7px 10px; font-size:13px; }
+    nav button .label { display:none; }
+    nav .hint { display:none; }
+  }
+</style>
+</head>
+<body>
+<div id="wiki">
+  <aside id="side">
+    <div id="brand">Mundum<span>Wiki</span><small>Guía del mundo</small></div>
+    <nav id="nav"></nav>
+  </aside>
+  <section id="content">
+    <div id="loading">Cargando…</div>
+    <iframe id="frame" title="MundumWiki" src=""></iframe>
+  </section>
+</div>
+
+<script>
+  // Each tab loads an existing standalone preview in the frame, so the wiki is a
+  // single hub over all of them — no duplicated logic. Add a page here and it
+  // shows up in the wiki automatically.
+  const PAGES = [
+    { id: 'character', em: '🧍', label: 'Personaje',  src: 'character_preview.html' },
+    { id: 'creatures', em: '🐉', label: 'Criaturas',  src: 'creature_preview.html' },
+    { id: 'items',     em: '⚔️', label: 'Items 3D',   src: 'items_preview.html' },
+    { id: 'catalog',   em: '📚', label: 'Catálogo',   src: 'catalog_preview.html' },
+    { id: 'drops',     em: '💰', label: 'Drops',      src: 'drops_preview.html' },
+    { id: 'npcs',      em: '👤', label: 'NPCs',       src: 'npc_preview.html' },
+    { id: 'powers',    em: '✨', label: 'Poderes',    src: 'powers_preview.html' },
+  ];
+
+  const nav = document.getElementById('nav');
+  const frame = document.getElementById('frame');
+  const loading = document.getElementById('loading');
+  const btns = {};
+
+  function show(id, push) {
+    const page = PAGES.find(p => p.id === id) || PAGES[0];
+    for (const k in btns) btns[k].classList.toggle('on', k === page.id);
+    loading.classList.remove('hidden');
+    frame.src = page.src;
+    document.title = 'MundumWiki — ' + page.label;
+    if (push) history.replaceState(null, '', '#' + page.id);
+  }
+
+  frame.addEventListener('load', () => loading.classList.add('hidden'));
+
+  for (const p of PAGES) {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="em">${p.em}</span><span class="label">${p.label}</span>`;
+    b.addEventListener('click', () => show(p.id, true));
+    btns[p.id] = b;
+    nav.appendChild(b);
+  }
+  const hint = document.createElement('div');
+  hint.className = 'hint';
+  hint.textContent = 'Todo el contenido se genera en vivo desde los datos del juego.';
+  nav.appendChild(hint);
+
+  // Open the page named in the URL hash (#drops…), else the first tab.
+  const start = (location.hash || '').replace('#', '');
+  show(PAGES.some(p => p.id === start) ? start : PAGES[0].id, false);
+  addEventListener('hashchange', () => {
+    const id = (location.hash || '').replace('#', '');
+    if (PAGES.some(p => p.id === id)) show(id, false);
+  });
+</script>
+</body>
+</html>

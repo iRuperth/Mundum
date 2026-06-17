@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Resumen de Drops — Mundum</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<style>
+  :root { --bg:#1d2228; --panel:#252b33; --line:#3a434d; --ink:#e7ecf2; --dim:#9fb0c2; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:#20262d; border-bottom:1px solid var(--line);
+           padding:12px 18px; box-shadow:0 2px 10px rgba(0,0,0,.4); }
+  h1 { margin:0 0 2px; font-size:18px; }
+  .sub { color:var(--dim); font-size:13px; }
+  .controls { margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .controls input[type=search] { flex:1; min-width:200px; padding:7px 10px; border:1px solid var(--line);
+           background:#2e353e; color:var(--ink); border-radius:6px; font-size:14px; }
+  .tab { padding:6px 12px; border:1px solid var(--line); background:#2e353e; color:var(--ink);
+         border-radius:6px; cursor:pointer; font-size:13px; }
+  .tab.on { background:#3b6ea5; border-color:#5a90c8; }
+  main { padding:14px 18px 60px; max-width:1100px; margin:0 auto; }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 16px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 12px; }
+  .stat b { font-size:18px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim);
+       margin:22px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }
+  details { background:var(--panel); border:1px solid var(--line); border-radius:8px; margin:7px 0; overflow:hidden; }
+  summary { padding:9px 12px; cursor:pointer; display:flex; align-items:center; gap:10px; list-style:none; }
+  summary::-webkit-details-marker { display:none; }
+  summary .dot { width:14px; height:14px; border-radius:3px; flex:none; box-shadow:inset 0 0 0 1px rgba(0,0,0,.3); }
+  summary .nm { font-weight:600; }
+  summary .meta { color:var(--dim); font-size:12px; margin-left:auto; text-align:right; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:5px 12px; border-top:1px solid #2c333b; }
+  th { color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  td.r, th.r { text-align:right; font-variant-numeric:tabular-nums; }
+  .chance-hi { color:#9fe89f; } .chance-mid { color:#ffcf5a; } .chance-lo { color:#ff9d7a; } .chance-vlo { color:#c89bff; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:10px; background:#333c46; color:var(--dim); }
+  .tier-shop { color:#9fe89f; } .tier-epic { color:#c89bff; } .tier-legendary-tier { color:#ffcf5a; }
+  .note { color:var(--dim); font-size:12px; }
+  .warn { color:#ffb37a; }
+  .hidden { display:none; }
+  a.toplink { color:#7fb0e8; text-decoration:none; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Resumen de Drops — Mundum</h1>
+  <div class="sub">Generado en vivo desde los datos del juego (<code>creatures.js</code> + <code>items.js</code>). Refleja exactamente lo que sueltan las criaturas tras el rebalanceo de tasas, el botín no temático y los trofeos.</div>
+  <div class="controls">
+    <button class="tab on" data-view="byitem">Por item</button>
+    <button class="tab" data-view="bycreature">Por criatura</button>
+    <input type="search" id="q" placeholder="Buscar item o criatura…" />
+  </div>
+</header>
+<main>
+  <div class="stats" id="stats"></div>
+  <div id="byitem"></div>
+  <div id="bycreature" class="hidden"></div>
+</main>
+
+<script type="module">
+import { CREATURES } from '../src/data/creatures.js';
+import {
+  WEAPONS, ARMORS, CONTAINERS, POTIONS, LIGHTS, COINS,
+  getWeapon, getArmor, getContainer, getPotion, getLight, getCoin,
+} from '../src/data/items.js';
+import { TROPHIES, getTrophy } from '../src/data/trophies.js';
+
+const lang = 'es';
+const nm = (n) => (n && typeof n === 'object') ? (n[lang] || n.en) : n;
+const hex = (c) => '#' + ((c == null ? 0x888888 : c) >>> 0).toString(16).padStart(6, '0').slice(-6);
+
+// Category metadata + how to resolve an itemId to a real, droppable item. Loot
+// ids that don't resolve to any catalog entry (silk, hides, scales, …) are pure
+// flavor materials: combat's resolveItem() returns null for them, so they don't
+// actually drop. We surface those separately as "materiales (sin efecto)" so the
+// summary is honest about what really lands on the ground.
+const CATS = [
+  { key:'weapon',    label:'Armas',        resolve:(id)=>getWeapon(id) },
+  { key:'armor',     label:'Armaduras',    resolve:(id)=>getArmor(id) },
+  { key:'container', label:'Contenedores (mochilas/bolsas)', resolve:(id)=>getContainer(id) },
+  { key:'potion',    label:'Pociones y consumibles', resolve:(id)=>getPotion(id) },
+  { key:'light',     label:'Luces y gemas', resolve:(id)=>getLight(id) },
+  { key:'coin',      label:'Monedas',      resolve:(id)=>getCoin(id) },
+  { key:'trophy',    label:'Trofeos / restos', resolve:(id)=>getTrophy(id) },
+];
+
+// Resolve one loot itemId to a normalized record: {cat, id, name, tier, value, color}.
+function classify(itemId) {
+  if (itemId === 'gold') return { cat:'gold', id:'gold', name:'Oro', tier:null, value:1, color:0xe7c84a };
+  for (const c of CATS) {
+    const d = c.resolve(itemId);
+    if (d) return {
+      cat:c.key, id:itemId, name:nm(d.name), tier:d.shopTier||null,
+      value:d.value||0, color:d.color!=null?d.color:0x9aa0ab,
+    };
+  }
+  return null; // unresolved → flavor material
+}
+
+const chanceClass = (p) => p>=0.5?'chance-hi':p>=0.1?'chance-mid':p>=0.01?'chance-lo':'chance-vlo';
+const pct = (p) => {
+  if (p >= 1) return '100%';
+  if (p >= 0.01) return (p*100).toFixed(1).replace(/\.0$/,'') + '%';
+  if (p >= 0.001) return (p*100).toFixed(2) + '%';
+  return (p*100).toFixed(3) + '%';
+};
+
+// --- Build the index: per item → which creatures drop it, at what rate -------
+const items = new Map();   // resolved item id → { meta, drops:[{creature, chance, min,max}] }
+const materials = new Map(); // unresolved id → Set of creature names (flavor only)
+const perCreature = [];     // { creature, level, family, color, lines:[...] }
+let totalDropEntries = 0;
+
+const byLevel = [...CREATURES].sort((a,b)=> a.level-b.level || a.name.localeCompare(b.name));
+for (const c of byLevel) {
+  const lines = [];
+  for (const entry of c.loot) {
+    totalDropEntries++;
+    const meta = classify(entry.itemId);
+    if (!meta) {
+      if (!materials.has(entry.itemId)) materials.set(entry.itemId, new Set());
+      materials.get(entry.itemId).add(c.name);
+      lines.push({ material:true, id:entry.itemId, chance:entry.chance, min:entry.min, max:entry.max });
+      continue;
+    }
+    if (!items.has(meta.id)) items.set(meta.id, { meta, drops:[] });
+    items.get(meta.id).drops.push({ creature:c.name, level:c.level, chance:entry.chance, min:entry.min, max:entry.max });
+    lines.push({ meta, chance:entry.chance, min:entry.min, max:entry.max });
+  }
+  perCreature.push({ creature:c.name, level:c.level, family:c.family, color:c.color,
+    boss:c.boss||c.supreme, lines });
+}
+
+// --- Stats header -----------------------------------------------------------
+const realItemCount = items.size;
+document.getElementById('stats').innerHTML = [
+  ['Criaturas con botín', CREATURES.length],
+  ['Items que caen', realItemCount],
+  ['Entradas de drop', totalDropEntries],
+  ['Materiales (sin efecto)', materials.size],
+].map(([l,v])=>`<div class="stat"><b>${v}</b><br><span class="note">${l}</span></div>`).join('');
+
+// --- VIEW 1: BY ITEM --------------------------------------------------------
+const byItemEl = document.getElementById('byitem');
+const sections = [
+  ...CATS.map(c=>({ key:c.key, label:c.label })),
+  { key:'gold', label:'Oro' },
+];
+for (const sec of sections) {
+  const list = [...items.values()].filter(x=>x.meta.cat===sec.key)
+    .sort((a,b)=> (b.meta.value||0)-(a.meta.value||0) || a.meta.name.localeCompare(b.meta.name));
+  if (!list.length) continue;
+  const h = document.createElement('h2');
+  h.textContent = `${sec.label} · ${list.length}`;
+  byItemEl.appendChild(h);
+  for (const it of list) byItemEl.appendChild(itemCard(it));
+}
+// Flavor materials section.
+if (materials.size) {
+  const h = document.createElement('h2');
+  h.textContent = `Materiales / etcéteras de sabor · ${materials.size}`;
+  byItemEl.appendChild(h);
+  const note = document.createElement('div');
+  note.className = 'note warn';
+  note.style.margin = '0 0 8px';
+  note.textContent = 'Estos ids aparecen en las tablas de botín por familia (seda, pieles, escamas, viales…) pero no tienen un item real definido, así que actualmente NO caen al suelo. Listados para referencia.';
+  byItemEl.appendChild(note);
+  const wrap = document.createElement('details');
+  wrap.innerHTML = `<summary><span class="dot" style="background:#5a5148"></span>
+      <span class="nm">Ver ${materials.size} materiales de sabor</span></summary>`;
+  const tbl = document.createElement('table');
+  tbl.innerHTML = '<tr><th>Id</th><th>Aparece en (familias/criaturas)</th></tr>' +
+    [...materials.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([id,set])=>
+      `<tr><td><code>${id}</code></td><td class="note">${[...set].slice(0,12).join(', ')}${set.size>12?` … (+${set.size-12})`:''}</td></tr>`).join('');
+  wrap.appendChild(tbl);
+  byItemEl.appendChild(wrap);
+}
+
+function itemCard(it) {
+  const m = it.meta;
+  const drops = it.drops.slice().sort((a,b)=> b.chance-a.chance || a.level-b.level);
+  const best = drops[0];
+  const tierTag = m.tier ? `<span class="badge tier-${m.tier}">${m.tier.replace('-tier','')}</span>` : '';
+  const valTag = m.value ? `<span class="badge">${m.value} 💰</span>` : '';
+  const d = document.createElement('details');
+  d.dataset.search = (m.name + ' ' + m.id + ' ' + drops.map(x=>x.creature).join(' ')).toLowerCase();
+  let head;
+  if (m.cat === 'gold') {
+    const lo = Math.min(...drops.map(x=>x.min||0)), hi = Math.max(...drops.map(x=>x.max||0));
+    head = `<span class="meta">${drops.length} criaturas · ${lo}–${hi} por muerte</span>`;
+  } else {
+    head = `<span class="meta">${drops.length} fuente(s) · mejor <span class="${chanceClass(best.chance)}">${pct(best.chance)}</span> (${best.creature})</span>`;
+  }
+  d.innerHTML = `<summary>
+      <span class="dot" style="background:${hex(m.color)}"></span>
+      <span class="nm">${m.name}</span> ${tierTag} ${valTag}
+      ${head}
+    </summary>`;
+  const tbl = document.createElement('table');
+  const rows = drops.map(x=>{
+    const rate = (m.cat==='gold')
+      ? `${x.min||0}–${x.max||0} 💰`
+      : `<span class="${chanceClass(x.chance)}">${pct(x.chance)}</span>`;
+    return `<tr><td>${x.creature}</td><td class="r">Nv ${x.level}</td><td class="r">${rate}</td></tr>`;
+  }).join('');
+  tbl.innerHTML = `<tr><th>Criatura</th><th class="r">Nivel</th><th class="r">Tasa</th></tr>${rows}`;
+  d.appendChild(tbl);
+  return d;
+}
+
+// --- VIEW 2: BY CREATURE ----------------------------------------------------
+const byCreatureEl = document.getElementById('bycreature');
+for (const c of perCreature) {
+  const d = document.createElement('details');
+  d.dataset.search = (c.creature + ' ' + c.family + ' ' + c.lines.map(l=>l.meta?l.meta.name:l.id).join(' ')).toLowerCase();
+  const real = c.lines.filter(l=>!l.material);
+  d.innerHTML = `<summary>
+      <span class="dot" style="background:${hex(c.color)}"></span>
+      <span class="nm">${c.creature}</span>
+      ${c.boss?'<span class="badge" style="color:#ffcf5a">jefe</span>':''}
+      <span class="meta">Nv ${c.level} · ${c.family} · ${real.length} items</span>
+    </summary>`;
+  const tbl = document.createElement('table');
+  const rows = c.lines
+    .sort((a,b)=> (b.chance)-(a.chance))
+    .map(l=>{
+      if (l.material) return `<tr><td class="note"><code>${l.id}</code> <span class="badge">material</span></td><td class="r note">—</td></tr>`;
+      const rate = l.meta.cat==='gold' ? `${l.min||0}–${l.max||0} 💰`
+        : `<span class="${chanceClass(l.chance)}">${pct(l.chance)}</span>`;
+      const tier = l.meta.tier?` <span class="badge tier-${l.meta.tier}">${l.meta.tier.replace('-tier','')}</span>`:'';
+      return `<tr><td><span class="dot" style="display:inline-block;width:10px;height:10px;background:${hex(l.meta.color)};margin-right:6px"></span>${l.meta.name}${tier}</td><td class="r">${rate}</td></tr>`;
+    }).join('');
+  tbl.innerHTML = `<tr><th>Suelta</th><th class="r">Tasa</th></tr>${rows}`;
+  d.appendChild(tbl);
+  byCreatureEl.appendChild(d);
+}
+
+// --- Tabs + search ----------------------------------------------------------
+const tabs = document.querySelectorAll('.tab');
+tabs.forEach(t=>t.addEventListener('click', ()=>{
+  tabs.forEach(x=>x.classList.toggle('on', x===t));
+  const v = t.dataset.view;
+  byItemEl.classList.toggle('hidden', v!=='byitem');
+  byCreatureEl.classList.toggle('hidden', v!=='bycreature');
+}));
+
+const q = document.getElementById('q');
+q.addEventListener('input', ()=>{
+  const term = q.value.trim().toLowerCase();
+  const active = document.querySelector('.tab.on').dataset.view === 'byitem' ? byItemEl : byCreatureEl;
+  for (const d of active.querySelectorAll('details')) {
+    const hit = !term || (d.dataset.search || '').includes(term);
+    d.classList.toggle('hidden', !hit);
+    if (term && hit) d.open = true; else if (!term) d.open = false;
+  }
+  // hide category headers whose items are all filtered out
+  if (active === byItemEl) {
+    let lastH = null, anyShown = false;
+    for (const el of byItemEl.children) {
+      if (el.tagName === 'H2') { if (lastH) lastH.classList.toggle('hidden', !anyShown); lastH = el; anyShown = false; el.classList.remove('hidden'); }
+      else if (el.tagName === 'DETAILS') { if (!el.classList.contains('hidden')) anyShown = true; }
+    }
+    if (lastH) lastH.classList.toggle('hidden', !anyShown);
+  }
+});
+</script>
+</body>
+</html>

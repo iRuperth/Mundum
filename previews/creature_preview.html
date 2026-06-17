@@ -52,10 +52,25 @@ const TINTS = {
 // --- scene ---------------------------------------------------------------
 const stage = document.getElementById('stage');
 const nameEl = document.getElementById('name');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(stage.clientWidth, stage.clientHeight);
-renderer.setPixelRatio(devicePixelRatio);
-stage.appendChild(renderer.domElement);
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  renderer.setPixelRatio(devicePixelRatio);
+  stage.appendChild(renderer.domElement);
+} catch (e) {
+  // WebGL unavailable (disabled / blocked / no GPU). Don't go silently black:
+  // tell the user exactly what's wrong and how to fix it.
+  stage.innerHTML = '<div style="position:absolute;inset:0;display:flex;align-items:center;'
+    + 'justify-content:center;text-align:center;padding:30px;color:#e7ecf2;font:15px system-ui">'
+    + '<div><h2 style="color:#ff7676">No se pudo iniciar WebGL (3D)</h2>'
+    + '<p>Este navegador no tiene WebGL disponible, por eso las criaturas 3D no se ven.</p>'
+    + '<p style="color:#9fb0c2">Activa la <b>aceleración por hardware</b> en los ajustes del navegador '
+    + '(chrome://settings → Sistema), o prueba en Chrome/Edge actualizado. '
+    + 'Las previews 2D (Items, Monedas) sí funcionan sin WebGL.</p>'
+    + '<p style="color:#9fb0c2;font-size:13px">Detalle: ' + (e && e.message || e) + '</p></div></div>';
+  throw e; // stop the rest of the 3D setup; the message stays on screen
+}
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1d2228);
 const camera = new THREE.PerspectiveCamera(40, stage.clientWidth / stage.clientHeight, 0.1, 60);
@@ -135,9 +150,9 @@ const r2 = document.createElement('div'); r2.className = 'row'; panel.appendChil
 for (const s of [0.6, 1.0, 1.6, 2.4]) btn('×' + s, () => { scaleOverride = s; build(current); }, r2);
 
 section('Criaturas');
-const grid = document.createElement('div'); grid.className = 'grid'; panel.appendChild(grid);
+const creatureGrid = document.createElement('div'); creatureGrid.className = 'grid'; panel.appendChild(creatureGrid);
 const fbtns = {};
-for (const f of FAMILIES) fbtns[f] = btn(f, () => build(f), grid);
+for (const f of FAMILIES) fbtns[f] = btn(f, () => build(f), creatureGrid);
 
 function markActive() {
   for (const f in fbtns) fbtns[f].classList.toggle('on', f === current);
