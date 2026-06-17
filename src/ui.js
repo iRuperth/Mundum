@@ -1,5 +1,5 @@
 import { t, elementName, getLang } from './i18n.js';
-import { RARITY } from './data/items.js';
+import { RARITY, mmCoins } from './data/items.js';
 import { EQUIP_SLOTS, itemWeight } from './inventory.js';
 import { shopStock, shopStockFor, vendorBuysItem, sellPrice, buyPrice, CITIES } from './cities.js';
 import { iconFor, slotPlaceholderIcon } from './itemIcons.js';
@@ -21,16 +21,17 @@ function rarityClass(item) {
 }
 
 // Weapon types that read as "handed" — a blade/bow/staff held in a hand. When
-// one of these sits in the off-hand (shield) slot, its icon is mirrored so it
-// looks gripped in the other hand (the user's request).
+// one sits in the MAIN (weapon) slot it's mirrored so the icon matches the 3D
+// model, which mirrors the main hand; the off-hand (shield) slot shows it
+// un-mirrored, also matching the model.
 const HANDED_WEAPON_TYPES = new Set(['sword', 'axe', 'mace', 'lance', 'bow', 'wand']);
 
 function itemIcon(item, slot) {
   // Procedural pixel-art SVG, unique per item (type/tier/element/rarity/colour).
   // Returns an inline <svg> string; safe to drop into innerHTML like the old
   // emoji glyphs, so drag-drop, count badges and tooltips keep working.
-  // A handed weapon in the off-hand (shield) slot is mirrored.
-  const mirror = slot === 'shield' && item && HANDED_WEAPON_TYPES.has(item.type);
+  // A handed weapon in the MAIN (weapon) slot is mirrored to match the 3D model.
+  const mirror = slot === 'weapon' && item && HANDED_WEAPON_TYPES.has(item.type);
   return iconFor(item, mirror ? { mirror: true } : undefined);
 }
 
@@ -85,7 +86,7 @@ export class UI {
     });
     // Fixed windows (map, equipment): wire their collapse buttons + reordering.
     if (refs.sidePanel) {
-      refs.sidePanel.querySelectorAll('.win[data-win="map"], .win[data-win="equip"]').forEach((w) => this._wireWindow(w, { closable: false }));
+      refs.sidePanel.querySelectorAll('.win[data-win="equip"]').forEach((w) => this._wireWindow(w, { closable: false }));
     }
   }
 
@@ -109,6 +110,15 @@ export class UI {
     const toggle = panel.querySelector('#panel-toggle, #panel-toggle-left');
     if (toggle) toggle.textContent = collapsed ? (isLeft ? '›' : '‹') : (isLeft ? '‹' : '›');
     if (panel === this.refs.sidePanel) this.collapsed = collapsed;
+  }
+
+  // Reveal a side panel (by a selector like '.side-left'), un-hiding and
+  // un-collapsing it so a dragged window can land in it. No-op if absent.
+  _revealPanel(sel) {
+    const panel = document.querySelector('.side-panel' + sel);
+    if (!panel) return;
+    if (panel.classList.contains('hidden')) panel.classList.remove('hidden');
+    if (panel.classList.contains('collapsed')) this._setPanelCollapsed(panel, false);
   }
 
   setVitals(hp, maxHp, mana, maxMana, xpInfo) {
@@ -156,7 +166,9 @@ export class UI {
         el.classList.add('filled', rarityClass(item));
         el.innerHTML = `<span class="ico">${itemIcon(item, slot)}</span>`;
       } else {
-        el.innerHTML = `<span class="ph">${slotPlaceholderIcon(slot)}</span>`;
+        // The empty-slot ghost reflects the player's class for the hand slots
+        // (archer's off-hand shows a bow, others a shield).
+        el.innerHTML = `<span class="ph">${slotPlaceholderIcon(slot, { profession: this.inv.profession })}</span>`;
       }
     });
   }
@@ -312,6 +324,50 @@ export class UI {
     }
     const head = win.querySelector('.win-head');
     if (head) this._makeWindowReorderable(win, head);
+    // Every window EXCEPT the map gets a drag-to-resize grip (Tibia-style).
+    if (win.dataset.win !== 'map') this._makeWindowResizable(win);
+  }
+
+  // Add a bottom-edge grip that resizes the window VERTICALLY only (the width
+  // stays fixed, so the backpack keeps its 4 columns). Dragging the grip taller
+  // shows more rows; shorter scrolls the body. Pointer-based (mouse + touch).
+  _makeWindowResizable(win) {
+    if (win.querySelector('.win-resize')) return;   // already wired
+    win.classList.add('resizable');
+    const grip = document.createElement('div');
+    grip.className = 'win-resize';
+    grip.title = '';
+    win.appendChild(grip);
+
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();   // don't start a window-move drag
+      if (e.button !== undefined && e.button !== 0) return;
+      if (document.pointerLockElement) document.exitPointerLock();
+      const r = win.getBoundingClientRect();
+      const startY = e.clientY;
+      const startH = r.height;
+      const head = win.querySelector('.win-head');
+      const headH = head ? head.offsetHeight : 24;
+      win.classList.add('resizing');
+      try { grip.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+
+      const onMove = (ev) => {
+        // Height only — width is left untouched so columns never change.
+        const h = Math.max(headH + 40, Math.min(window.innerHeight * 0.85, startH + (ev.clientY - startY)));
+        win.style.setProperty('--win-body-h', (h - headH - 2) + 'px');
+      };
+      const onUp = () => {
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onUp);
+        grip.removeEventListener('pointercancel', onUp);
+        try { grip.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        win.classList.remove('resizing');
+      };
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onUp);
+      grip.addEventListener('pointercancel', onUp);
+    });
   }
 
   // Drag a window by its head to reorder it among its sibling windows (vertical
@@ -330,7 +386,10 @@ export class UI {
       let placeholder = null;     // marks where the window will land
       let grabDX = 0, grabDY = 0; // cursor offset within the window
       let lifted = false;
-      try { head.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      // NOTE: do NOT setPointerCapture on the head — the window (and its head) gets
+      // re-parented to <body> on lift, which drops the capture and strands the
+      // window mid-drag (pointerup never fires). Listen on `window` instead so the
+      // drag always completes wherever the cursor goes.
 
       // Lift the window out of flow into a fixed, cursor-following "card", and
       // drop a same-size placeholder in its slot so the layout doesn't jump.
@@ -352,11 +411,18 @@ export class UI {
       const follow = (clientX, clientY) => {
         win.style.left = (clientX - grabDX) + 'px';
         win.style.top = (clientY - grabDY) + 'px';
+        // Dragging into the left/right EDGE reveals that side panel even if it was
+        // hidden, so a window can be dropped into the left tab that starts closed.
+        const edge = Math.min(160, window.innerWidth * 0.22);
+        if (clientX <= edge) this._revealPanel('.side-left');
+        else if (clientX >= window.innerWidth - edge) this._revealPanel('.side-right');
         const containers = [...document.querySelectorAll('.windows')];
         let parent = placeholder.parentNode;
         for (const c of containers) {
-          const pr = c.closest('.side-panel')?.getBoundingClientRect();
-          if (pr && clientX >= pr.left && clientX <= pr.right) { parent = c; break; }
+          const sp = c.closest('.side-panel');
+          if (!sp || sp.classList.contains('hidden')) continue;   // skip hidden panels
+          const pr = sp.getBoundingClientRect();
+          if (pr.width && clientX >= pr.left && clientX <= pr.right) { parent = c; break; }
         }
         const panel = parent.closest('.side-panel');
         if (panel && panel.classList.contains('collapsed')) this._setPanelCollapsed(panel, false);
@@ -381,11 +447,10 @@ export class UI {
         }
         follow(ev.clientX, ev.clientY);
       };
-      const onUp = (ev) => {
-        head.removeEventListener('pointermove', onMove);
-        head.removeEventListener('pointerup', onUp);
-        head.removeEventListener('pointercancel', onUp);
-        try { head.releasePointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
         win.classList.remove('dragging');
         // Drop the window back into the layout where the placeholder sits.
         if (lifted && placeholder) {
@@ -395,9 +460,9 @@ export class UI {
           win.style.left = win.style.top = win.style.width = '';
         }
       };
-      head.addEventListener('pointermove', onMove);
-      head.addEventListener('pointerup', onUp);
-      head.addEventListener('pointercancel', onUp);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     });
   }
 
@@ -940,7 +1005,7 @@ export class UI {
     const stock = this.sortStock(shopStock(), (d) => d.value);
     const card = this.refs.contextCard;
     card.innerHTML = `<div class="ctx-head">${t('shop')} · ${city.name}</div>
-      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${this.inv.gold}</b></div>`;
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${mmCoins(this.inv.gold)}</b></div>`;
     const list = document.createElement('div');
     list.className = 'shop-list';
     const lang = getLang();
@@ -976,7 +1041,7 @@ export class UI {
     const lang = getLang();
     const card = this.refs.contextCard;
     card.innerHTML = `<div class="ctx-head">${npc.name}</div>
-      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${this.inv.gold}</b></div>`;
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${mmCoins(this.inv.gold)}</b></div>`;
 
     const stock = this.sortStock(shopStockFor(shop), (d) => buyPrice(shop, d));
     if (stock.length) {
@@ -1050,7 +1115,7 @@ export class UI {
     const lang = getLang();
     const card = this.refs.contextCard;
     card.innerHTML = `<div class="ctx-head">🐎 ${npc.name}</div>
-      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${this.inv.gold}</b></div>
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${mmCoins(this.inv.gold)}</b></div>
       <div class="ctx-sub">${t('mountStat')}</div>`;
     const list = document.createElement('div');
     list.className = 'shop-list mount-list';
