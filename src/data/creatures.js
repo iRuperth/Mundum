@@ -16,6 +16,7 @@ export const FAMILIES = [
   'golem', 'gargoyle', 'elemental', 'treant', 'mushroom', 'mandrake', 'harpy',
   'minotaur', 'cyclops', 'lizardman', 'serpent', 'shark', 'jellyfish',
   'turtle', 'cultist', 'knight', 'mage', 'dwarf', 'elf', 'fairy', 'mimic',
+  'tiger', 'crystal_dragon',
 ];
 
 // Role-based stat scaling. Given a level and a role, produce baseline stats;
@@ -307,11 +308,29 @@ const FAMILY_DEFS = [
     aggressive: true, aggroRange: 11, speed: 4.0, baseLevel: 8, color: 0x888888,
     gold: [2, 16], loot: [drop('wolf-pelt', 0.4), drop('fang', 0.25)], tiers: 2,
     variants: [
-      ['', 1.0, 0x000000, 0, 'normal', 1.0, []],
-      ['Gray Wolf', 1.1, 0x777777, 11, 'normal', 1.1, []],
-      ['Dire Wolf', 1.6, 0x555555, 20, 'tank', 1.3, [drop('fast-boots', 0.06)]],
-      ['Winter Wolf', 1.4, 0xccddee, 26, 'caster', 1.25, [drop('frost-fang', 0.2)]],
-      ['Alpha Wolf', 1.8, 0x444444, 34, 'boss', 1.4, [drop('alpha-pelt', 0.2), drop('steel-sword', 0.06)]],
+      // Young → old pack: the kid asked for "wolf, big wolf, older wolf…" so the
+      // family now reads as a growing pack, capped by the Alpha boss.
+      ['', 1.0, 0x000000, 0, 'minion', 0.9, [], { levelAbs: 7, attackKind: 'melee' }],
+      ['Big Wolf', 1.25, 0x6f6f6f, 0, 'normal', 1.05, [], { levelAbs: 10, attackKind: 'melee' }],
+      ['Gray Wolf', 1.15, 0x777777, 0, 'normal', 1.1, [], { levelAbs: 13, attackKind: 'melee' }],
+      ['Old Wolf', 1.2, 0x8a8a82, 0, 'caster', 1.1, [drop('wolf-pelt', 0.5)], { levelAbs: 16, attackKind: 'melee' }],
+      ['Dire Wolf', 1.6, 0x555555, 0, 'tank', 1.3, [drop('fast-boots', 0.06)], { levelAbs: 22, attackKind: 'melee' }],
+      ['Winter Wolf', 1.4, 0xccddee, 0, 'caster', 1.25, [drop('frost-fang', 0.2)], { levelAbs: 28, attackKind: 'melee' }],
+      ['Alpha Wolf', 1.85, 0x444444, 0, 'boss', 1.4, [drop('alpha-pelt', 0.25), drop('steel-sword', 0.06)],
+        { levelAbs: 36, supreme: true, attackKind: 'melee' }],
+    ],
+  },
+  // Tiger: a forest big-cat family, a notch above wolves. Backs the tiger mount.
+  {
+    key: 'tiger', name: 'Tiger', biome: 'forest', element: 'none',
+    aggressive: true, aggroRange: 12, speed: 4.6, baseLevel: 15, color: 0xd98a2b,
+    gold: [6, 28], loot: [drop('tiger-pelt', 0.4), drop('tiger-fang', 0.25), drop('claw', 0.2)],
+    variants: [
+      ['', 1.0, 0x000000, 0, 'normal', 1.1, [], { levelAbs: 15, attackKind: 'melee' }],
+      ['Sabertooth', 1.3, 0xc97a2a, 0, 'tank', 1.3, [drop('great-claw', 0.15)], { levelAbs: 24, attackKind: 'melee' }],
+      ['White Tiger', 1.25, 0xe8e8f0, 0, 'caster', 1.25, [drop('tiger-pelt', 0.6)], { levelAbs: 30, attackKind: 'melee' }],
+      ['Tiger King', 1.7, 0xb86a1a, 0, 'boss', 1.4, [drop('tiger-pelt', 1), drop('great-claw', 0.25), drop('knight_sword', 0.05)],
+        { levelAbs: 42, supreme: true, attackKind: 'melee' }],
     ],
   },
   {
@@ -763,8 +782,33 @@ const FAMILY_DEFS = [
         { levelAbs: 72, supreme: true, attackKind: 'melee',
           areaAttack: { kind: 'fire', radius: 8, damageMul: 1.8, chance: 0.5 },
           selfHeal: { amount: 0.07, chance: 0.5 } }],
+      // Three-headed dragon: a rare hydra-dragon overlord (the user's request).
+      // Uses the bespoke three_headed_dragon model — three fanged necks, full
+      // relief, deep purple. A non-supreme apex that can appear in the mountains.
+      ['Hydra Dragon', 2.2, 0x6a1b9a, 0, 'boss', 1.85, [drop('dragon_shield', 0.1), drop('demon_armor', 0.05), drop('dragon_helmet', 0.05), drop('soul-gem', 0.4)],
+        { levelAbs: 80, design: 'three_headed_dragon', attackKind: 'melee',
+          areaAttack: { kind: 'fire', radius: 8, damageMul: 1.9, chance: 0.55 },
+          selfHeal: { amount: 0.08, chance: 0.55 } }],
     ],
     elementByName: { 'Green Dragon': 'plant', 'Black Dragon': 'none', 'Frost Dragon': 'water' },
+  },
+  // Crystalline Ice Dragon: the level-100 glacial overlord. A near-transparent
+  // ice-crystal flying dragon with a freezing breath — backs the supreme mount.
+  // Lives in the Glacial Lair; its Crystal Scale is the mount quest material.
+  {
+    key: 'crystal_dragon', name: 'Crystal Dragon', biome: 'snow', element: 'water',
+    aggressive: true, aggroRange: 16, speed: 4.2, baseLevel: 90, color: 0xbfe8ff,
+    gold: [200, 700], loot: [drop('crystal-scale', 0.5), drop('frost-shard', 0.5), drop('frost-fang', 0.3)],
+    variants: [
+      ['Ice Drake', 1.2, 0x9fd6ff, 0, 'boss', 1.0, [drop('frost_armor', 0.05), drop('crystal', 0.4)],
+        { levelAbs: 90, attackKind: 'melee',
+          areaAttack: { kind: 'water', radius: 6, damageMul: 1.6, chance: 0.45 },
+          selfHeal: { amount: 0.06, chance: 0.45 } }],
+      ['Crystal Dragon', 1.5, 0xbfe8ff, 0, 'boss', 1.4, [drop('crystal-scale', 1), drop('frost_armor', 0.06), drop('soul-gem', 0.4)],
+        { levelAbs: 100, supreme: true, attackKind: 'melee',
+          areaAttack: { kind: 'water', radius: 8, damageMul: 1.9, chance: 0.55 },
+          selfHeal: { amount: 0.08, chance: 0.5 } }],
+    ],
   },
 
   // THE HARDEST: Demon endgame
@@ -820,10 +864,18 @@ function pushCreature(out, seenIds, fam, name, scaleMul, color, level, role, sta
   // Whether this creature is aggressive: a per-variant override wins, else the
   // family default. Passive creatures still get provoked when attacked (combat).
   const aggressive = (o.aggressive != null) ? o.aggressive : fam.aggressive;
+  // Candidate bespoke-model key for this variant: the variant's own name in
+  // snake_case (e.g. "Frost Dragon" -> frost_dragon, "Minotaur Guard" ->
+  // minotaur_guard). buildCreatureModel uses it only when such a design is
+  // registered; otherwise it falls back to the family model. This is what makes
+  // the hand-authored per-variant designs (frost_dragon, demon_lord, minotaur_
+  // guard, …) actually render instead of every variant reusing the base family.
+  const design = (o.design != null) ? o.design : slug(name).replace(/-/g, '_');
   const entry = {
     id,
     name,
     family: fam.key,
+    design,
     variantScale: Math.round(Math.min(2.4, Math.max(0.6, scaleMul)) * 100) / 100,
     color,
     level,
@@ -1023,7 +1075,7 @@ addNonThematicGear(CREATURES);
 // Behaviour flags read by combat.js: which families FLEE at low HP, which FLY,
 // and which inflict a status. Applied per family so the AI/status systems light
 // up without hand-editing every variant.
-const FLYING_FAMILIES = new Set(['bat', 'wasp', 'fairy', 'harpy', 'ghost', 'wraith', 'wyvern', 'dragon', 'gargoyle', 'bird', 'pigeon', 'seagull']);
+const FLYING_FAMILIES = new Set(['bat', 'wasp', 'fairy', 'harpy', 'ghost', 'wraith', 'wyvern', 'dragon', 'crystal_dragon', 'gargoyle', 'bird', 'pigeon', 'seagull']);
 const BURN_FAMILIES = new Set(['dragon', 'demon', 'imp', 'elemental', 'fire_elemental', 'fire_devil', 'hellhound']);
 const SLOW_FAMILIES = new Set([]);   // ice variants flagged by element below
 for (const c of CREATURES) {
@@ -1036,10 +1088,10 @@ for (const c of CREATURES) {
   // Dragons/wyverns kite away when low so knights struggle and archers thrive.
   if ((c.family === 'dragon' || c.family === 'wyvern') && !c.supreme) c.fleeBelowHpPct = 0.3;
   // Fly: airborne families ignore terrain and swoop to attack.
-  if (FLYING_FAMILIES.has(c.family)) { c.flying = true; c.flyHeight = c.family === 'dragon' ? 4 : 3; }
+  if (FLYING_FAMILIES.has(c.family)) { c.flying = true; c.flyHeight = (c.family === 'dragon' || c.family === 'crystal_dragon') ? 4 : 3; }
   // Status: burn for fiery foes, poison/ice already carried via element; flag burn.
   if (BURN_FAMILIES.has(c.family) && c.element === 'fire') c.burns = true;
-  if (c.element === 'water' && /frost|ice|winter|glacial/.test(c.id)) c.slows = true;
+  if (c.element === 'water' && (/frost|ice|winter|glacial|crystal/.test(c.id) || c.family === 'crystal_dragon')) c.slows = true;
 }
 
 // Fast id lookup.
