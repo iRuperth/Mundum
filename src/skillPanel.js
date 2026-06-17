@@ -61,6 +61,40 @@ export class SkillPanel {
   }
   get isOpen() { return !this.win.classList.contains('hidden'); }
 
+  // Show a small tooltip on `row` after a ~1s hover. `getText` is called when the
+  // timer fires so the text is fresh (e.g. the live "X% to next level"). The tip
+  // is a single reused element; the hover timer is cleared on leave/move-away.
+  _attachSkillTip(row, getText) {
+    const SHOW_DELAY = 1000;   // ms of hover before the tip appears
+    let timer = 0;
+    const show = (ev) => {
+      const text = getText();
+      if (!text) return;
+      let tip = this._tip;
+      if (!tip) {
+        tip = document.createElement('div');
+        tip.className = 'sp-tip';
+        document.body.appendChild(tip);
+        this._tip = tip;
+      }
+      tip.textContent = text;
+      // Anchor above the row, clamped to the row's left edge.
+      const r = row.getBoundingClientRect();
+      tip.style.left = Math.round(r.left) + 'px';
+      tip.style.top = Math.round(r.top - 4) + 'px';
+      tip.classList.add('show');
+      void ev;
+    };
+    const hide = () => {
+      clearTimeout(timer); timer = 0;
+      if (this._tip) this._tip.classList.remove('show');
+    };
+    row.addEventListener('pointerenter', () => { clearTimeout(timer); timer = setTimeout(show, SHOW_DELAY); });
+    row.addEventListener('pointerleave', hide);
+    // A re-render replaces rows, so also hide if the row is removed mid-hover.
+    row.addEventListener('pointerdown', hide);
+  }
+
   render() {
     // Clearing the body (below) destroys any row mid-drag, so its pointerup never
     // fires and the drag ghost / drag-source class would be orphaned. Sweep them
@@ -106,6 +140,13 @@ export class SkillPanel {
     xbar.appendChild(el('span', { class: 'sp-skillbar-fill' }));
     xbar.firstChild.style.width = (xp ? Math.round(xp.frac * 100) : 0) + '%';
     lvRow.appendChild(xbar);
+    // Hover ~1s to see the % left to the next character level.
+    this._attachSkillTip(lvRow, () => {
+      const cur = this.hooks.getXp ? this.hooks.getXp() : null;
+      if (!cur) return '';
+      const left = Math.max(0, 100 - Math.round(cur.frac * 100));
+      return t('skillToNext', this.hooks.getLevel() + 1, left);
+    });
     box.appendChild(lvRow);
     box.appendChild(el('div', { class: 'sp-points', text: t('skillsByUse') || 'Suben usándolas' }));
     for (const s of USE_SKILLS) {
@@ -120,6 +161,11 @@ export class SkillPanel {
       bar.appendChild(el('span', { class: 'sp-skillbar-fill' }));
       bar.firstChild.style.width = prog + '%';
       row.appendChild(bar);
+      // Hover ~1s to see how much is left to the next level (read live on show).
+      this._attachSkillTip(row, () => {
+        const left = Math.max(0, 100 - Math.round(this.stats.skillProgress(s) * 100));
+        return t('skillToNext', this.stats.useSkill(s) + 1, left);
+      });
       box.appendChild(row);
     }
     return box;
