@@ -472,6 +472,9 @@ const FX_PAINTERS = {
   shockwave: fxShockwave, whirlwind: fxWhirlwind, roar: fxRoar,
   self_heal: fxSelfHeal, heal_nova: fxHealNova, vine_burst: fxVineBurst,
   summon_poof: fxSummonPoof, self_buff: fxSelfBuff,
+  // Directional waves (fire/energy/ice/poison cone) reuse the shockwave painter —
+  // a forward-arc burst reads correctly for a cone.
+  wave: fxShockwave,
 };
 
 // Startup completeness assert: the 29 fx strings shipped in data/professions.js
@@ -481,7 +484,7 @@ const FX_KEYS = [
   'pierce_beam', 'hurricane', 'magic_bolt', 'twin_bolt', 'lightning', 'poison_cloud',
   'explosion', 'ice_nova', 'blizzard', 'meteor', 'frozen_orb', 'holy_nova', 'slash_arc',
   'double_slash', 'heavy_smash', 'shockwave', 'whirlwind', 'roar', 'self_heal', 'heal_nova',
-  'vine_burst', 'summon_poof', 'self_buff',
+  'vine_burst', 'summon_poof', 'self_buff', 'wave',
 ];
 for (const k of FX_KEYS) {
   if (!FX_PAINTERS[k]) throw new Error(`skillIcons: fx "${k}" has no painter`);
