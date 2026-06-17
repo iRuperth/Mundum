@@ -143,10 +143,14 @@ export const WEAPONS = [
   { id: 'staff_of_flames', name: 'Staff of Flames', type: 'wand', twoHanded: false, element: 'fire', atkMin: 55, atkMax: 86, weight: 18, levelReq: 78, shopTier: 'epic', value: 0, color: 0xff5a22, defense: 0 },
   { id: 'void_wand', name: 'Void Wand', type: 'wand', twoHanded: false, element: 'none', atkMin: 65, atkMax: 100, weight: 18, levelReq: 95, shopTier: 'legendary-tier', value: 0, color: wandHue(95), defense: 0 },
   { id: 'staff_of_chaos', name: 'Staff of Chaos', type: 'wand', twoHanded: false, element: 'none', atkMin: 82, atkMax: 124, weight: 19, levelReq: 110, shopTier: 'legendary-tier', value: 0, color: 0xb84cff, defense: 0 },
-  { id: 'cosmic_staff', name: 'Cosmic Staff', type: 'wand', twoHanded: false, element: 'none', atkMin: 105, atkMax: 156, weight: 20, levelReq: 130, shopTier: 'legendary-tier', value: 0, color: wandHue(130), defense: 0 },
+  { id: 'cosmic_staff', name: 'Cosmic Staff', type: 'wand', twoHanded: true, element: 'none', atkMin: 105, atkMax: 156, weight: 20, levelReq: 130, shopTier: 'legendary-tier', value: 0, color: wandHue(130), defense: 0 },
   { id: 'aqua_wand', name: 'Aqua Wand', type: 'wand', twoHanded: false, element: 'water', atkMin: 16, atkMax: 28, weight: 15, levelReq: 24, shopTier: 'shop', value: 1500, color: 0x2299ff, defense: 0 },
   { id: 'spellbinder_rod', name: 'Spellbinder Rod', type: 'wand', twoHanded: false, element: 'none', atkMin: 34, atkMax: 56, weight: 17, levelReq: 44, shopTier: 'epic', value: 0, color: wandHue(44), defense: 0 },
-  { id: 'genesis_staff', name: 'Genesis Staff', type: 'wand', twoHanded: false, element: 'none', atkMin: 130, atkMax: 190, weight: 21, levelReq: 145, shopTier: 'legendary-tier', value: 0, color: wandHue(145), defense: 0 },
+  { id: 'genesis_staff', name: 'Genesis Staff', type: 'wand', twoHanded: true, element: 'none', atkMin: 130, atkMax: 190, weight: 21, levelReq: 145, shopTier: 'legendary-tier', value: 0, color: wandHue(145), defense: 0 },
+
+  // --- Two-handed legendary mace (mirrors the 1H/2H pair the other melee classes
+  // have; gives knights a 2H blunt option that reaches the 53 ceiling) ---
+  { id: 'colossus_maul', name: 'Colossus Maul', type: 'mace', twoHanded: true, element: 'none', atkMin: 35, atkMax: 53, weight: 96, levelReq: 138, shopTier: 'legendary-tier', value: 0, color: 0xd8c068, defense: 0, vocation: 'knight' },
 
   // --- Shields (off-hand only; carry defense, atk acts as block strength) — 20 tiers ---
   { id: 'buckler', name: 'Buckler', type: 'shield', twoHanded: false, element: 'none', atkMin: 0, atkMax: 1, weight: 30, levelReq: 1, shopTier: 'shop', value: 8, color: 0x8a6a3b, defense: 3 },
@@ -170,6 +174,100 @@ export const WEAPONS = [
   { id: 'mastermind_shield', name: 'Mastermind Shield', type: 'shield', twoHanded: false, element: 'none', atkMin: 0, atkMax: 10, weight: 66, levelReq: 84, shopTier: 'epic', value: 0, color: 0xb84cff, defense: 86 },
   { id: 'phoenix_shield', name: 'Phoenix Shield', type: 'shield', twoHanded: false, element: 'fire', atkMin: 0, atkMax: 13, weight: 66, levelReq: 105, shopTier: 'legendary-tier', value: 0, color: 0xff9933, defense: 102 },
 ];
+
+// --- Tibia-7.4 compression of weapon attack ---------------------------------
+// Historically these ladders climbed to ~210 attack. The game is rebalanced to
+// the classic Tibia scale: a global ceiling of 50 (one-handed) / 53 (two-handed)
+// reached only by the top legendaries, with every other tier compressed below.
+// We rewrite atkMin/atkMax in place at module load so the data, the shop and the
+// drop roller (rollWeaponInstance) all read the new values. The damage formula
+// (combat.js) is tuned in lockstep — see the design plan.
+const WEAPON_CLASS_CEIL = { sword: 50, mace: 50, wand: 50, axe: 53, lance: 53, bow: 53 };
+// The single highest-attack weapon of each family, pinned to the exact endpoint
+// (1H -> 33..50, 2H -> 35..53) so rounding never drifts off the target.
+const WEAPON_LEGENDARY_1H = new Set(['excalibur', 'stonecutter_axe', 'thunder_hammer', 'void_wand']);
+const WEAPON_LEGENDARY_2H = new Set(['warlord_sword', 'worldsplitter', 'jarvan_lance', 'genesis_bow', 'genesis_staff', 'colossus_maul']);
+
+function compressWeaponLadders() {
+  const byType = new Map();
+  for (const w of WEAPONS) {
+    if (w.type === 'shield') continue;            // shields compressed separately
+    if (!byType.has(w.type)) byType.set(w.type, []);
+    byType.get(w.type).push(w);
+  }
+  for (const [type, members] of byType) {
+    const ceil = WEAPON_CLASS_CEIL[type] || 50;
+    const maxs = members.map((w) => w.atkMax);
+    const lo = Math.min(...maxs), hi = Math.max(...maxs);
+    const span = hi - lo || 1;
+    for (const w of members) {
+      const t = (w.atkMax - lo) / span;           // 0..1 in the old ladder
+      const curved = Math.pow(t, 0.62);           // concave: stretch low, compress top
+      const newMax = Math.round(3 + curved * (ceil - 3));
+      const spread = w.atkMin / w.atkMax || 0.6;  // preserve each row's min/max ratio
+      const newMin = Math.max(1, Math.round(newMax * Math.max(0.55, spread)));
+      w.atkMin = newMin;
+      w.atkMax = newMax;
+    }
+  }
+  // Pin the legendaries to the exact endpoints regardless of rounding.
+  for (const w of WEAPONS) {
+    if (WEAPON_LEGENDARY_1H.has(w.id)) { w.atkMin = 33; w.atkMax = 50; }
+    else if (WEAPON_LEGENDARY_2H.has(w.id)) { w.atkMin = 35; w.atkMax = 53; }
+  }
+}
+
+// Shields live in WEAPONS but carry the real stat in `defense` (atk is a small
+// "block strength"). Compress defense onto 3..39 (normal) / 41 (legendary) and
+// clamp the cosmetic block-strength to <= 9.
+function compressShields() {
+  const shields = WEAPONS.filter((w) => w.type === 'shield');
+  if (!shields.length) return;
+  const defs = shields.map((s) => s.defense || 0);
+  const lo = Math.min(...defs), hi = Math.max(...defs);
+  const span = hi - lo || 1;
+  let top = shields[0];
+  for (const s of shields) if ((s.defense || 0) > (top.defense || 0)) top = s;
+  for (const s of shields) {
+    const t = ((s.defense || 0) - lo) / span;
+    s.defense = Math.max(1, Math.round(1 + Math.pow(t, 0.7) * (39 - 1)));
+    if (s.atkMax > 9) s.atkMax = 9;
+    if (s.atkMin > s.atkMax) s.atkMin = s.atkMax;
+  }
+  top.defense = 41;                                // celestial shield (legendary)
+}
+
+compressWeaponLadders();
+compressShields();
+
+// --- SECRET (GM-only) items --------------------------------------------------
+// The single most powerful legendary of each weapon class and each armor slot is
+// SECRET: it cannot be bought, dropped or quested — only the Game Master may hand
+// it out. The wiki shows "Solo lo otorga el Game Master" for these. Marked here by
+// id so the loot/quest systems can exclude them and the wiki can label them.
+export const SECRET_ITEM_IDS = new Set([
+  // top weapon of each class (highest levelReq legendary)
+  'excalibur',       // sword  (lv140)
+  'worldsplitter',   // axe    (lv138)
+  'thunder_hammer',  // mace   (lv90, class top)
+  'colossus_maul',   // 2H mace(lv138)
+  'jarvan_lance',    // lance  (lv90, class top)
+  'genesis_bow',     // bow    (lv138)
+  'genesis_staff',   // wand   (lv145)
+  // top armor of each slot (the Celestial set + shield)
+  'celestial_shield',
+  'celestial_helmet',
+  'celestial_armor',
+  'celestial_legs',
+  'celestial_boots',
+  'celestial_amulet',
+  'celestial_quiver',
+]);
+export function isSecretItem(id) {
+  return SECRET_ITEM_IDS.has(String(id || '').toLowerCase());
+}
+// WEAPONS exist already; ARMORS/QUIVERS are marked later (after they're declared).
+for (const w of WEAPONS) if (SECRET_ITEM_IDS.has(w.id)) w.secret = true;
 
 // Equipment slots: amulet, helmet, armor, legs, boots.
 export const ARMORS = [
@@ -322,6 +420,52 @@ export const ARMORS = [
   { id: 'celestial_boots', name: 'Celestial Boots', slot: 'boots', defense: 40, weight: 26, levelReq: 125, shopTier: 'legendary-tier', value: 0, color: 0xfff0a0, speedBonus: 0.35 },
 ];
 
+// --- Tibia-7.4 compression of armor defense ---------------------------------
+// Each slot's defense ladder is compressed onto small Tibia-like caps. The top
+// (Celestial X) piece of each slot is pinned to the legendary cap. Speed/coverage
+// and ring stats are untouched. Rings (defense 0..2) are intentionally excluded.
+const ARMOR_NORMAL_CAP = { helmet: 11, armor: 18, legs: 9, boots: 6, amulet: 7 };
+const ARMOR_LEGENDARY_CAP = { helmet: 12, armor: 20, legs: 11, boots: 7, amulet: 8 };
+
+function compressArmorLadders() {
+  for (const slot of Object.keys(ARMOR_NORMAL_CAP)) {
+    const pieces = ARMORS.filter((a) => a.slot === slot);
+    if (!pieces.length) continue;
+    const defs = pieces.map((p) => p.defense || 0);
+    const lo = Math.min(...defs), hi = Math.max(...defs);
+    const span = hi - lo || 1;
+    const cap = ARMOR_NORMAL_CAP[slot];
+    let top = pieces[0];
+    for (const p of pieces) if ((p.defense || 0) > (top.defense || 0)) top = p;
+    for (const p of pieces) {
+      const t = ((p.defense || 0) - lo) / span;
+      p.defense = Math.max(1, Math.round(1 + Math.pow(t, 0.7) * (cap - 1)));
+    }
+    top.defense = ARMOR_LEGENDARY_CAP[slot];       // celestial piece (legendary)
+  }
+}
+
+compressArmorLadders();
+
+// --- Quivers (archer off-hand) ----------------------------------------------
+// The archer holds a quiver in the off-hand (the bow is two-handed). Each tier
+// adds a flat bonus to the bow's effective attack via `arrowAtk` — small,
+// Tibia-style increments (+1..+5). They occupy the 'quiver' equip slot, are
+// archer-only, and give no defense. The visual (equipVisuals) shows the quiver
+// and a held arrow while walking.
+export const QUIVERS = [
+  { id: 'quiver_worn',      name: 'Worn Quiver',      slot: 'quiver', arrowAtk: 1, defense: 0, weight: 8,  levelReq: 1,   shopTier: 'shop', value: 60,    color: 0x8a6a3a, vocation: 'archer' },
+  { id: 'quiver_leather',   name: 'Leather Quiver',   slot: 'quiver', arrowAtk: 2, defense: 0, weight: 9,  levelReq: 10,  shopTier: 'shop', value: 320,   color: 0x7a5230, vocation: 'archer' },
+  { id: 'quiver_hunter',    name: 'Hunter Quiver',    slot: 'quiver', arrowAtk: 3, defense: 0, weight: 9,  levelReq: 25,  shopTier: 'shop', value: 1400,  color: 0x6e4a2c, vocation: 'archer' },
+  { id: 'quiver_ranger',    name: 'Ranger Quiver',    slot: 'quiver', arrowAtk: 4, defense: 0, weight: 8,  levelReq: 50,  shopTier: 'epic', value: 0,     color: 0x9bbf3b, vocation: 'archer' },
+  { id: 'quiver_royal',     name: 'Royal Quiver',     slot: 'quiver', arrowAtk: 5, defense: 0, weight: 8,  levelReq: 90,  shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'archer' },
+  { id: 'quiver_celestial', name: 'Celestial Quiver', slot: 'quiver', arrowAtk: 5, defense: 0, weight: 7,  levelReq: 125, shopTier: 'legendary-tier', value: 0, color: 0xfff0a0, vocation: 'archer' },
+];
+
+// Now that ARMORS and QUIVERS exist, mark their SECRET (GM-only) members too.
+for (const a of ARMORS) if (SECRET_ITEM_IDS.has(a.id)) a.secret = true;
+for (const q of QUIVERS) if (SECRET_ITEM_IDS.has(q.id)) q.secret = true;
+
 // Color table for collectible/buyable bags and backpacks (Tibia-style).
 const CONTAINER_COLORS = [
   { key: 'red', name: 'Red', color: 0xc0392b },
@@ -359,6 +503,9 @@ export const CONTAINERS = [
   { id: 'golden_backpack', name: 'Golden Backpack', slot: 'bag', capacity: 24, weight: 30, value: 12000, color: 0xddbb33, shopTier: 'legendary-tier' },
   { id: 'dragon_backpack', name: 'Dragon Backpack', slot: 'bag', capacity: 22, weight: 30, value: 9000, color: 0xcc3322, shopTier: 'legendary-tier' },
   { id: 'demon_backpack', name: 'Demon Backpack', slot: 'bag', capacity: 24, weight: 30, value: 15000, color: 0x7a0022, shopTier: 'legendary-tier' },
+  // The demon BAG is the trivial near-guaranteed demon drop (the user's "demon
+  // bag 1": almost every demon carries one). Small, but a demon-faced trophy bag.
+  { id: 'demon_bag', name: 'Demon Bag', slot: 'bag', capacity: 8, weight: 14, value: 2000, color: 0x7a0022, shopTier: 'epic' },
 ];
 
 // --- Potions & consumables -------------------------------------------------
@@ -545,10 +692,12 @@ export const LEGENDARY_ABILITIES = [
 const WEAPON_MAP = new Map(WEAPONS.map((w) => [w.id, w]));
 const ARMOR_MAP = new Map(ARMORS.map((a) => [a.id, a]));
 const CONTAINER_MAP = new Map(CONTAINERS.map((c) => [c.id, c]));
+const QUIVER_MAP = new Map(QUIVERS.map((q) => [q.id, q]));
 
 export function getWeapon(id) { return WEAPON_MAP.get(id); }
 export function getArmor(id) { return ARMOR_MAP.get(id); }
 export function getContainer(id) { return CONTAINER_MAP.get(id); }
+export function getQuiver(id) { return QUIVER_MAP.get(id); }
 
 // Hue progression for wands: shifts from blue/purple toward warm gold as level rises.
 function wandHue(level) {
