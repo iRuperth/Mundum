@@ -2,7 +2,7 @@ import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, insta
 import { getTrophy, instanceFromTrophy } from './data/trophies.js';
 import { getMaterial, instanceFromMaterial, genericMaterial } from './data/materials.js';
 
-export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra'];
+export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra', 'ring'];
 const BASE_CAPACITY = 400;
 const CAP_PER_LEVEL = 12;
 
@@ -65,6 +65,13 @@ export function instanceFromArmor(a) {
     // Carried so EquipVisuals can pick the right worn-mesh (a closed great helm
     // vs an open cap, plate pauldrons vs a plain tunic) instead of guessing.
     coverage: a.coverage || null,
+    // Ring/amulet bonus fields (so combat & regen can read them): skillBonus
+    // { sword|axe|club|distance|magic: N }, magicLevelBonus, hp/manaRegenPerSec.
+    skillBonus: a.skillBonus || null,
+    magicLevelBonus: a.magicLevelBonus || 0,
+    hpRegenPerSec: a.hpRegenPerSec || 0,
+    manaRegenPerSec: a.manaRegenPerSec || 0,
+    vocation: a.vocation || null,
   };
 }
 
@@ -97,13 +104,16 @@ function slotForItem(item) {
   return null;
 }
 
-// Whether `item` may be placed in the given paperdoll `slot`. Besides its natural
-// slot, a ONE-HANDED weapon may also go in the off-hand (shield) slot, so you can
-// hold a blade/wand/bow in the other hand (it renders mirrored). Two-handed
-// weapons can't go off-hand.
+// Whether `item` may be placed in the given paperdoll `slot`. The two HAND slots
+// (weapon = right hand, shield = left/off hand) are interchangeable for one-handed
+// gear, so the player can pick which hand holds what: a one-handed weapon may go
+// in either hand, and a shield may go in either hand too. Two-handed weapons stay
+// in the main weapon slot only.
 function canGoInSlot(item, slot) {
   if (slotForItem(item) === slot) return true;
-  if (slot === 'shield' && isWeapon(item) && !item.twoHanded) return true;
+  const handSlot = slot === 'weapon' || slot === 'shield';
+  if (handSlot && isWeapon(item) && !item.twoHanded) return true;   // weapon in either hand
+  if (handSlot && item.type === 'shield') return true;              // shield in either hand
   return false;
 }
 
@@ -374,7 +384,23 @@ export class Inventory {
     // --- Dragging onto / off the paperdoll ------------------------------
     if (toEquip) {
       const slot = to.c.slice(6);
-      if (fromEquip) return { ok: false, reason: 'noslot' }; // slot→slot unsupported
+      if (fromEquip) {
+        // SLOT → SLOT: allow swapping gear between the two HAND slots so the
+        // player can move a weapon (or shield) from one hand to the other right
+        // on the paperdoll. Both ends must be hand slots and each item must be
+        // allowed in its new hand; if the target hand is occupied, they swap.
+        const fromSlot = from.c.slice(6);
+        const handSlots = new Set(['weapon', 'shield']);
+        if (!handSlots.has(fromSlot) || !handSlots.has(slot) || fromSlot === slot) {
+          return { ok: false, reason: 'noslot' };
+        }
+        const target = this.equip[slot] || null;
+        if (!canGoInSlot(item, slot)) return { ok: false, reason: 'noslot' };
+        if (target && !canGoInSlot(target, fromSlot)) return { ok: false, reason: 'noslot' };
+        this.equip[slot] = item;
+        this.equip[fromSlot] = target;   // swap (or clear if the target hand was empty)
+        return { ok: true };
+      }
       // The EXTRA slot is a universal utility pocket: it takes ANYTHING (a torch
       // to light, but also coins, a spare bag/backpack, a potion…), not just its
       // natural slot type — so the player can stash whatever they want there.
@@ -507,17 +533,45 @@ export class Inventory {
 
   totalDefense() {
     let d = 0;
-    for (const s of ['helmet', 'armor', 'shield', 'legs', 'boots', 'amulet']) {
+    for (const s of ['helmet', 'armor', 'shield', 'legs', 'boots', 'amulet', 'ring']) {
       if (this.equip[s]) d += this.equip[s].defense || 0;
     }
     return d;
   }
 
   speedBonus() {
-    return this.equip.boots ? (this.equip.boots.speedBonus || 0) : 0;
+    // Boots and the ring can both grant speed (e.g. a ring of haste).
+    return (this.equip.boots ? (this.equip.boots.speedBonus || 0) : 0)
+         + (this.equip.ring ? (this.equip.ring.speedBonus || 0) : 0);
   }
 
-  weapon() { return this.equip.weapon; }
+  // Total of a given bonus field across every equipped item (used for ring/amulet
+  // skill & regen bonuses: skillBonus.<skill>, magicLevelBonus, hpRegenPerSec…).
+  equipBonus(field) {
+    let v = 0;
+    for (const s of EQUIP_SLOTS) { const it = this.equip[s]; if (it && it[field]) v += it[field]; }
+    return v;
+  }
+
+  // Combined weapon-skill bonus for a given skill key ('sword'|'axe'|'club'|
+  // 'distance'|'magic'), summed from equipped rings/amulets that carry a
+  // skillBonus map like { sword: 2 }.
+  skillBonus(skill) {
+    let v = 0;
+    for (const s of EQUIP_SLOTS) { const it = this.equip[s]; if (it && it.skillBonus && it.skillBonus[skill]) v += it.skillBonus[skill]; }
+    return v;
+  }
+
+  // The weapon the player actually FIGHTS with. Either hand may hold the weapon
+  // now (the other can hold a shield), so prefer the main hand but fall back to a
+  // weapon parked in the off-hand — a shield in a slot is never a weapon.
+  weapon() {
+    const main = this.equip.weapon;
+    if (main && main.type !== 'shield') return main;
+    const off = this.equip.shield;
+    if (off && off.type !== 'shield') return off;
+    return null;
+  }
 
   serialize() {
     // Coins now live in the backpack as items, so they serialize with it. We
