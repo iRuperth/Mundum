@@ -391,25 +391,58 @@ body.touch .side-right.collapsed #panel-toggle, body.touch .side-left.collapsed 
 .win-collapse:hover { background: rgba(255,255,255,.18); }
 .win-body { padding: 7px; }
 .win.collapsed .win-body { display: none; }
+/* Resizable windows (everything but the map): a grip along the BOTTOM EDGE the
+   player drags up/down to size the window's height, Tibia-style. The width never
+   changes (columns stay fixed); the body scrolls so content never overflows. */
+.win.resizable { position: relative; }
+.win.resizable .win-body { overflow: auto; max-height: var(--win-body-h, none); }
+.win-resize {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 8px;
+  cursor: ns-resize; z-index: 2; touch-action: none;
+  background: linear-gradient(180deg, transparent 0 40%, rgba(255,255,255,.35) 45% 55%, transparent 60% 100%);
+}
+.win-resize:hover { background: linear-gradient(180deg, transparent 0 35%, rgba(126,201,255,.6) 42% 58%, transparent 65% 100%); }
+.win.resizing { outline: 1px dashed rgba(126,201,255,.8); user-select: none; }
 
 #windows { display: flex; flex-direction: column; gap: 8px; }
 
-#minimap-box { position: relative; }
-#minimap {
-  width: 100%; height: auto; aspect-ratio: 1; display: block;
-  border-radius: 8px; border: 1px solid rgba(255,255,255,.2); image-rendering: pixelated;
+/* Floating CIRCULAR minimap, pinned to the top-right — just clear of the right
+   side panel (≈188px) so the two never overlap. */
+#minimap-box {
+  position: fixed; z-index: 9;
+  /* Nudged down a touch so the #coords label (which floats 18px above the ring)
+     clears the top edge of the screen instead of being cut off. */
+  top: calc(24px + env(safe-area-inset-top)); right: 200px;
+  width: 132px; height: 132px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.28);
+  box-shadow: 0 4px 14px rgba(0,0,0,.5), inset 0 0 0 2px rgba(8,12,30,.6);
+  background: rgba(8,12,30,.5);
+  /* Labels sit just outside the ring (see #coords/#city-name), so don't clip. The
+     canvas is circular via its own border-radius. */
+  overflow: visible;
 }
-#minimap { cursor: pointer; }
+#minimap-box.hidden { display: none !important; }
+#minimap {
+  width: 100%; height: 100%; aspect-ratio: 1; display: block;
+  border-radius: 50%; cursor: pointer; image-rendering: pixelated;
+}
+/* The coords/city-name sit OUTSIDE the circle (coords above, city below) so they
+   never cover the N/S compass letters drawn on the map edge. overflow on the box
+   is visible-on-y for these via negative offsets. */
 #city-name {
-  position: absolute; bottom: 4px; left: 4px; right: 4px; text-align: center;
-  font-size: 11px; color: #fff; background: rgba(0,0,0,.5); border-radius: 6px;
-  padding: 2px 0;
+  position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; text-align: center;
+  font-size: 10px; color: #fff; background: rgba(0,0,0,.6); border-radius: 8px;
+  padding: 1px 8px; pointer-events: none;
 }
 #coords {
-  position: absolute; top: 4px; left: 4px; right: 4px; text-align: center;
-  font-size: 10px; font-variant-numeric: tabular-nums; color: #cfe8ff;
-  background: rgba(0,0,0,.5); border-radius: 6px; padding: 2px 0; pointer-events: none;
+  position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; text-align: center;
+  font-size: 9px; font-variant-numeric: tabular-nums; color: #cfe8ff;
+  background: rgba(0,0,0,.6); border-radius: 8px; padding: 1px 8px; pointer-events: none;
 }
+body.touch #minimap-box { right: 162px; }
+@media (max-width: 520px) { #minimap-box { width: 104px; height: 104px; right: 150px; } }
 
 /* Expanded map overlay (click the minimap to open) */
 #map-overlay {
@@ -457,7 +490,7 @@ body.touch .side-right.collapsed #panel-toggle, body.touch .side-left.collapsed 
   grid-template-areas:
     "amulet helmet bag"
     "weapon armor  shield"
-    ".      legs   extra"
+    "ring   legs   extra"
     ".      boots  .";
   gap: 5px;
   padding: 7px;
@@ -478,6 +511,7 @@ body.touch .side-right.collapsed #panel-toggle, body.touch .side-left.collapsed 
 .slot[data-slot="boots"]  { grid-area: boots; }
 .slot[data-slot="bag"]    { grid-area: bag; }
 .slot[data-slot="extra"]  { grid-area: extra; }
+.slot[data-slot="ring"]   { grid-area: ring; }
 
 .slot {
   width: 100%; height: 100%; cursor: pointer;
@@ -602,9 +636,13 @@ body.touch .side-right.collapsed #panel-toggle, body.touch .side-left.collapsed 
 }
 
 #chat {
-  position: fixed; left: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 8;
-  width: min(320px, 70vw);
+  /* Sit to the RIGHT of the left side panel (≈188px) so the log/input never hide
+     behind it now that the left panel opens by default. */
+  position: fixed; left: 200px; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 8;
+  width: min(320px, 60vw);
 }
+body.touch #chat { left: 162px; }
+@media (max-width: 520px) { #chat { left: 152px; width: min(260px, 56vw); } }
 #chat-log {
   display: flex; flex-direction: column; gap: 2px; max-height: 130px; overflow: hidden;
   margin-bottom: 6px; pointer-events: none;
@@ -861,10 +899,12 @@ body.touch #crosshair { display: none !important; }
   #auth-root .auth-prof-desc { display: none; }
 }
 
-/* Floating backpack window (20-slot grid, Tibia style) */
+/* Floating backpack window (Tibia style): a fixed 4-column grid. The window only
+   resizes vertically (the resize grip), so columns stay at 4 and taller windows
+   just show more rows; the body scrolls when there are more than fit. */
 .bp-window {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-  max-height: 40vh; overflow-y: auto;
+  max-height: var(--win-body-h, 40vh); overflow-y: auto;
 }
 .bp-window .bp-cell { aspect-ratio: 1; font-size: 18px; }
 /* The context-card backpack (shops/depot reuse it) keeps the roomier 5-col grid. */
@@ -1051,7 +1091,7 @@ body.touch #crosshair { display: none !important; }
 /* Character window: stats and skill tree (MapleStory style) */
 /* The Skills/Spells window content lives inside a side-panel .win now, so the
    card is fluid (no fixed width / overlay). Its body scrolls if tall. */
-.sp-wbody { max-height: 60vh; overflow-y: auto; }
+.sp-wbody { max-height: var(--win-body-h, 60vh); overflow-y: auto; }
 .sp-card { color: #fff; font-size: 13px; }
 .sp-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .sp-tab { flex: 1; padding: 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 8px;
@@ -1209,6 +1249,30 @@ body.touch #crosshair { display: none !important; }
 .wk-drops { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; align-items: center; }
 .wk-drops-l { font-size: 11px; opacity: .65; }
 
+/* Clickable catalog cards open the item "sources" panel. */
+.wk-hint { font-size: 12px; opacity: .8; margin: 0 0 8px; }
+.wk-item-click { cursor: pointer; transition: background .12s, border-color .12s; }
+.wk-item-click:hover { background: rgba(126,201,255,.12); border-color: #7ec9ff; }
+
+/* Item sources / "where does it come from" detail panel. */
+.wk-back { cursor: pointer; background: rgba(255,255,255,.08); color: #fff;
+  border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 6px 12px;
+  font-size: 12.5px; font-weight: 600; margin-bottom: 12px; }
+.wk-back:hover { background: rgba(126,201,255,.2); border-color: #7ec9ff; }
+.wk-id-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.wk-id-ico .wk-ico { width: 56px; height: 56px; }
+.wk-id-info { display: flex; flex-direction: column; gap: 3px; }
+.wk-id-title { display: flex; align-items: center; gap: 8px; font-size: 18px; }
+.wk-id-sub { font-size: 12px; opacity: .7; }
+.wk-src-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 4px; }
+.wk-src-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px; padding: 6px 9px; }
+.wk-src-cr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wk-src-zone { font-size: 11.5px; opacity: .7; }
+.wk-src-chance { color: #ffe27a; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.wk-src-empty, .wk-shop-note { font-size: 12.5px; margin: 4px 0 0; }
+
 .wk-swatch { display: inline-block; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); vertical-align: middle; }
 /* Real pixel-art icon inside wiki lists. */
 .wk-ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
@@ -1316,3 +1380,67 @@ body.touch #crosshair { display: none !important; }
 .ban-emoji { font-size: 64px; }
 .ban-title { font-size: 26px; font-weight: 800; margin-top: 12px; color: #ff6b6b; }
 .ban-sub { font-size: 15px; opacity: .8; margin-top: 8px; }
+
+/* ============================================================ KEYBOARD PANEL */
+/* MapleStory-style on-screen keyboard: drag powers/potions onto keys. */
+#kb-overlay {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(4,7,18,.82); backdrop-filter: blur(4px);
+}
+#kb-overlay.hidden { display: none !important; }
+#kb-window {
+  width: min(880px, 96vw); max-height: 92vh; overflow: auto;
+  background: rgba(14,18,38,.96); border: 1px solid rgba(255,255,255,.16);
+  border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.6); padding: 14px 16px 18px;
+  color: #e7ecf2;
+}
+.kb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.kb-title { flex: 1; font-size: 16px; font-weight: 800; }
+.kb-close {
+  border: none; background: rgba(255,255,255,.1); color: #fff; width: 30px; height: 30px;
+  border-radius: 8px; cursor: pointer; font-size: 15px;
+}
+.kb-close:hover { background: #a33; }
+.kb-hint { font-size: 12px; color: #9fb0c2; margin-bottom: 12px; }
+.kb-body { display: flex; gap: 16px; flex-wrap: wrap; }
+.kb-keys { flex: 1 1 460px; display: flex; flex-direction: column; gap: 6px; }
+.kb-row { display: flex; gap: 6px; }
+.kb-key {
+  flex: 1 1 0; min-width: 38px; height: 48px; border-radius: 8px; position: relative;
+  background: linear-gradient(180deg, rgba(34,42,72,.95), rgba(16,20,40,.95));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 2px 3px rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.kb-key-label { position: absolute; top: 3px; left: 5px; font-size: 9px; color: #9fb0c2; font-weight: 700; }
+.kb-key-ico { font-size: 22px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.kb-key-ico svg { width: 26px; height: 26px; }
+.kb-key.kb-bound { border-color: rgba(126,201,255,.7); background: linear-gradient(180deg, rgba(40,64,104,.95), rgba(20,30,58,.95)); }
+.kb-key.kb-reserved { opacity: .4; cursor: default; }
+.kb-key.kb-reserved .kb-key-label { color: #ffae8a; }
+.kb-key.kb-drop { outline: 2px solid #7ec9ff; box-shadow: 0 0 10px rgba(126,201,255,.6); }
+/* The drag source tray */
+.kb-tray { flex: 1 1 220px; min-width: 200px; background: rgba(8,12,28,.6); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px; padding: 10px; max-height: 360px; overflow-y: auto; }
+.kb-tray-title { font-size: 12px; font-weight: 800; color: #ffe27a; margin-bottom: 8px; }
+.kb-tray-items { display: flex; flex-direction: column; gap: 5px; }
+.kb-tray-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+  cursor: grab; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+.kb-tray-item:hover { border-color: rgba(126,201,255,.5); }
+.kb-tray-item.dragging { opacity: .4; }
+.kb-tray-ico { width: 26px; height: 26px; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+.kb-tray-ico svg { width: 24px; height: 24px; }
+.kb-tray-name { font-size: 13px; }
+.kb-tray-empty { font-size: 12px; color: #9fb0c2; padding: 6px; }
+/* The icon that follows the cursor while dragging onto a key */
+.kb-ghost { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center; font-size: 26px; filter: drop-shadow(0 3px 4px rgba(0,0,0,.6)); }
+.kb-ghost svg { width: 32px; height: 32px; }
+@media (max-width: 520px) {
+  .kb-key { height: 40px; min-width: 28px; }
+  .kb-key-ico { font-size: 18px; }
+}
