@@ -459,6 +459,44 @@ export function coinsFromValue(total) {
   return out;
 }
 
+// Short denomination word per coin tier, e.g. 'bronze' / 'bronce'. Derived from
+// the coin name (drops the "Coin"/"Moneda de" wrapper) so a loot line can read
+// "22 bronze coins" / "22 monedas de bronce".
+const COIN_WORD = {
+  bronze_coin:   { es: 'bronce',  en: 'bronze' },
+  silver_coin:   { es: 'plata',   en: 'silver' },
+  gold_coin:     { es: 'oro',     en: 'gold' },
+  platinum_coin: { es: 'platino', en: 'platinum' },
+  diamond_coin:  { es: 'diamante',en: 'diamond' },
+};
+
+// A human loot label for a bronze TOTAL, named by denomination — what the user
+// wants instead of a bare "+22 gold". Examples:
+//   en: "22 bronze coins"  ·  "1 gold, 5 silver, 22 bronze coins"
+//   es: "22 monedas de bronce"  ·  "1 de oro, 5 de plata, 22 monedas de bronce"
+// Falls back to "0 bronze coins" for a zero/empty total so it's never blank.
+export function coinLootLabel(total, lang = 'es') {
+  const parts = coinsFromValue(total);
+  if (!parts.length) {
+    return lang === 'en' ? '0 bronze coins' : '0 monedas de bronce';
+  }
+  const word = (id) => (COIN_WORD[id] && COIN_WORD[id][lang === 'en' ? 'en' : 'es']) || id;
+  const last = parts.length - 1;
+  if (lang === 'en') {
+    // "1 gold, 5 silver, 22 bronze coins" — the unit "coin(s)" sits at the end,
+    // singular when the last stack is exactly one.
+    const unit = parts[last].count === 1 ? ' coin' : ' coins';
+    const segs = parts.map((p, i) => `${p.count} ${word(p.id)}${i === last ? unit : ''}`);
+    return segs.join(', ');
+  }
+  // Spanish: "1 de oro, 5 de plata, 22 monedas de bronce" (singular "moneda").
+  const unit = parts[last].count === 1 ? 'moneda' : 'monedas';
+  const segs = parts.map((p, i) => (i === last
+    ? `${p.count} ${unit} de ${word(p.id)}`
+    : `${p.count} de ${word(p.id)}`));
+  return segs.join(', ');
+}
+
 export const LEGENDARY_ABILITIES = [
   { id: 'ember', name: 'Ember', desc: 'Adds a burst of fire damage on hit.', element: 'fire' },
   { id: 'tide', name: 'Tide', desc: 'Adds a burst of water damage on hit.', element: 'water' },
