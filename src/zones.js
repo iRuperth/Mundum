@@ -27,8 +27,14 @@ export const ZONES = [
     caveIds: ['ratcave'], camps: [], decor: 'none',
   },
   {
+    // Closest hostile zone to the capital (edge ~116m from Greenhollow), so it
+    // must stay newbie-safe: only the gentle end of the spider ladder spawns in
+    // the OPEN nest (Spider L1, Poison Spider L3). The Tarantula (L12) and
+    // Crystal Spider (L30) were moved to far zones below — they used to spawn
+    // here and kill level-1 players. The Giant Spider boss is still held to its
+    // lair (bossRadius), so it only appears deep in the nest, not in the open.
     id: 'spider-nest', name: { es: 'Nido de Arañas', en: 'Spider Nest' },
-    center: { x: -260, z: -180 }, radius: 200, levelMin: 1, levelMax: 12,
+    center: { x: -260, z: -180 }, radius: 200, levelMin: 1, levelMax: 4,
     families: ['spider', 'bat'], ids: [],
     boss: 'spider-giant-spider', bossNear: { x: -260, z: -180 }, bossRadius: 18,
     caveIds: ['spidernest'], camps: [], decor: 'web',
@@ -43,7 +49,9 @@ export const ZONES = [
   {
     id: 'troll-territory', name: { es: 'Territorio Trol', en: 'Troll Territory' },
     center: { x: -540, z: 460 }, radius: 260, levelMin: 4, levelMax: 14,
-    families: ['troll'], ids: ['spider-tarantula'],
+    // (Tarantula removed from here — it was a level-12 ambush in a level-4 zone.
+    // It now lives in the Minotaur Labyrinth, far from the capital.)
+    families: ['troll'], ids: [],
     boss: 'troll-troll-champion', bossNear: { x: -540, z: 460 }, bossRadius: 18,
     // The user wants ~6 troll caves in this mega-zone (added in dungeons.js).
     caveIds: ['trollcave', 'trollcave2', 'trollcave3', 'trollcave4', 'trollcave5', 'trollcave6'],
@@ -67,7 +75,9 @@ export const ZONES = [
   {
     id: 'minotaur-labyrinth', name: { es: 'Laberinto Minotauro', en: 'Minotaur Labyrinth' },
     center: { x: -420, z: -720 }, radius: 210, levelMin: 6, levelMax: 22,
-    families: ['minotaur'], ids: [],
+    // Tarantulas (L12) den in the dark labyrinth now — far from the capital and
+    // level-appropriate, instead of ambushing newbies by the city.
+    families: ['minotaur'], ids: ['spider-tarantula'],
     boss: 'minotaur-minotaur-mage', bossNear: { x: -420, z: -720 }, bossRadius: 16,
     caveIds: [], camps: [{ x: -380, z: -680 }], decor: 'camp',
   },
@@ -99,7 +109,9 @@ export const ZONES = [
     id: 'dragon-mountains', name: { es: 'Montañas de Dragones', en: 'Dragon Mountains' },
     center: { x: 200, z: -760 }, radius: 300, levelMin: 16, levelMax: 72,
     // Elves guard the dragon foothills (the user's pairing: elves near dragons).
-    families: ['dragon', 'wyvern', 'elf'], ids: ['lizardman'],
+    // Crystal Spiders (L30, frost casters) haunt the icy dragon foothills now —
+    // a fitting cold home, far from the newbie zones where they used to spawn.
+    families: ['dragon', 'wyvern', 'elf'], ids: ['lizardman', 'spider-crystal-spider'],
     boss: 'dragon-dragon-lord', bossNear: { x: 200, z: -760 }, bossRadius: 22,
     caveIds: ['dragonlair'], camps: [], decor: 'scorched',
   },
