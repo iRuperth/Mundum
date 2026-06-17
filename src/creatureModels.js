@@ -18,6 +18,12 @@ const G = {
 
 const EYE_W = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const EYE_B = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+// Bosses get menacing red GLOWING eyes. A build sets _eyeOverride to this while
+// constructing a boss so every addEyes() call across the design uses it; the
+// glow comes from the emissive so it reads even in shadow. Shared (never disposed).
+const EYE_BOSS = new THREE.MeshLambertMaterial({ color: 0xff2a18, emissive: 0xcc1500 });
+const EYE_BOSS_PUPIL = new THREE.MeshLambertMaterial({ color: 0x3a0500, emissive: 0x550800 });
+let _eyeOverride = null;   // {sclera, pupil} while building a boss, else null
 const WHITE = 0xffffff;
 const DARK = 0x222222;
 
@@ -183,7 +189,7 @@ const WEAPONS = {
 function DARK_MAT() { return new THREE.MeshLambertMaterial({ color: 0x3a3a3a }); }
 
 // The shared singleton materials that must never be disposed per-model.
-const SHARED_MATS = new Set([EYE_W, EYE_B, WOOD, STEEL, IRON, GOLD, STRING]);
+const SHARED_MATS = new Set([EYE_W, EYE_B, EYE_BOSS, EYE_BOSS_PUPIL, WOOD, STEEL, IRON, GOLD, STRING]);
 
 // Gather the per-instance materials hanging off a weapon group so the model can
 // dispose them later (shared palette mats are skipped — they're singletons).
@@ -202,6 +208,12 @@ function collectMats(group) {
 //   handY  – fist Y in the arm pivot's local space (set by the builder)
 //   handR  – arm radius, used to push the grip just outside the fist
 //   rest   – forward tilt at idle (default leans the weapon up and ahead)
+//   grab   – fraction of the weapon's height the fist closes around (0 = butt,
+//            1 = tip). The weapon is built from its butt up +Y, so we slide it
+//            DOWN inside the grip by grab*height: the butt then hangs below the
+//            hand and the head rises above it, exactly like a carried polearm —
+//            otherwise the whole weapon towers up from the fist and floats off
+//            above/beside the head.
 function giveWeapon(parts, kind, opts = {}) {
   const make = WEAPONS[kind];
   if (!make || !parts.arms || !parts.arms.length) return null;
@@ -219,9 +231,23 @@ function giveWeapon(parts, kind, opts = {}) {
     grip.rotation.set(0, 0, 0);         // bow stays upright, faced forward
     grip.position.z += handR * 1.5;
   } else {
-    grip.rotation.x = opts.rest != null ? opts.rest : 0.5;  // tilt up-and-forward
+    // Lean the weapon up-and-forward so it reads as carried, not jammed into the
+    // torso. A longer reach (polearms) leans a touch more so the head doesn't
+    // tower straight over the skull.
+    grip.rotation.x = opts.rest != null ? opts.rest : 0.7;
   }
   grip.scale.setScalar(opts.scale || 1);
+  // Grip the weapon partway up its shaft so it hangs in the fist instead of
+  // sprouting entirely above it. Default grabs near the lower third (butt below
+  // the hand, head above); a bow is held at its centre and isn't shifted.
+  if (kind !== 'bow') {
+    const bb = new THREE.Box3().setFromObject(w);
+    const top = bb.max.y, bot = bb.min.y;
+    if (isFinite(top) && isFinite(bot) && top > bot) {
+      const grab = opts.grab != null ? opts.grab : 0.32;
+      w.position.y -= bot + (top - bot) * grab;
+    }
+  }
   grip.add(w);
   hand.add(grip);
   parts.weapon = { grip, kind };
@@ -230,13 +256,18 @@ function giveWeapon(parts, kind, opts = {}) {
 
 // Add a pair of eyes onto a target at local position with given spread/size.
 function addEyes(target, y, z, spread, size, pupils = true) {
+  // Boss builds glow red (set in buildCreatureModel); everyone else uses the
+  // normal white sclera + dark pupil.
+  const scleraMat = _eyeOverride ? _eyeOverride.sclera : EYE_W;
+  const pupilMat = _eyeOverride ? _eyeOverride.pupil : EYE_B;
   for (const s of [-1, 1]) {
-    const e = mesh(G.lowSphere, EYE_W);
+    const e = mesh(G.lowSphere, scleraMat);
     e.scale.setScalar(size);
     e.position.set(s * spread, y, z);
     target.add(e);
-    if (pupils) {
-      const p = mesh(G.lowSphere, EYE_B);
+    // A boss's glowing eye reads as a solid orb (no dark pupil dot on top).
+    if (pupils && !_eyeOverride) {
+      const p = mesh(G.lowSphere, pupilMat);
       p.scale.setScalar(size * 0.55);
       p.position.set(s * spread, y, z + size * 0.7);
       target.add(p);
@@ -1299,21 +1330,37 @@ const BASE_BUILDERS = {
 // code can build with the same primitives the built-ins use.
 const MODEL_API = {
   THREE, G, mesh, lambert, shade, addEyes, addSpots, addFur, addMane, addClaws,
-  giveWeapon, collectMats, EYE_W, EYE_B, WHITE, DARK, WOOD, STEEL, IRON, GOLD, STRING,
+  giveWeapon, collectMats, EYE_W, EYE_B, EYE_BOSS, EYE_BOSS_PUPIL, WHITE, DARK, WOOD, STEEL, IRON, GOLD, STRING,
+  // True while building a boss/supreme creature, so a design's custom eyes/relief
+  // can read it (e.g. use EYE_BOSS for hand-built eyes). Set in buildCreatureModel.
+  get isBoss() { return _eyeOverride != null; },
 };
 
 const DESIGNS = {};
+// Cache of the UNSCALED foot-lift per design key (how far the model's lowest
+// point sits below the origin at unit scale). Computed once via Box3 then reused
+// for every spawn of that creature — see buildCreatureModel's footOffset.
+const FOOT_LIFT_CACHE = new Map();
 export function registerDesigns(map) { Object.assign(DESIGNS, map); }
 export function getDesignKeys() { return Object.keys(DESIGNS); }
 export { MODEL_API };
 
-// Public factory.
+// Public factory. `opts.design` is an optional bespoke design key (e.g. a
+// variant name like 'frost_dragon' or 'minotaur_guard'); when it names a
+// registered design it wins, so per-variant models render instead of every
+// variant reusing its base family. Falls back to the family design otherwise.
 export function buildCreatureModel(family, opts = {}) {
-  const design = DESIGNS[family];
+  const designKey = (opts.design && DESIGNS[opts.design]) ? opts.design : family;
+  const design = DESIGNS[designKey];
   const tint = opts.color != null ? opts.color
     : (design && design.color != null ? design.color : 0x999999);
   const scale = opts.scale != null ? opts.scale
     : (design && design.scale != null ? design.scale : 1);
+
+  // Bosses build with glowing red eyes (every addEyes() call this build picks it
+  // up). Set BEFORE any geometry is built and cleared right after, so it never
+  // leaks into the next creature.
+  _eyeOverride = opts.boss ? { sclera: EYE_BOSS, pupil: EYE_BOSS_PUPIL } : null;
 
   const group = new THREE.Group();
   const root = new THREE.Group();
@@ -1344,7 +1391,7 @@ export function buildCreatureModel(family, opts = {}) {
     // Bespoke geometry for this creature's unique silhouette.
     if (design.decorate) {
       try { design.decorate(root, parts, o, tint, MODEL_API); }
-      catch (e) { console.warn('decorate failed for', family, e); }
+      catch (e) { console.warn('decorate failed for', designKey, e); }
       for (const m of collectMats(root)) if (!materials.includes(m)) materials.push(m);
     }
   } else if (entry) {
@@ -1374,8 +1421,29 @@ export function buildCreatureModel(family, opts = {}) {
   } else {
     parts = genericBlob(root, bodyMat);
   }
+  _eyeOverride = null;   // geometry built; never leak the boss eyes to the next model
 
   group.scale.setScalar(scale);
+
+  // Foot offset: many models build their legs reaching BELOW the group origin
+  // (negative Y), so placing the origin at terrain height sinks the feet through
+  // the ground (worse the bigger the scale). We need how far to LIFT the group so
+  // the lowest point rests at y=0 (only sinkers, min.y<0).
+  //
+  // The geometry is deterministic per design key, and the lowest point scales
+  // linearly with `scale` (tint never changes shape), so we measure the UNSCALED
+  // lowest point ONCE per design key and cache it — instead of running the
+  // O(vertices) Box3().setFromObject on every single spawn (the spawn hitch).
+  let unscaledLift = FOOT_LIFT_CACHE.get(designKey);
+  if (unscaledLift === undefined) {
+    const prevScale = group.scale.x;
+    group.scale.setScalar(1);                       // measure at unit scale
+    const _bb = new THREE.Box3().setFromObject(group);
+    unscaledLift = (isFinite(_bb.min.y) && _bb.min.y < 0) ? -_bb.min.y : 0;
+    group.scale.setScalar(prevScale);               // restore
+    FOOT_LIFT_CACHE.set(designKey, unscaledLift);
+  }
+  const footOffset = unscaledLift * scale;
 
   // Idle / walk + transient ATTACK + DEATH animation. attack() is fired by the
   // combat system on each blow; dieT (0..1) is the death progress passed in
@@ -1577,7 +1645,13 @@ export function buildCreatureModel(family, opts = {}) {
       default:
         root.position.y = breath;
     }
+    // Expose this frame's body bob/lunge in WORLD units (root lives inside the
+    // scaled group) so a rider can ride along with it. rotation.z is the death
+    // roll; we only surface the live bob/lunge a mount cares about.
+    bob.y = root.position.y * scale;
+    bob.z = root.position.z * scale;
   }
+  const bob = { y: 0, z: 0 };
 
   function dispose() {
     group.traverse((obj) => {
@@ -1591,5 +1665,5 @@ export function buildCreatureModel(family, opts = {}) {
     }
   }
 
-  return { group, update, attack, dispose };
+  return { group, update, attack, dispose, footOffset, bob };
 }
