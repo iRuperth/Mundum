@@ -14,7 +14,6 @@ import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 const CHANNEL = 'world';
 const STATE_HZ = 8; // max position broadcasts per second
 const STATE_MIN_INTERVAL = 1000 / STATE_HZ;
-const SAVE_DEBOUNCE = 4000; // ms between cloud saves
 
 // Treat empty / example placeholder credentials as "no backend configured".
 function credsLookReal(url, key) {
@@ -47,15 +46,12 @@ export class Net {
       gmAnnounce: null,  // a banner message shown to everyone
       gmSummon: null,    // teleport me to a world position
       gmKick: null,      // I have been banned: leave the world
+      disconnect: null,  // the realtime channel dropped after connecting
     };
 
     // outgoing position throttle
     this._lastSentAt = 0;
     this._lastSent = null;
-
-    // debounced cloud save
-    this._saveTimer = null;
-    this._pendingSave = null;
   }
 
   // lifecycle
@@ -82,7 +78,12 @@ export class Net {
       this.user = sess.session ? sess.session.user : sess.user;
       if (!this.user) throw new Error('no anon user');
 
-      await this._upsertCharacter(profile);
+      // Presence/identity for other players travels over the realtime channel
+      // (track + broadcast), NOT a DB row. We must NOT upsert into the account
+      // `characters` table from this ANONYMOUS session — that wrote a bogus row
+      // keyed by the anon id (and on the multi-character schema it fails the
+      // user_id NOT NULL constraint, disabling online entirely). Persistence of
+      // gold/exp/items is handled exclusively by the account system (auth.js).
       await this._joinChannel();
 
       this._online = true;
@@ -100,7 +101,6 @@ export class Net {
   }
 
   async disconnect() {
-    this._flushSave();
     await this._teardown();
     this._online = false;
   }
@@ -114,20 +114,6 @@ export class Net {
   }
 
   // Write the minimal character row so the player's name shows up for others.
-  async _upsertCharacter(profile) {
-    const row = {
-      id: this.user.id,
-      name: (profile.name || 'Adventurer').slice(0, 24),
-      sex: profile.sex || 'male',
-      hair: profile.hair || 'short',
-      colors: profile.colors || {},
-      level: profile.level || 1,
-      updated_at: new Date().toISOString(),
-    };
-    const { error } = await this.client.from('characters').upsert(row);
-    if (error) throw error;
-  }
-
   async _joinChannel() {
     const id = this.user.id;
     this.channel = this.client.channel(CHANNEL, {
@@ -154,18 +140,36 @@ export class Net {
       });
 
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('channel timeout')), 10000);
+      // The status callback fires repeatedly over the channel's lifetime (a later
+      // CHANNEL_ERROR on a network blip, a re-SUBSCRIBED after auto-rejoin...).
+      // Latch it so the connect promise settles exactly once — otherwise a second
+      // settle after we've already resolved becomes an unhandled rejection.
+      let settled = false;
+      const timer = setTimeout(() => { if (!settled) { settled = true; reject(new Error('channel timeout')); } }, 10000);
       this.channel.subscribe((status) => {
+        // A channel error / timeout / close matters for the WHOLE lifetime, not
+        // just the connect handshake: if it arrives after we're subscribed, the
+        // socket is dead, so flip _online off (and notify) — otherwise the game
+        // keeps thinking it's connected while messages silently drop.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (settled) {
+            if (this._online) { this._online = false; if (this._cb.disconnect) this._cb.disconnect(status); }
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('channel ' + status));
+          return;
+        }
+        if (settled) return;
         if (status === 'SUBSCRIBED') {
+          settled = true;
           clearTimeout(timer);
           this.channel.track({
             id,
             name: (this.profile && this.profile.name) || 'Adventurer',
             level: (this.profile && this.profile.level) || 1,
           }).then(resolve, resolve);
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          clearTimeout(timer);
-          reject(new Error('channel ' + status));
         }
       });
     });
@@ -246,6 +250,7 @@ export class Net {
   onPeerUpdate(cb) { this._cb.peerUpdate = cb; }
   onPeerJoin(cb) { this._cb.peerJoin = cb; }
   onPeerLeave(cb) { this._cb.peerLeave = cb; }
+  onDisconnect(cb) { this._cb.disconnect = cb; }
 
   // chat
 
@@ -426,53 +431,11 @@ export class Net {
     });
   }
 
-  // cloud save
-
-  // Debounced durable write of the full character row.
-  saveCharacter(state) {
-    if (!this._online) return;
-    this._pendingSave = state;
-    if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => {
-      this._saveTimer = null;
-      this._flushSave();
-    }, SAVE_DEBOUNCE);
-  }
-
-  async _flushSave() {
-    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
-    const state = this._pendingSave;
-    this._pendingSave = null;
-    if (!this._online || !state) return;
-
-    const row = {
-      id: this.user.id,
-      level: state.level,
-      exp: state.exp,
-      gold: state.gold,
-      equipment: state.equipment || {},
-      backpack: state.backpack || [],
-      depot: state.depot || [],
-      pos: state.pos || (state.x != null ? { x: state.x, y: state.y, z: state.z } : {}),
-      updated_at: new Date().toISOString(),
-    };
-    if (state.name != null) row.name = String(state.name).slice(0, 24);
-    if (state.colors != null) row.colors = state.colors;
-
-    const { error } = await this.client.from('characters').update(row).eq('id', this.user.id);
-    if (error) console.warn('[net] saveCharacter:', error.message);
-  }
-
-  async loadCharacter() {
-    if (!this._online) return null;
-    const { data, error } = await this.client
-      .from('characters')
-      .select('*')
-      .eq('id', this.user.id)
-      .maybeSingle();
-    if (error) { console.warn('[net] loadCharacter:', error.message); return null; }
-    return data || null;
-  }
+  // Persistence (gold/exp/items) is owned entirely by the account system in
+  // auth.js, keyed by the character row id under the logged-in user. The old
+  // net-side saveCharacter/loadCharacter wrote/read the `characters` table from
+  // this ANONYMOUS realtime session keyed by the anon id — the wrong row — so
+  // they were removed to stop them corrupting real progress.
 }
 
 // Factory mirror of the class for callers that prefer it.
