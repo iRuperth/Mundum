@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WEAPONS, ARMORS, CONTAINERS, POTIONS } from './data/items.js';
+import { WEAPONS, ARMORS, CONTAINERS, POTIONS, LIGHTS } from './data/items.js';
 
 // Fixed city layout. Nominal positions are deterministic; each is then snapped
 // to the nearest flat grassland so cities never sit underwater. Every city has
@@ -196,7 +196,10 @@ export function shopStock() {
   const armors = ARMORS.filter(buyable);
   // Shops sell the flat-amount potions (not the rare % restores / elixirs).
   const potions = POTIONS.filter((p) => !p.restorePct);
-  return [...weapons, ...armors, ...buyableContainers(), ...potions];
+  // Only the three shop-tier lights are sold (Torch, Glowing Pebble, Ruby); the
+  // rest are quest rewards.
+  const lights = LIGHTS.filter((l) => l.shopTier === 'shop');
+  return [...weapons, ...armors, ...buyableContainers(), ...potions, ...lights];
 }
 
 // Normalize a def/instance to a coarse kind: 'weapon' | 'shield' | 'armor' |
@@ -639,7 +642,7 @@ function buildRoundCity(group, world, c, flat, mats, st) {
     buildProp(group, world, gx + px * 3.5, gz + pz * 3.5, flat, 'lamp', mats);
     buildProp(group, world, gx - px * 3.5, gz - pz * 3.5, flat, 'lamp', mats);
   }
-  buildTemple(group, c.x, c.z, flat, mats.temple, mats.stone);
+  buildTemple(group, c.x, c.z, flat, mats.temple, mats.stone, world);
   pois.push({ x: c.x, z: c.z, icon: '🏛️', label: 'Temple' });
   buildTownHall(group, world, c.x, c.z + 18, flat, mats);
   pois.push({ x: c.x, z: c.z + 18, icon: '🏛️', label: 'Town Hall' });
@@ -798,6 +801,9 @@ const CAPITAL_LOTS = [
   { col:  0, row: -3, kind: 'temple2', label: 'North Keep',          icon: '🏰', big: true },
   { col: -4, row:  2, kind: 'tavern',  label: 'The Wayfarer Inn',    icon: '🍺' },
   { col:  4, row: -2, kind: 'jeweler', label: 'Gemcutter',           icon: '💎' },
+  // The Stable: the mount vendor's own building, in a corner of the city so the
+  // Stable Master stays put inside it instead of roaming the streets.
+  { col:  3, row:  1, kind: 'stable',  label: 'The Stable',          icon: '🐴' },
 ];
 
 // Build a fast lookup of which (col,row) cells are inside the city, plus the
@@ -842,7 +848,7 @@ function buildGridCity(group, world, c, flat, mats, st) {
   // The statue sits NORTH of the temple (c.z + 9), well clear of the south spawn
   // point (the player appears at c.z - 8 by the south gate) so it never wedges
   // the player against its collision on spawn.
-  buildTemple(group, c.x, c.z, flat, mats.temple, mats.stone);
+  buildTemple(group, c.x, c.z, flat, mats.temple, mats.stone, world);
   buildProp(group, world, c.x - 8, c.z, flat, 'fountain', mats);
   buildProp(group, world, c.x + 8, c.z, flat, 'fountain', mats);
   buildProp(group, world, c.x, c.z + 9, flat, 'statue', mats);
@@ -1176,7 +1182,23 @@ function buildMaskWall(group, world, cx, cz, y, cell, mats) {
       // sits flush with the terrain (no z-fight).
       m.position.set(wx, y + H / 2 - FOUND / 2, wz);
       group.add(m);
-      world && world.addSolid(wx, wz, plen * 0.5 + 0.3);
+      // Collision: lay a ROW of small circles ALONG the wall piece, each only as
+      // wide as the wall is thick — NOT one big circle of radius plen/2. A single
+      // circle for a 26m segment bulges its collider ~13m sideways, which reached
+      // clear across the gate opening and the exit road and blocked the player on
+      // thin air ("colisiones en medio del camino"). Spaced ~T apart so there's no
+      // walk-through gap, the colliders now hug the wall's real footprint.
+      if (world) {
+        const cr = T * 0.6;                 // collider radius ≈ half wall thickness
+        const stepN = Math.max(1, Math.round(plen / (T * 0.9)));
+        for (let s = 0; s <= stepN; s++) {
+          const f = stepN === 0 ? 0.5 : s / stepN;
+          const off = a + plen * f;          // along the segment's local axis
+          const sx = horizontal ? mx + off : mx;
+          const sz = horizontal ? mz : mz + off;
+          world.addSolid(sx, sz, cr);
+        }
+      }
       // A horizontal string-course: a slightly proud, darker stone band partway
       // up the segment so the wall reads as coursed masonry, not one flat slab.
       const courseGeo = horizontal
@@ -1745,6 +1767,7 @@ const SHOP_LOOK = {
   temple2:  { wall: 'stone', sign: 'metal',   decor: 'keep' },
   tavern:   { wall: 'food',  sign: 'awning',  decor: 'tavern' },
   jeweler:  { wall: 'wall2', sign: 'portal',  decor: 'jeweler' },
+  stable:   { wall: 'food',  sign: 'awning',  decor: 'stable' },   // timber barn look
 };
 
 // A named capital building you can walk into. Generalizes buildEnterable: bigger
@@ -2074,6 +2097,27 @@ function decorateInterior(group, x, z, y, facing, key, mats) {
       const gem = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.3, 6), gemMats[i % gemMats.length]);
       gem.position.set(p.x, y + 1.75, p.z); gem.rotation.x = Math.PI; group.add(gem);
     }
+  } else if (key === 'stable') {
+    // A stable: golden hay bales, a water trough and a stall fence so it reads as
+    // a barn where the mounts are kept.
+    for (let i = 0; i < 5; i++) {
+      const p = at(-3.2 + i * 1.6, -3.8);
+      const bale = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.9, 10), mats.gold);
+      bale.rotation.z = Math.PI / 2; bale.position.set(p.x, y + 0.5, p.z); bale.rotation.y = facing; group.add(bale);
+    }
+    // Water trough along one side.
+    const trp = at(-3, 1);
+    const trough = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 3), mats.wood);
+    trough.position.set(trp.x, y + 0.3, trp.z); trough.rotation.y = facing; group.add(trough);
+    // A simple stall fence (posts + rails) dividing the floor.
+    for (let i = 0; i < 4; i++) {
+      const p = at(1 + i * 1.2, 2);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.2, 0.16), mats.wood);
+      post.position.set(p.x, y + 0.6, p.z); group.add(post);
+    }
+    const railP = at(2.8, 2);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 4.4), mats.wood);
+    rail.position.set(railP.x, y + 0.95, railP.z); rail.rotation.y = facing; group.add(rail);
   } else { // market
     // Crates and barrels of goods + a fruit stall.
     for (let i = 0; i < 5; i++) {
@@ -2368,7 +2412,7 @@ function buildNameLabel(group, city, y) {
 }
 
 // A small marble temple at the city center: stepped base, pillars and a roof.
-function buildTemple(group, cx, cz, flat, matTemple, matStone) {
+function buildTemple(group, cx, cz, flat, matTemple, matStone, world) {
   const base = new THREE.Mesh(new THREE.CylinderGeometry(5, 5.5, 0.8, 16), matStone);
   base.position.set(cx, flat + 0.4, cz);
   group.add(base);
@@ -2382,7 +2426,15 @@ function buildTemple(group, cx, cz, flat, matTemple, matStone) {
     const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 4, 8), matTemple);
     pillar.position.set(px, flat + 3, pz);
     group.add(pillar);
+    // Each pillar is solid — you can walk between them and stand inside, but you
+    // can't pass through a column.
+    if (world) world.addSolid(px, pz, 0.42);
   }
+  // The temple floor is a STAND-ON platform: stepping onto it lifts the player
+  // onto its top (~0.6 up) instead of letting them phase through the floor. The
+  // radius (3.8) stays INSIDE the floor disc (4.2) and clear of the priest NPC
+  // that stands at z=-4 by the steps, so that NPC isn't left sunk in the rim.
+  if (world) world.registerPlatform(cx, cz, flat + 0.6, 3.8);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(5, 2.4, 16), matTemple);
   roof.position.set(cx, flat + 6.2, cz);
   group.add(roof);

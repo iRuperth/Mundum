@@ -67,6 +67,10 @@ export class World {
     // Flat pads under cities so buildings, NPCs and the player share one level
     // ground. Registered after cities are placed; heightAt blends to it.
     this.cityFlats = [];
+    // Raised round platforms you can STAND ON (e.g. the temple floor): inside the
+    // radius the walk-height jumps up to `y`, so the player steps onto it instead
+    // of phasing through. Checked in heightAt after the city pads.
+    this.platforms = [];
     this.queue = [];
     this._cx = null;
     this._cz = null;
@@ -129,6 +133,13 @@ export class World {
   // the next `rim` meters it eases back to natural terrain.
   registerCityFlat(x, z, y, radius, rim = 8) {
     this.cityFlats.push({ x, z, y, radius, rim });
+  }
+
+  // Register a raised STAND-ON platform (the temple floor). Inside `radius` the
+  // walkable height is `y` (above the surrounding pad), so the player steps up
+  // onto it rather than walking through it.
+  registerPlatform(x, z, y, radius) {
+    this.platforms.push({ x, z, y, radius });
   }
 
   // 0 inside any city's flat core, ramping to 1 past its rim. Used to fade the
@@ -221,6 +232,13 @@ export class World {
       if (d2 >= reach * reach) continue;             // outside this city's reach
       const edge = Math.sqrt(d2) - c.radius;         // how far into the rim
       if (edge < bestRimD) { bestRimD = edge; bestRim = c; }
+    }
+    // Raised stand-on platforms (temple floor): if inside one, walk on TOP of it.
+    if (this.platforms.length) {
+      for (const pf of this.platforms) {
+        const dx = x - pf.x, dz = z - pf.z;
+        if (dx * dx + dz * dz <= pf.radius * pf.radius) return pf.y;
+      }
     }
 
     const n = this.noise;
@@ -377,23 +395,26 @@ export class World {
       this.queue = this.queue.filter((q) => !this.chunks.has(q.key));
     }
     {
-      // Time-budgeted streaming. A single chunk costs several ms, so we check the
-      // deadline BEFORE each build and stop once we'd overrun — that keeps any one
-      // frame from stacking two heavy builds (the hitch when crossing into a new
-      // area). We still force exactly ONE chunk only while the player is standing
-      // on missing ground (the very first chunks under them), so they never fall
-      // through; once the immediate ring exists, builds happen purely in spare
-      // time and the rest of the radius fills over the next frames.
+      // Stream AT MOST ONE chunk per frame. A single chunk is the heavy unit
+      // (~3-8ms of per-vertex noise + computeVertexNormals + a GPU buffer upload),
+      // so the only way to avoid a hitch when crossing into a new area is to never
+      // build two in the same frame. The old "build until a 5ms deadline" budget
+      // could still START a second chunk while under 5ms and then run it several ms
+      // PAST the deadline — that stacking is the stutter felt at a city edge, where
+      // crossing a boundary queues a fresh ring of chunks. One-per-frame fills the
+      // radius-4 view over ~1-2s of spare frames, which reads as smooth pop-in, not
+      // a freeze. We still build immediately (this frame) when the player is
+      // standing on a gap so they never fall through un-generated ground.
       const here = `${cx},${cz}`;
       const standingOnGap = !this.chunks.has(here);
-      const deadline = performance.now() + 5;   // ~5 ms of chunk work per frame
-      let built = 0;
       while (this.queue.length) {
-        const forceOne = standingOnGap && built === 0;
-        if (!forceOne && performance.now() >= deadline) break;
         const { key, cx: qx, cz: qz } = this.queue.shift();
-        if (!this.chunks.has(key)) { this._buildChunk(qx, qz); built++; }
+        if (!this.chunks.has(key)) { this._buildChunk(qx, qz); break; }
       }
+      // If we landed on a gap, the first build above filled a neighbour but maybe
+      // not the cell under the player; guarantee the player's own cell exists this
+      // frame too (at most one extra build, only on a true gap — rare).
+      if (standingOnGap && !this.chunks.has(here)) this._buildChunk(cx, cz);
     }
     this.water.position.x = px;
     this.water.position.z = pz;
