@@ -4,10 +4,11 @@ import './creatureDesigns.js';        // side effect: registers the authored cre
 import './creatureDesignsExtra.js';   // side effect: hand-authored vermin + dragon designs
 import './mountDesigns.js';           // side effect: mount + tiger + ice-dragon designs
 import { buildLootBagMesh } from './itemMeshes.js';
+import { CreatureStatus } from './statusEffects.js';
 import { buildCreatureLairDecor, disposeLairDecor } from './creatureDecor.js';
 import { creaturesForLevel, CREATURES, getCreature } from './data/creatures.js';
 import { zonePoolAt, wildernessLevelAt } from './zones.js';
-import { elementMultiplier } from './data/items.js';
+import { elementMultiplier, getWeapon, getArmor, getQuiver, RARITY } from './data/items.js';
 import { resolveItem } from './inventory.js';
 import { getLang } from './i18n.js';
 import { cityAt, capitalSafeLevelCap } from './cities.js';
@@ -18,8 +19,114 @@ const SPAWN_RADIUS = 42;
 const DESPAWN_RADIUS = 70;
 const ATTACK_RANGE = 2.4;
 const ATTACK_COOLDOWN = 0.7;
+const TAUNT_DURATION = 6;    // seconds a knight's Challenge locks a creature onto the player
 const DEATH_DUR = 0.6;       // seconds the death topple + dissolve plays
-const LEASH_RADIUS = 36;     // farther than this from home, a creature gives up and returns
+const LEASH_RADIUS = 100;    // max chase distance from home (~100m): a creature
+                             // pursues this far then gives up and walks back, so
+                             // nobody can drag a strong creature into a low-level
+                             // area to kill newbies — it leashes home long before.
+
+// --- Loot rules ------------------------------------------------------------
+// Drop-chance caps by item level: low-level gear (< DROP_CAP_LEVEL) never exceeds
+// DROP_CAP_LO (8%); higher-level gear (>= DROP_CAP_LEVEL) never exceeds DROP_CAP_HI
+// (3%) so strong gear stays a rare prize. Legendary gear never drops from
+// creatures at all — only the Game Master grants it.
+const DROP_CAP_LEVEL = 25;
+const DROP_CAP_LO = 0.08;   // items under level 25
+const DROP_CAP_HI = 0.03;   // items level 25 and up
+
+// Whether a loot id is EQUIPMENT (weapon / armor / quiver) — only gear is subject
+// to the drop-chance caps. Materials, trophies, coins and lights are the steady
+// grind/economy drops and keep their authored chances (silk 50%, trophy 60%…).
+function isGearDrop(itemId) {
+  return !!(getWeapon(itemId) || getArmor(itemId) || getQuiver(itemId));
+}
+
+// The base item's required level (for the drop-chance cap), 0 if unknown.
+function itemDropLevel(itemId) {
+  const w = getWeapon(itemId); if (w) return w.levelReq || 0;
+  const a = getArmor(itemId); if (a) return a.levelReq || 0;
+  const q = getQuiver(itemId); if (q) return q.levelReq || 0;
+  return 0; // materials/trophies/coins/lights have no level gate
+}
+
+// Whether a loot id is a LEGENDARY item (GM-only). A base flagged
+// shopTier 'legendary-tier' is the curated legendary set; the random Legendary
+// rarity roll is blocked separately on the resolved instance.
+function isLegendaryDrop(itemId) {
+  const w = getWeapon(itemId);
+  if (w && w.shopTier === 'legendary-tier') return true;
+  const a = getArmor(itemId);
+  if (a && a.shopTier === 'legendary-tier') return true;
+  return false;
+}
+
+// Level-banded potion tiers (self-contained so this never depends on the
+// creatures data module). `small` returns the tier just BELOW the level, else
+// the tier AT the level. Mirrors the creatures.js tables.
+const POTION_HP_TIERS = [
+  [1, 'apple'], [4, 'grapes'], [8, 'pear'], [12, 'melon'], [16, 'minor_health'],
+  [22, 'health_potion'], [30, 'strong_health'], [38, 'great_health'],
+  [48, 'mega_health'], [58, 'super_health'], [72, 'ultra_health'],
+  [88, 'supreme_health'], [105, 'divine_health'],
+];
+const POTION_MANA_TIERS = [
+  [1, 'berry'], [4, 'blueberries'], [8, 'mango'], [12, 'minor_mana'], [16, 'mana_potion'],
+  [22, 'strong_mana'], [30, 'great_mana'], [38, 'mega_mana'],
+  [48, 'super_mana'], [58, 'ultra_mana'], [72, 'supreme_mana'],
+  [88, 'divine_mana'], [105, 'cosmic_mana'],
+];
+// The potion id for a kind ('hp'|'mana') at `level`. `small` picks one tier
+// lower (a "small" potion) so a kill mixes small + large.
+function potionTierId(kind, level, small) {
+  const table = kind === 'mana' ? POTION_MANA_TIERS : POTION_HP_TIERS;
+  let idx = 0;
+  for (let i = 0; i < table.length; i++) { if (level >= table[i][0]) idx = i; else break; }
+  if (small) idx = Math.max(0, idx - 1);
+  return table[idx][1];
+}
+
+// --- Precise aim geometry --------------------------------------------------
+// Every targeting decision (the red-cross lock, the actual hit, and the point a
+// projectile flies toward) uses ONE shared body model per creature so they all
+// agree no matter how high/low the creature sits. The body is a vertical CAPSULE
+// (a segment from feet to head, plus a radius) matching the visible model: feet
+// at pos.y (the model is lifted onto the ground by footOffset), head at
+// ~1.5*scale (where the name tag/health bar sit), torso half-width ~0.45*scale.
+function creatureBody(c) {
+  const s = c.def.variantScale || 1;
+  return {
+    bx: c.pos.x, bz: c.pos.z,
+    y0: c.pos.y + 0.15 * s,                 // ankle (a touch above the feet)
+    y1: c.pos.y + 1.45 * s,                 // crown of the head
+    r: 0.42 * s + 0.18,                     // body radius (+ a small aim-assist pad)
+  };
+}
+
+// Closest approach between a ray (origin o, unit dir d) and a vertical segment
+// [P0,P1]. Returns { t, d2, point } where t is the distance along the ray to the
+// closest point, d2 the squared gap to the segment, and point the segment point
+// nearest the ray. Used for ray-vs-capsule hit tests and for the exact aim point.
+const _rcA = new THREE.Vector3(), _rcB = new THREE.Vector3(), _rcPt = new THREE.Vector3();
+function rayVsVertSeg(ox, oy, oz, dx, dy, dz, bx, y0, y1, bz) {
+  // Sample the segment densely and take the closest point on the RAY to each
+  // sample, keeping the best — robust, branch-light, and exact enough at our
+  // scale (segments are <~4m). This avoids the degenerate cases of the analytic
+  // segment-segment solve when the ray is near-parallel to the vertical body.
+  let bestD2 = Infinity, bestT = 0, bestY = y0;
+  const N = 10;
+  for (let i = 0; i <= N; i++) {
+    const sy = y0 + (y1 - y0) * (i / N);
+    // closest point on the ray to (bx, sy, bz): t = dot(P-O, dir)
+    let t = (bx - ox) * dx + (sy - oy) * dy + (bz - oz) * dz;
+    if (t < 0) t = 0;
+    const px = ox + dx * t, py = oy + dy * t, pz = oz + dz * t;
+    const gx = px - bx, gy = py - sy, gz = pz - bz;
+    const d2 = gx * gx + gy * gy + gz * gz;
+    if (d2 < bestD2) { bestD2 = d2; bestT = t; bestY = sy; }
+  }
+  return { t: bestT, d2: bestD2, y: bestY };
+}
 const WANDER_RADIUS = 12;   // how far a creature roams from its spawn point
 const WANDER_SPEED = 0.55;  // roam pace as a fraction of the creature's chase speed
 
@@ -65,6 +172,8 @@ function hasLineOfSight(world, eye, hx, hy, hz) {
 }
 
 const _losHead = new THREE.Vector3();
+const _barWorld = new THREE.Vector3();   // scratch for the health-bar lookAt (avoids per-frame alloc)
+const LOS_REFRESH = 0.2;                  // seconds between per-creature line-of-sight rechecks
 
 class Creature {
   constructor(def, world, scene, opts = {}) {
@@ -80,6 +189,11 @@ class Creature {
     // Combat behaviour state + wiring (enemy ranged/area attacks, leash regen).
     this.provoked = false;
     this.returning = false;
+    this.taunted = 0;   // >0 = forced to chase the player (knight Challenge)
+    this._losPhase = (opts.rng ? opts.rng() : Math.random()) * LOS_REFRESH;  // stagger LoS rechecks
+    // Player-inflicted status (burn/poison DOT + slow). Sorcerer fire burns;
+    // druid ice/poison slows + poisons. Ticked in update(); applied to speed.
+    this.status = new CreatureStatus();
     this.dungeon = opts.dungeon || null;            // in a cave: don't leash to cities
     this.rngFn = opts.rng || Math.random;           // shared deterministic rng
     this.combatHooks = opts.combatHooks || { spawnEnemyArea() {}, spawnEnemyShot() {} };
@@ -115,6 +229,10 @@ class Creature {
   }
 
   flash() { this.flashT = 0.12; }
+
+  // Movement speed after player-inflicted SLOW (druid control). Used by all the
+  // chase/flee/wander/back-away movement so a slowed creature visibly crawls.
+  get spd() { return this.def.speed * this.status.speedMultiplier(); }
 
   // Mark/unmark this creature as the player's current target. While targeted it
   // glows a steady red so the player can see exactly who their next hit/shot
@@ -175,7 +293,7 @@ class Creature {
       this._pickRoamTarget();
       return false;
     }
-    const sp = this.def.speed * WANDER_SPEED * dt;
+    const sp = this.spd * WANDER_SPEED * dt;
     this.pos.x += (tx / d) * sp;
     this.pos.z += (tz / d) * sp;
     this.yaw = Math.atan2(tx, tz);
@@ -183,12 +301,24 @@ class Creature {
   }
 
   update(dt, player, onPlayerHit, isNight, eye) {
+    this._dtForLos = dt;   // remembered so _updateLabels can throttle its LoS check
     if (this.flashT > 0) {
       this.flashT -= dt;
       const k = Math.max(0, this.flashT / 0.12);
       // White hit-flash; when it fades, fall back to the target glow (or nothing).
       if (this.flashT <= 0) this._applyEmissive();
       else for (const m of this._mats) m.emissive.setRGB(Math.max(k, this.targeted ? 0.5 : 0), k * 0.5, k * 0.5);
+    }
+    // Player-inflicted DOT (burn/poison): drain HP on its tick and report it so
+    // the combat system can float the number + award the kill if it dies from it.
+    if (!this.dying && !this.dead && this.status.active) {
+      this.status.tick(dt, (amt, kind) => {
+        if (this.dying || this.dead) return;
+        this.statusKind = kind;            // colours the floating number (burn/poison)
+        const killed = this.takeDamage(amt);
+        if (this._onStatusTick) this._onStatusTick(this, amt, kind, killed);
+        this.statusKind = null;
+      });
     }
     if (this.dying) {
       this.nameTag.visible = false;
@@ -217,13 +347,16 @@ class Creature {
     const ranged = this.def.attackKind === 'ranged';
     const engageRange = ranged ? this.def.aggroRange : ATTACK_RANGE;
 
+    // Decay the knight-taunt window. While taunted, the creature engages the
+    // player regardless of aggro range (it was forcibly challenged).
+    if (this.taunted > 0) this.taunted -= dt;
+
     // A creature engages if it's aggressive OR it was provoked (a passive you
-    // attacked fights back). Provocation ends when it has to leash home.
-    // The Game Master is invisible to creatures: they never aggro, chase or
-    // attack GM Maple — he simply walks among them while they roam.
+    // attacked fights back) OR it's been taunted. Provocation ends when it has to
+    // leash home. The Game Master is invisible to creatures: they never aggro.
     const wantsPlayer = !player.gm
-      && (this.def.aggressive || this.provoked)
-      && dist < Math.max(this.def.aggroRange, 8);
+      && (this.def.aggressive || this.provoked || this.taunted > 0)
+      && (this.taunted > 0 || dist < Math.max(this.def.aggroRange, 8));
 
     // LEASH: if dragged too far from home (or the player ducked into a city),
     // stop chasing, walk home and regen — interrupted only by a fresh hit.
@@ -254,7 +387,7 @@ class Creature {
     const scared = fleePct > 0 && (this.hp / this.maxHp) <= fleePct;
     if (scared && dist < 30) {
       this.fleeing = true;
-      const sp = this.def.speed * (this.def.flying ? 1.3 : 1.1) * dt;   // panic is faster
+      const sp = this.spd * (this.def.flying ? 1.3 : 1.1) * dt;   // panic is faster
       const nx = this.pos.x - (dx / dist) * sp;
       const nz = this.pos.z - (dz / dist) * sp;
       // don't flee into a city or off the map
@@ -277,10 +410,13 @@ class Creature {
     if (chasing) {
       // Would the next step cross into a city, or pull us past the leash radius?
       // If so, give up and head home (you can't drag a dragon into a town).
-      const sp = this.def.speed * dt;
+      const sp = this.spd * dt;
       const nx = this.pos.x + (dx / dist) * sp;
       const nz = this.pos.z + (dz / dist) * sp;
-      const wouldLeash = Math.hypot(nx - this.homeX, nz - this.homeZ) > LEASH_RADIUS;
+      // A TAUNTED creature ignores the leash radius (the knight forcibly holds it),
+      // but it still can't be dragged into a city. Otherwise the normal leash
+      // applies — too far from home and it gives up and walks back.
+      const wouldLeash = this.taunted <= 0 && Math.hypot(nx - this.homeX, nz - this.homeZ) > LEASH_RADIUS;
       const intoCity = !this.dungeon && !!cityAt(nx, nz);
       if (wouldLeash || intoCity) {
         this.returning = true;
@@ -292,7 +428,7 @@ class Creature {
       }
     } else if (ranged && wantsPlayer && dist < engageRange * 0.5) {
       // Ranged attacker too close: back away to keep its shooting distance.
-      const sp = this.def.speed * 0.7 * dt;
+      const sp = this.spd * 0.7 * dt;
       this.pos.x -= (dx / dist) * sp; this.pos.z -= (dz / dist) * sp;
       this.yaw = Math.atan2(dx, dz);
       moving = true;
@@ -320,7 +456,7 @@ class Creature {
           this.combatHooks.spawnEnemyArea(this.pos, a.kind, a.radius);
           if (dist <= a.radius) {
             let dmg = this.def.attack * a.damageMul * (isNight ? 1.3 : 1);
-            dmg = Math.max(1, Math.round(dmg - player.defense * 0.5));
+            dmg = Math.max(1, Math.round(dmg - player.defense * 0.35));
             // The burst's own element drives the status it inflicts (a poison
             // cloud poisons even if the creature's base element differs).
             this.areaKind = a.kind;
@@ -378,17 +514,28 @@ class Creature {
       this.nameTag = newTag;
       this.model.group.add(this.nameTag);
     }
-    let inSight = true;
+    // Line-of-sight (hides the nameplate/bar behind walls) is EXPENSIVE — it
+    // walks the eye→creature segment sampling terrain height + solids. Recompute
+    // it only every LOS_REFRESH seconds (cached in _inSight), staggered per
+    // creature by a random phase so they don't all recompute on the same frame.
     if (eye) {
-      this.model.group.getWorldPosition(_losHead);
-      inSight = hasLineOfSight(this.world, eye, _losHead.x, this.pos.y + this.nameTag.position.y, _losHead.z);
+      if (this._losT === undefined) this._losT = this._losPhase || 0;   // initial stagger
+      this._losT -= (this._dtForLos || 0.016);
+      if (this._losT <= 0 || this._inSight === undefined) {
+        this._losT = LOS_REFRESH;
+        this.model.group.getWorldPosition(_losHead);
+        this._inSight = hasLineOfSight(this.world, eye, _losHead.x, this.pos.y + this.nameTag.position.y, _losHead.z);
+      }
+    } else {
+      this._inSight = true;
     }
+    const inSight = this._inSight;
     this.nameTag.visible = inSight;
     const frac = this.hp / this.maxHp;
     this.bar.fill.scale.x = Math.max(0.001, frac);
     this.bar.fill.position.x = -(1 - frac) * 0.5;
     this.bar.group.visible = inSight && frac < 1;
-    this.bar.group.lookAt(player.pos.x, this.bar.group.getWorldPosition(new THREE.Vector3()).y, player.pos.z);
+    this.bar.group.lookAt(player.pos.x, this.bar.group.getWorldPosition(_barWorld).y, player.pos.z);
   }
 
   takeDamage(amount) {
@@ -657,6 +804,7 @@ export class CombatSystem {
   }
 
   update(dt, player, isNight, eventMult, eye) {
+    this._lastEventMult = eventMult;   // so a DOT kill awards xp/loot with the live event mult
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0 && this.creatures.length < MAX_ALIVE) {
       this.spawnTimer = 1.4;
@@ -1046,7 +1194,10 @@ export class CombatSystem {
 
   // Apply skill damage to every creature within `radius` of a world point.
   // Returns how many were hit (for feedback). Used by area/ranged spells.
-  damageArea(center, radius, amount) {
+  // `inflict` (optional): { burn|poison|slow } — a Tibia-style status the spell
+  // leaves behind (sorcerer fire burns; druid ice/poison slows + bleeds). The DOT
+  // total scales with the hit so a strong nuke leaves a strong lingering effect.
+  damageArea(center, radius, amount, inflict) {
     let hits = 0;
     const r2 = radius * radius;
     for (const c of this.creatures) {
@@ -1056,9 +1207,56 @@ export class CombatSystem {
       const dmg = Math.max(1, Math.round(amount - c.def.defense * 0.3));
       c.takeDamage(dmg);
       this.hooks.onCreatureHit(c, dmg, 1);
+      if (inflict) this.applyStatus(c, inflict, dmg);
       hits++;
     }
     return hits;
+  }
+
+  // Apply a status effect to one creature, scaling the DOT pool to `baseDmg` (so
+  // a stronger spell burns/poisons harder). Wires the creature's status-tick to
+  // the float-number + kill-award flow once.
+  applyStatus(c, kind, baseDmg) {
+    if (!c || c.dead || c.dying || !c.status) return;
+    if (!c._onStatusTick) c._onStatusTick = (cr, amt, k, killed) => this._onCreatureStatusTick(cr, amt, k, killed);
+    if (kind === 'burn') {
+      // Burn: ~2.5× the hit over ~5 ticks (no slow). Sorcerer's fire pressure.
+      c.status.applyBurn(Math.max(6, Math.round(baseDmg * 2.5)), Math.max(2, Math.round(baseDmg * 0.5)));
+    } else if (kind === 'poison') {
+      // Poison: a long bleed (~3× the hit) that ticks while the fight lasts.
+      c.status.applyPoison(Math.max(6, Math.round(baseDmg * 3)), Math.max(2, Math.round(baseDmg * 0.35)));
+    } else if (kind === 'slow') {
+      c.status.applySlow();
+    } else if (kind === 'slowpoison') {
+      // Druid signature: slow AND poison together.
+      c.status.applySlow();
+      c.status.applyPoison(Math.max(6, Math.round(baseDmg * 3)), Math.max(2, Math.round(baseDmg * 0.35)));
+    }
+  }
+
+  // A creature took DOT damage this tick: float the number and, if the tick
+  // killed it, run the normal kill flow (xp + loot) just like a direct hit.
+  _onCreatureStatusTick(c, amt, kind, killed) {
+    this.hooks.onCreatureHit(c, amt, 1, false, kind);
+    if (killed && !c._rewarded) { c._rewarded = true; this.onKill(c, this._lastEventMult || { xp: 1, drop: 1 }); }
+  }
+
+  // TAUNT / Challenge (knight): every creature within `radius` is forced to aggro
+  // the player — it provokes them and interrupts any leash-home, so a knight can
+  // pull a pack off teammates and tank them. Returns how many were taunted.
+  tauntArea(center, radius) {
+    let n = 0;
+    const r2 = radius * radius;
+    for (const c of this.creatures) {
+      if (c.dead || c.dying) continue;
+      const dx = c.pos.x - center.x, dz = c.pos.z - center.z;
+      if (dx * dx + dz * dz > r2) continue;
+      c.provoked = true;
+      c.returning = false;
+      c.taunted = TAUNT_DURATION;     // a window where it ignores leash and sticks to you
+      n++;
+    }
+    return n;
   }
 
   onKill(c, eventMult) {
@@ -1066,26 +1264,74 @@ export class CombatSystem {
     this.hooks.onKill(c, xp);
     const dropMult = eventMult.drop;
     const lang = getLang();
-    let potionDropped = false; // cap potions at one per creature
     for (const entry of c.def.loot) {
       if (entry.itemId === 'gold') {
         const amount = entry.min + Math.floor(this.rng() * (entry.max - entry.min + 1));
         if (amount > 0) this.hooks.onLoot({ gold: amount });
         continue;
       }
-      if (entry.potion && potionDropped) continue;
-      const chance = Math.min(1, (entry.chance || 0) * dropMult);
+      // Potions are handled by a dedicated roll below (1-3, size mix), so the
+      // creature's authored potion entries are skipped here.
+      if (entry.potion) continue;
+      // LEGENDARY gear never drops — only the Game Master grants it. A
+      // 'legendary-tier' base (or a rolled Legendary rarity) is dropped silently.
+      if (isLegendaryDrop(entry.itemId)) continue;
+      // Drop-chance cap, EQUIPMENT only: gear of level 25+ is capped at 3%, gear
+      // under level 25 at 8% — so even cheap gear is a real find and strong gear
+      // stays rare. Materials, trophies, coins and lights keep their full authored
+      // chances (the steady grind economy: silk 50%, trophy 60%…).
+      let chance = (entry.chance || 0) * dropMult;
+      if (isGearDrop(entry.itemId)) {
+        const cap = itemDropLevel(entry.itemId) >= DROP_CAP_LEVEL ? DROP_CAP_HI : DROP_CAP_LO;
+        chance = Math.min(chance, cap);
+      }
+      chance = Math.min(1, chance);
       if (this.rng() < chance) {
         const item = resolveItem(entry.itemId, () => this.rng(), c.def.level, lang);
-        if (item) {
-          // Scatter loot in a little burst so multiple drops don't stack.
-          const a = this.rng() * Math.PI * 2;
-          const s = 2 + this.rng() * 2;
-          this.spawnDrop(c.pos, item, { vel: { x: Math.cos(a) * s, y: 3.5 + this.rng() * 2, z: Math.sin(a) * s } });
-          if (entry.potion) potionDropped = true;
-        }
+        // A weapon can randomly roll Legendary inside resolveItem — block that too.
+        if (item && item.rarity !== RARITY.LEGENDARY) this._dropAt(c.pos, item);
       }
     }
+    this._rollPotions(c);
+  }
+
+  // Drop 1-3 potions per kill, mixing a SMALL (one tier below) and a LARGE (at
+  // the creature's level) potion, with a chance to give health, mana, or BOTH.
+  // Strong foes lean toward more/larger potions. All self-contained here.
+  _rollPotions(c) {
+    const lang = getLang();
+    const lv = c.def.level || 1;
+    const strong = c.def.role === 'boss' || c.def.role === 'tank' || lv >= 25;
+    // What rolls: 45% HP only, 25% mana only, 30% both. Strong foes always both.
+    const r = this.rng();
+    const giveHp = strong || r < 0.45 || r >= 0.70;
+    const giveMana = strong || r >= 0.45;
+    // How many of EACH kind: usually 1, sometimes 2, rarely 3 (more for bosses).
+    const count = () => {
+      const k = this.rng();
+      if (strong) return k < 0.45 ? 1 : k < 0.85 ? 2 : 3;
+      return k < 0.7 ? 1 : k < 0.95 ? 2 : 3;
+    };
+    const dropPotion = (id) => {
+      const item = resolveItem(id, () => this.rng(), lv, lang);
+      if (item) this._dropAt(c.pos, item);
+    };
+    // Pick a small (one tier down) and large (at level) id from the tier tables.
+    if (giveHp) {
+      const n = count();
+      for (let i = 0; i < n; i++) dropPotion(potionTierId('hp', lv, i === 0));
+    }
+    if (giveMana) {
+      const n = count();
+      for (let i = 0; i < n; i++) dropPotion(potionTierId('mana', lv, i === 0));
+    }
+  }
+
+  // Scatter a resolved item near the creature in a little burst.
+  _dropAt(pos, item) {
+    const a = this.rng() * Math.PI * 2;
+    const s = 2 + this.rng() * 2;
+    this.spawnDrop(pos, item, { vel: { x: Math.cos(a) * s, y: 3.5 + this.rng() * 2, z: Math.sin(a) * s } });
   }
 
   // Spawn a ground drop. opts.vel = {x,y,z} gives it an initial toss so it flies
