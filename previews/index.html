@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mundum — Todas las previews</title>
+<style>
+  :root { --bg:#171b21; --panel:#222831; --panel2:#2a313a; --line:#39424d; --txt:#e7ecf2; --mut:#9fb0c2; --accent:#3b6ea5; --accent2:#5a90c8; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt); font: 14px system-ui, sans-serif; overflow: hidden; }
+  #app { display: flex; height: 100%; }
+  /* sidebar */
+  #side { width: 210px; flex: 0 0 210px; background: var(--panel); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; }
+  #side h1 { font-size: 15px; margin: 0; padding: 14px 16px 10px; letter-spacing: .02em; }
+  #side h1 small { display:block; color: var(--mut); font-weight: 400; font-size: 11px; margin-top: 2px; }
+  #tabs { overflow-y: auto; padding: 6px; flex: 1; }
+  .tab { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 11px; margin: 2px 0;
+         border: 1px solid transparent; background: transparent; color: var(--txt); border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+  .tab:hover { background: var(--panel2); }
+  .tab.on { background: var(--accent); border-color: var(--accent2); font-weight: 600; }
+  .tab .em { font-size: 17px; width: 22px; text-align: center; }
+  .tab .lbl { line-height: 1.15; }
+  .tab .lbl small { display: block; color: var(--mut); font-size: 10.5px; font-weight: 400; }
+  .tab.on .lbl small { color: #d6e4f5; }
+  #foot { padding: 10px 14px; border-top: 1px solid var(--line); color: var(--mut); font-size: 11px; }
+  #foot a { color: var(--accent2); text-decoration: none; }
+  /* stage */
+  #stage { flex: 1; position: relative; min-width: 0; }
+  #bar { height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+         background: var(--panel2); border-bottom: 1px solid var(--line); }
+  #bar .title { font-weight: 600; font-size: 13px; }
+  #bar .spacer { flex: 1; }
+  #bar button { background: var(--panel); color: var(--txt); border: 1px solid var(--line); border-radius: 6px;
+                padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  #bar button:hover { background: #323a44; }
+  #bar a.open { color: var(--accent2); font-size: 12px; text-decoration: none; }
+  #frames { position: absolute; top: 38px; left: 0; right: 0; bottom: 0; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  iframe.hidden { display: none; }
+  .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--mut); }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="side">
+    <h1>🗺️ Mundum<small>Previews — todo en una ventana</small></h1>
+    <div id="tabs"></div>
+    <div id="foot">Clic en una pestaña para verla. Se cargan al abrirlas (rápido).</div>
+  </nav>
+  <section id="stage">
+    <div id="bar">
+      <span class="title" id="barTitle"></span>
+      <span class="spacer"></span>
+      <button id="reload">↻ Recargar</button>
+      <a class="open" id="openNew" href="#" target="_blank">Abrir en pestaña ↗</a>
+    </div>
+    <div id="frames"><div class="loading" id="loading">Elige una preview ◀</div></div>
+  </section>
+</div>
+
+<script>
+// Cada preview: archivo, etiqueta, sub-etiqueta y emoji. Agrupadas por tema.
+const PREVIEWS = [
+  { file: 'catalog_preview.html',   em: '⚔️', label: 'Items (2D)',    sub: 'Iconos de inventario' },
+  { file: 'coins_preview.html',     em: '💰', label: 'Monedas',       sub: 'Pilas 1→25 por color' },
+  { file: 'items_preview.html',     em: '🧰', label: 'Items (3D)',    sub: 'Mallas de objetos' },
+  { file: 'creature_preview.html',  em: '🐉', label: 'Criaturas (3D)',sub: 'Modelos + 3 cabezas' },
+  { file: 'drops_preview.html',     em: '🎁', label: 'Drops',         sub: 'Loot por criatura' },
+  { file: 'character_preview.html', em: '🧍', label: 'Personaje',     sub: 'Cuerpo + equipo' },
+  { file: 'mounts_preview.html',    em: '🐎', label: 'Monturas',      sub: 'Modelos montables' },
+  { file: 'powers_preview.html',    em: '✨', label: 'Habilidades',   sub: 'Hechizos / poderes' },
+  { file: 'npc_preview.html',       em: '🧑', label: 'NPCs',          sub: 'Modelos de NPC' },
+  { file: 'mundumwiki.html',        em: '📖', label: 'Wiki',          sub: 'MundumWiki' },
+];
+
+const tabsEl = document.getElementById('tabs');
+const framesEl = document.getElementById('frames');
+const loading = document.getElementById('loading');
+const barTitle = document.getElementById('barTitle');
+const openNew = document.getElementById('openNew');
+const tabBtns = {};
+const iframes = {};   // file -> iframe (lazy-created on first open)
+let current = null;
+
+PREVIEWS.forEach((pv, i) => {
+  const b = document.createElement('button');
+  b.className = 'tab';
+  b.innerHTML = `<span class="em">${pv.em}</span><span class="lbl">${pv.label}<small>${pv.sub}</small></span>`;
+  b.onclick = () => show(pv.file);
+  tabsEl.appendChild(b);
+  tabBtns[pv.file] = b;
+});
+
+function show(file) {
+  const pv = PREVIEWS.find(p => p.file === file);
+  if (!pv) return;
+  current = file;
+  loading.style.display = 'none';
+  // Lazy-create the iframe the first time this tab is opened.
+  if (!iframes[file]) {
+    const f = document.createElement('iframe');
+    f.src = file;
+    f.className = 'hidden';
+    framesEl.appendChild(f);
+    iframes[file] = f;
+  }
+  // Show only the active iframe.
+  for (const k in iframes) iframes[k].classList.toggle('hidden', k !== file);
+  for (const k in tabBtns) tabBtns[k].classList.toggle('on', k === file);
+  barTitle.textContent = pv.em + '  ' + pv.label + '  —  ' + pv.sub;
+  openNew.href = file;
+}
+
+document.getElementById('reload').onclick = () => {
+  if (current && iframes[current]) iframes[current].src = iframes[current].src;
+};
+
+// Deep-link support (#creature_preview.html) + default to the first tab.
+const hash = decodeURIComponent(location.hash.slice(1));
+show(PREVIEWS.some(p => p.file === hash) ? hash : PREVIEWS[0].file);
+</script>
+</body>
+</html>
