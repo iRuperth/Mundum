@@ -1804,8 +1804,16 @@ export class UI {
     card.innerHTML = `<div class="ctx-head">${npc.name}</div>
       <div class="ctx-body">${greeting}</div>`;
 
-    const acceptable = hooks.questsForNpc(npc.id).filter((q) => questLog.canAccept(q.id, level));
-    const turnIn = hooks.questsForNpc(npc.id).filter((q) => questLog.isActive(q.id) && questLog.readyToComplete().includes(q.id));
+    const ctx = hooks.questCtx;
+    const offered = hooks.questsForNpc(npc.id);
+    const acceptable = offered.filter((q) => questLog.canAccept(q.id, level, ctx));
+    // Quests the player meets the LEVEL for but is blocked by a world gate (it's
+    // daytime for a night-only quest, or they lack the key): show them greyed with
+    // a hint, so the imaginative requirement is discoverable, not invisible.
+    const blocked = offered.filter((q) =>
+      !questLog.isActive(q.id) && !questLog.isDone(q.id) && level >= (q.minLevel || 1) &&
+      !questLog.canAccept(q.id, level, ctx));
+    const turnIn = offered.filter((q) => questLog.isActive(q.id) && questLog.readyToComplete().includes(q.id));
 
     const list = document.createElement('div');
     list.className = 'shop-list';
@@ -1829,7 +1837,23 @@ export class UI {
       row.appendChild(b);
       list.appendChild(row);
     }
-    if (!turnIn.length && !acceptable.length && npc.lines) {
+    // Locked-by-gate quests: shown but not acceptable, with the reason.
+    for (const q of blocked) {
+      const why = questLog.acceptBlocker(q.id, level, ctx);
+      let hint = '';
+      if (why === 'night') hint = lang === 'en' ? '🌙 Only at night' : '🌙 Solo de noche';
+      else if (why === 'day') hint = lang === 'en' ? '☀️ Only by day' : '☀️ Solo de día';
+      else if (why === 'items') {
+        const reqs = (q.requiresItems || []).map((r) => `${r.count || 1}× ${itemDisplayName(r.itemId, lang)}`).join(', ');
+        hint = (lang === 'en' ? '🔑 Needs: ' : '🔑 Necesitas: ') + reqs;
+      }
+      if (!hint) continue;
+      const row = document.createElement('div');
+      row.className = 'shop-row quest-locked';
+      row.innerHTML = `<span>🔒 ${q.title[lang] || q.title.es}<br><small>${hint}</small></span>`;
+      list.appendChild(row);
+    }
+    if (!turnIn.length && !acceptable.length && !blocked.length && npc.lines) {
       const line = document.createElement('div');
       line.className = 'ctx-sub';
       const arr = npc.lines[lang] || npc.lines.es || [];
@@ -1837,6 +1861,42 @@ export class UI {
       card.appendChild(line);
     }
     card.appendChild(list);
+
+    // RUMORS / TIPS: clickable secondary messages. The player taps a question and
+    // the NPC reveals a hint (lore + where to look for a quest). Always available
+    // — "ask for a tip" — independent of whether this NPC gives a quest.
+    const rumors = (npc.rumors && (npc.rumors[lang] || npc.rumors.es)) || [];
+    if (rumors.length) {
+      const rwrap = document.createElement('div');
+      rwrap.className = 'npc-rumors';
+      const rhead = document.createElement('div');
+      rhead.className = 'npc-rumors-head';
+      rhead.textContent = lang === 'en' ? '💬 Ask around…' : '💬 Pregunta por ahí…';
+      rwrap.appendChild(rhead);
+      const answer = document.createElement('div');
+      answer.className = 'npc-rumor-answer hidden';
+      // One clickable chip per rumor; clicking reveals it in the answer box.
+      const chips = document.createElement('div');
+      chips.className = 'npc-rumor-chips';
+      rumors.forEach((r, i) => {
+        const q = typeof r === 'object' ? (r.q || r.prompt) : (lang === 'en' ? `Rumor ${i + 1}` : `Rumor ${i + 1}`);
+        const a = typeof r === 'object' ? (r.a || r.text) : r;
+        const b = document.createElement('button');
+        b.className = 'npc-rumor-chip';
+        b.textContent = '❔ ' + q;
+        b.addEventListener('click', () => {
+          answer.textContent = a;
+          answer.classList.remove('hidden');
+          chips.querySelectorAll('.npc-rumor-chip').forEach((c) => c.classList.remove('active'));
+          b.classList.add('active');
+        });
+        chips.appendChild(b);
+      });
+      rwrap.appendChild(chips);
+      rwrap.appendChild(answer);
+      card.appendChild(rwrap);
+    }
+
     this.addCloseX(card);
     card.classList.remove('hidden');
   }
