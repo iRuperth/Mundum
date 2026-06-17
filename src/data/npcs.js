@@ -42,12 +42,15 @@ export const NPCS = [
     },
   },
   {
-    id: 'rivertown_merchant', name: 'Merchant Bea', city: 'rivertown', role: 'merchant',
-    model: 'woman', color: 0xd2a04b, offset: { x: 5, z: 5 },
+    id: 'rivertown_merchant', name: 'Merchant Bea', city: 'rivertown', role: 'vendor',
+    model: 'woman', color: 0xd2a04b, district: 'market',
     greeting: { es: 'Buenas ofertas para aventureros!', en: 'Great deals for adventurers!' },
+    // The general store in the Market Hall: buys and sells everything basic, so
+    // the big market building always has a shopkeeper with a Buy option.
+    shop: { buyMult: 1, sellMult: 0.5, sells: { all: true }, buys: { all: true } },
     lines: {
-      es: ['La tienda esta justo al este de la plaza.', 'Guarda tus tesoros en el deposito.', 'El oro siempre encuentra buen uso.'],
-      en: ['The shop is just east of the plaza.', 'Store your treasures in the depot.', 'Gold always finds good use.'],
+      es: ['Tengo de todo un poco, echa un vistazo.', 'Guarda tus tesoros en el deposito.', 'El oro siempre encuentra buen uso.'],
+      en: ['A bit of everything here, take a look.', 'Store your treasures in the depot.', 'Gold always finds good use.'],
     },
   },
 
@@ -152,6 +155,18 @@ export const NPCS = [
     lines: {
       es: ['¿Deseas residenciarte en esta ciudad? Renacerás aquí.', 'Los residentes de Greenhollow siempre tienen un hogar al que volver.'],
       en: ['Would you like to settle in this city? You will respawn here.', 'Residents of Greenhollow always have a home to return to.'],
+    },
+  },
+  // Stable Master: sells the two starter mounts (horse + wolf) and points the
+  // way to the mount-quest givers. role:'stable' opens the mount shop UI (it has
+  // no item `shop`, so it skips the normal vendor path). Stands by the south gate.
+  {
+    id: 'rivertown_stablemaster', name: 'Stable Master Brent', city: 'rivertown', role: 'stable',
+    model: 'merchant', color: 0x7a5a30, offset: { x: 12, z: -10 },
+    greeting: { es: '¿Buscas montura? Tengo las mejores bestias domadas.', en: 'Looking for a mount? I have the finest tamed beasts.' },
+    lines: {
+      es: ['Un caballo o un lobo, para empezar. Las bestias raras se ganan en gestas.', 'Una montura te hace un 30% más veloz y saltas más alto.', 'Pulsa G para montar y desmontar.'],
+      en: ['A horse or a wolf, to start. The rare beasts are earned through deeds.', 'A mount makes you 30% faster and you jump higher.', 'Press G to mount and dismount.'],
     },
   },
   // North Keep spur: the guard captain who watches the northern gate.
@@ -1065,9 +1080,10 @@ for (let i = 0; i < REMAINS_CITIES.length; i++) {
     id: `${city}_remains_buyer`, name: REMAINS_NAMES[city] || 'Remains Buyer', city, role: 'vendor',
     model: 'merchant', color: 0x7a6a4a, district: 'food',
     offset: { x: 14 + (i % 3) * 3, z: -14 - (i % 2) * 3 },
-    // Buys ONLY trophies, pays the trophy's value × sellMult (small money).
-    shop: { buyMult: 1, sellMult: 0.5, sells: {}, buys: { kinds: ['trophy'] } },
-    greeting: { es: 'Compro restos de bestias. Trae colas, cuernos, escamas...', en: 'I buy beast remains. Bring tails, horns, scales...' },
+    // Buys trophies AND crafting materials (silk, hides, scales, fangs, essences…),
+    // paying value × sellMult — a steady grind-and-sell income loop.
+    shop: { buyMult: 1, sellMult: 0.5, sells: {}, buys: { kinds: ['trophy', 'material'] } },
+    greeting: { es: 'Compro restos y materiales de bestias. Trae colas, sedas, cuernos, escamas...', en: 'I buy beast remains and materials. Bring tails, silk, horns, scales...' },
     lines: {
       es: ['Todo resto tiene su precio, por humilde que sea.', 'Los cazadores listos venden hasta las colas de rata.'],
       en: ['Every scrap has a price, however humble.', 'Smart hunters sell even rat tails.'],

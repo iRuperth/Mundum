@@ -677,6 +677,129 @@ export const QUESTS = [
     rewards: { gold: 800, exp: 3000, items: ['battle_axe'] },
     next: null, repeatable: false, dungeon: null,
   },
+
+  // ===================== MOUNT QUEST CHAIN =====================
+  // The Stable Master's chain. Each grants a mount (see data/mounts.js
+  // mountForQuest), gated by climbing level: tiger@15 → ice dragon@100.
+  // `rewards.mount` is the mount id; main.completeQuest unlocks it.
+  {
+    id: 'mount_tiger_quest',
+    title: { es: 'Domar al Tigre', en: 'Taming the Tiger' },
+    desc: {
+      es: 'El Maestro de Establos quiere un tigre para montar. Demuéstrale tu valía cazando tigres y trayendo sus pieles.',
+      en: 'The Stable Master wants a tiger to ride. Prove yourself by hunting tigers and bringing their pelts.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 15,
+    objectives: [
+      { type: 'kill', target: 'tiger', count: 6, desc: { es: 'Caza 6 tigres', en: 'Hunt 6 tigers' } },
+      { type: 'collect', target: 'tiger-pelt', count: 3, desc: { es: 'Reúne 3 pieles de tigre', en: 'Collect 3 tiger pelts' } },
+    ],
+    rewards: { gold: 300, exp: 1200, mount: 'tiger_mount' },
+    next: 'mount_boar_quest', repeatable: false, dungeon: 'tigerhollow',
+  },
+  {
+    id: 'mount_boar_quest',
+    title: { es: 'El Jabalí de Guerra', en: 'The War Boar' },
+    desc: {
+      es: 'Solo un jabalí acorazado y feroz sirve de montura. Caza a los más grandes.',
+      en: 'Only a fierce, armored boar will do as a mount. Hunt the largest ones.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 20,
+    objectives: [
+      { type: 'kill', target: 'boar', count: 10, desc: { es: 'Caza 10 jabalíes', en: 'Hunt 10 boars' } },
+    ],
+    rewards: { gold: 500, exp: 2000, mount: 'boar_mount' },
+    next: 'mount_bear_quest', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'mount_bear_quest',
+    title: { es: 'El Oso de Montaña', en: 'The Mountain Bear' },
+    desc: {
+      es: 'Un oso colosal te llevará lejos. Derrota osos y trae sus garras.',
+      en: 'A colossal bear will carry you far. Defeat bears and bring their claws.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 30,
+    objectives: [
+      { type: 'kill', target: 'bear', count: 8, desc: { es: 'Derrota 8 osos', en: 'Defeat 8 bears' } },
+      { type: 'collect', target: 'claw', count: 4, desc: { es: 'Reúne 4 garras', en: 'Collect 4 claws' } },
+    ],
+    rewards: { gold: 800, exp: 3500, mount: 'bear_mount' },
+    next: 'mount_stag_quest', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'mount_stag_quest',
+    title: { es: 'El Ciervo Real', en: 'The Royal Stag' },
+    desc: {
+      es: 'El gran ciervo del bosque profundo solo se entrega a quien lo merece.',
+      en: 'The great stag of the deep forest yields only to the worthy.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 40,
+    objectives: [
+      { type: 'kill', target: 'deer', count: 12, desc: { es: 'Caza 12 ciervos', en: 'Hunt 12 deer' } },
+      { type: 'collect', target: 'great-antler', count: 2, desc: { es: 'Reúne 2 grandes astas', en: 'Collect 2 great antlers' } },
+    ],
+    rewards: { gold: 1200, exp: 5000, mount: 'stag_mount' },
+    next: 'mount_spider_quest', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'mount_spider_quest',
+    title: { es: 'La Araña Gigante', en: 'The Giant Spider' },
+    desc: {
+      es: 'Doma a la araña colosal del nido. Pocos se atreven a montarla.',
+      en: 'Tame the colossal spider of the nest. Few dare ride one.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 55,
+    objectives: [
+      { type: 'kill', target: 'spider', count: 15, desc: { es: 'Caza 15 arañas', en: 'Hunt 15 spiders' } },
+      { type: 'collect', target: 'venom-gland', count: 3, desc: { es: 'Reúne 3 glándulas de veneno', en: 'Collect 3 venom glands' } },
+    ],
+    rewards: { gold: 2000, exp: 8000, mount: 'spider_mount' },
+    next: 'mount_scorpion_quest', repeatable: false, dungeon: 'spidernest',
+  },
+  {
+    id: 'mount_scorpion_quest',
+    title: { es: 'El Escorpión del Desierto', en: 'The Desert Scorpion' },
+    desc: {
+      es: 'Un escorpión acorazado de las dunas será tu montura. Cázalos en el desierto.',
+      en: 'An armored dune scorpion will be your mount. Hunt them in the desert.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 70,
+    objectives: [
+      { type: 'kill', target: 'scorpion', count: 18, desc: { es: 'Caza 18 escorpiones', en: 'Hunt 18 scorpions' } },
+    ],
+    rewards: { gold: 3500, exp: 14000, mount: 'scorpion_mount' },
+    next: 'mount_wyvern_quest', repeatable: false, dungeon: null,
+  },
+  {
+    id: 'mount_wyvern_quest',
+    title: { es: 'El Wyvern Alado', en: 'The Winged Wyvern' },
+    desc: {
+      es: 'Casi un dragón. Abate wyverns en sus picos para domar uno.',
+      en: 'Almost a dragon. Down wyverns on their peaks to tame one.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 85,
+    objectives: [
+      { type: 'kill', target: 'wyvern', count: 15, desc: { es: 'Abate 15 wyverns', en: 'Down 15 wyverns' } },
+      { type: 'collect', target: 'wyvern-fang', count: 4, desc: { es: 'Reúne 4 colmillos de wyvern', en: 'Collect 4 wyvern fangs' } },
+    ],
+    rewards: { gold: 6000, exp: 25000, mount: 'wyvern_mount' },
+    next: 'mount_dragon_quest', repeatable: false, dungeon: 'dragonlair',
+  },
+  {
+    id: 'mount_dragon_quest',
+    title: { es: 'El Dragón de Hielo Cristalino', en: 'The Crystalline Ice Dragon' },
+    desc: {
+      es: 'La montura suprema. Adéntrate en la Guarida Glacial, derrota al Dragón Cristalino y trae su escama. Solo héroes de nivel 100.',
+      en: 'The supreme mount. Enter the Glacial Lair, defeat the Crystal Dragon and bring its scale. Heroes of level 100 only.',
+    },
+    giverNpc: 'rivertown_stablemaster', city: 'rivertown', minLevel: 100,
+    objectives: [
+      { type: 'kill', target: 'crystal_dragon', count: 3, desc: { es: 'Derrota 3 dragones de cristal', en: 'Defeat 3 crystal dragons' } },
+      { type: 'collect', target: 'crystal-scale', count: 1, desc: { es: 'Consigue 1 escama cristalina', en: 'Obtain 1 crystal scale' } },
+    ],
+    rewards: { gold: 20000, exp: 100000, mount: 'crystal_dragon' },
+    next: null, repeatable: false, dungeon: 'glaciallair',
+  },
 ];
 
 // Fast id lookup.
