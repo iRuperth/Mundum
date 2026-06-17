@@ -500,6 +500,9 @@ function recomputeCombatStats() {
   // (read by CombatSystem.attack).
   player.weaponSkill = (charStats ? charStats.weaponSkillLevel(weaponType) : 10)
     + (inv.skillBonus ? inv.skillBonus(weaponTypeToSkill(weaponType)) : 0);   // ring/amulet skill rings
+  // Archer quiver: its flat arrowAtk adds to the bow's effective attack
+  // (combat.js _resolveHit folds player.arrowAtk in for bows only).
+  player.arrowAtk = (weaponType === 'bow' && inv.equipBonus) ? inv.equipBonus('arrowAtk') : 0;
   const base = weaponAttackSpeed(weaponType);
   const dexMul = charStats ? charStats.attackSpeedMul() : 1;
   const speedMul = dexMul * passives.attackSpeedMul;
@@ -1037,7 +1040,9 @@ const combat = new CombatSystem(scene, world, {
     if (shield && !twoHanded && charStats) {
       const shieldSkill = charStats.useSkill('shielding');
       const def = shield.defense || 0;
-      const block = shieldSkill * def * 0.015 + def * 0.1;
+      // Re-tuned for the compressed shield defense scale (<=41): keeps a shield a
+      // ~20-35% mitigator without granting full immunity.
+      const block = shieldSkill * def * 0.02 + def * 0.25;
       dmgIn = Math.max(0, dmgIn - block);
       // Taking a hit while shielded trains Shielding.
       maybeAdvanceSkill(charStats.trainSkill('shielding', 1), 'shielding');
@@ -1062,8 +1067,12 @@ const combat = new CombatSystem(scene, world, {
     if (c.flash) c.flash();
   },
   onKill: (c, xp) => {
-    gainXp(xp);
-    gameUI.toast(t('gainedXp', xp));
+    // Apply the level-banded XP boost (×10 early, tapering to ×1 past level 120;
+    // toggled by LEVEL_XP_SCALE_ENABLED in progression.js) on top of the event
+    // multiplier already folded into `xp`. Keyed to the player's current level.
+    const gained = Math.round(xp * levelXpMultiplier(player.level));
+    gainXp(gained);
+    gameUI.toast(t('gainedXp', gained));
     const changed = questLog.onEvent('kill', c.def.family);
     if (changed.length) onQuestProgress();
   },
@@ -2235,6 +2244,7 @@ function doBuy(def, refresh, price) {
   let item;
   if (getWeapon(def.id)) item = rollShopWeapon(def.id);
   else if (getArmor(def.id)) item = instanceFromArmor(getArmor(def.id));
+  else if (getQuiver(def.id)) item = instanceFromQuiver(getQuiver(def.id));
   else if (getContainer(def.id)) item = instanceFromContainer(def);
   else if (def.kind === 'potion') item = instanceFromPotion(def, getLang());
   if (!item) return;
