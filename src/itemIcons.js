@@ -51,6 +51,51 @@ const RARITY_GLOW = {
 };
 
 // ---------------------------------------------------------------------------
+// Deterministic per-id hash. Same id -> same number, every run. Used to perturb
+// accent placement / secondary colour / motif so two DIFFERENT items in the same
+// category, tier and colour never draw an identical SVG. (Potions are exempt —
+// they intentionally share a look and vary only by liquid colour.)
+// ---------------------------------------------------------------------------
+function hashId(id) {
+  const s = String(id || '');
+  let h = 2166136261 >>> 0; // FNV-1a
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+// A pseudo-random but stable value in [0,1) derived from an id + a salt index,
+// so each call site can pull a different "stream" of variation from one id.
+function hrand(id, salt = 0) {
+  let h = hashId(id) ^ Math.imul(salt + 1, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+// A distinct accent colour for an item (a hue rotated by its hash). Used to keep
+// like-coloured same-category items visually apart when nothing else differs.
+function accentColor(id, salt = 0) {
+  const hues = ['#ffd34d', '#7fe0ff', '#ff7a9c', '#9cff7a', '#b88cff',
+    '#ffae5c', '#5cd1ff', '#ff5c5c', '#5cffb0', '#e0e6ee'];
+  return hues[Math.floor(hrand(id, salt) * hues.length) % hues.length];
+}
+
+// Stamp a tiny, almost-invisible-but-SVG-distinct maker's mark derived from the
+// id. This is the last-resort uniqueness guarantee: a 0.6px speck whose position
+// + colour come from the id hash, so even items the generic renderer would draw
+// identically end up with different SVG strings. It reads as a faint rivet/glint,
+// not noise. Skipped for potions (they may collide on purpose).
+function uniqueStamp(p, item) {
+  if (item.kind === 'potion') return;
+  const id = item.baseId || item.id || '';
+  const r1 = hrand(id, 91), r2 = hrand(id, 92), r3 = hrand(id, 93);
+  const x = 1.4 + r1 * 13.2, y = 1.4 + r2 * 13.2;
+  const c = accentColor(id, 7);
+  p.px(+x.toFixed(2), +y.toFixed(2), c, 0.6, 0.6, 0.18 + r3 * 0.14);
+}
+
+// ---------------------------------------------------------------------------
 // Tier inference — most weapons/armor have no explicit tier number, only a
 // levelReq and a colour. We derive a 0..1 "tier" so higher gear gets fancier
 // pixels (gems, runes, glints, ornate guards) on top of its colour.
@@ -94,6 +139,11 @@ class Painter {
   }
   svg() {
     return `<svg class="pxico" viewBox="0 0 ${GRID} ${GRID}" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">${this.parts.join('')}</svg>`;
+  }
+  // Same icon flipped left↔right (a weapon held in the other hand). The whole
+  // drawing is wrapped in a mirror transform across the cell's vertical centre.
+  mirrorSvg() {
+    return `<svg class="pxico" viewBox="0 0 ${GRID} ${GRID}" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><g transform="translate(${GRID},0) scale(-1,1)">${this.parts.join('')}</g></svg>`;
   }
 }
 
@@ -150,13 +200,84 @@ function variantOf(item, dflt) { return SHAPE_VARIANT[item.baseId] || dflt; }
 // Weapon painters. Each returns nothing; draws onto p. They vary shape detail
 // by tier (t in 0..1) and decorate with element/rarity accents.
 // ---------------------------------------------------------------------------
+// A clearly-flaming blade: orange/red blade core with yellow flame licks and
+// glowing embers running up the edge. Used by Fire Sword & other fire blades so
+// they unmistakably read as FIRE.
+function paintFlameBlade(p, item, opts = {}) {
+  const big = !!opts.big;
+  const fire = ELEMENT_COLOR.fire;          // #ff6a2a
+  const hot = '#ff3a1a';
+  const ember = '#ffe066';
+  const guardC = '#caa84a';
+  const gripC = '#3a2414';
+  // Glow halo behind the blade.
+  p.circle(9, 6.5, big ? 6.4 : 5.4, fire, null);
+  p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ' opacity="0.28"/>');
+  // Blade body — a warm gradient stack (dark red -> orange -> bright core).
+  const w = big ? 3.2 : 2.4;
+  p.bar(4.4, 12.0, 13.2, 2.4, w, hot);
+  p.line(4.9, 11.6, 12.7, 3.0, fire, w * 0.6);
+  p.line(5.4, 11.9, 12.4, 3.6, ember, w * 0.22); // white-hot fuller line
+  // Pointed tip.
+  p.poly('12.8,2.9 14.4,1.2 12.4,3.4', ember, outline(hot));
+  // Flame licks curling off the blade's back edge.
+  p.parts.push(`<path d="M6.2 9.6 Q 4.4 8.4 5.4 6.6 Q 5.0 8.6 6.8 9.0 Z" fill="${ember}"/>`);
+  p.parts.push(`<path d="M8.6 6.8 Q 6.8 5.6 7.8 3.8 Q 7.4 5.8 9.2 6.2 Z" fill="${fire}"/>`);
+  p.parts.push(`<path d="M10.6 4.6 Q 9.2 3.6 10.0 2.0 Q 9.6 3.8 11.0 4.0 Z" fill="${ember}"/>`);
+  // Embers/sparks drifting off.
+  p.circle(11.4, 2.2, 0.4, ember, null);
+  p.circle(6.0, 7.4, 0.35, ember, null);
+  p.circle(9.0, 4.0, 0.3, '#fff6c8', null);
+  // Cross-guard (flared, with a small flame motif) + grip + pommel.
+  p.bar(2.3, 12.4, 6.3, 9.8, big ? 1.9 : 1.6, guardC);
+  p.poly('2.5,12.2 1.1,10.8 3.3,11.6', guardC, outline(guardC));
+  p.line(3.1, 13.3, 4.6, 11.7, gripC, 2.0);
+  p.circle(2.85, 13.7, 1.05, hot, outline(guardC));
+  gem(p, 2.85, 13.7, 0.9, ember);
+}
+
 function paintSword(p, item, t) {
   const c = hexStr(item.color);
   const blade = c;
+  const id = item.baseId || item.id || '';
   const v = variantOf(item, 'std');
   let guardC = t > 0.55 ? '#f0d878' : '#c8a24a';
   const gripC = '#3a2414';
   const el = ELEMENT_COLOR[item.element];
+
+  // --- Bespoke: clearly-flaming blades. ---
+  if (id === 'fire_sword' || id === 'hellforged_blade' || id === 'demon_sword') {
+    paintFlameBlade(p, item, { big: id !== 'fire_sword' });
+    return;
+  }
+
+  // --- Bespoke: Giant Sword — an oversized broad blade with a distinctive
+  // double-step ricasso guard, near-vertical and filling the icon. ---
+  if (id === 'giant_sword' || id === 'warlord_sword' || id === 'magic_sword') {
+    const steel = blade;
+    const gold = id === 'warlord_sword' ? '#f0d878' : (id === 'magic_sword' ? '#c78cff' : '#cfa84a');
+    // Big halo on the legendary variants.
+    if (id !== 'giant_sword') {
+      p.circle(9, 6, 6.6, gold, null);
+      p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ' opacity="0.2"/>');
+    }
+    // Wide blade as a tapered polygon (broad at the guard, pointed tip).
+    p.poly('7.6,13.2 10.6,13.2 10.0,3.4 9.1,1.2 8.2,3.4', steel, outline(steel));
+    p.line(9.1, 12.6, 9.1, 2.4, shade(steel, 0.62), 0.7);   // central fuller
+    p.line(8.0, 12.6, 8.0, 3.6, shade(steel, 1.6), 0.6);    // edge glint
+    p.line(10.1, 12.6, 9.9, 3.6, shade(steel, 0.8), 0.5);   // shadowed edge
+    // Distinctive stepped cross-guard (wide bar + down-curled quillons).
+    p.px(4.4, 12.4, gold, 8.6, 1.4);
+    p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ` stroke="${outline(gold)}" stroke-width="0.4"/>`);
+    p.poly('4.4,12.4 3.0,14.0 4.8,13.4', gold, outline(gold));
+    p.poly('13.0,12.4 14.4,14.0 12.6,13.4', gold, outline(gold));
+    p.circle(8.7, 13.1, 0.7, el || gold, outline(gold)); // guard centre stone
+    // Grip + big pommel.
+    p.px(8.1, 13.6, gripC, 1.4, 1.6);
+    p.circle(8.7, 15.0, 1.0, shade(gold, 0.95), outline(gold));
+    if (id === 'magic_sword') gem(p, 9.1, 6.5, 1.2, '#c78cff'); // glowing rune
+    return;
+  }
 
   // --- Iconic aura behind the blade (excalibur / celestial) drawn first. ---
   if (v === 'excalibur') {
@@ -221,6 +342,9 @@ function paintSword(p, item, t) {
     gem(p, 2.9, 13.6, (v === 'great') ? 1.0 : 0.85, el);
   } else if (v === 'great' || item.rarity === 'legendary') {
     gem(p, 2.9, 13.6, (v === 'great') ? 1.0 : 0.85, RARITY_GLOW.legendary || guardC);
+  } else {
+    // Plain steel sword: a small id-derived pommel stone keeps siblings distinct.
+    p.circle(2.9, 13.6, 0.55, accentColor(id, 3), outline(guardC));
   }
 }
 
@@ -342,16 +466,25 @@ function paintCrossbow(p, item, t, c) {
 
 function paintWand(p, item, t) {
   const c = hexStr(item.color);
+  const id = item.baseId || item.id || '';
   const v = variantOf(item, t > 0.55 ? 'staff' : 'wand');
-  const isStaff = v === 'staff';
-  const shaftC = '#4a2f1b';
+  // Each wand gets its OWN shaft wood tint and tip-decoration so two same-element
+  // same-colour wands (e.g. Plant Wand vs Wand of Decay) never match.
+  const woods = ['#4a2f1b', '#3a2614', '#5a3a22', '#2f2436', '#43331f'];
+  const shaftC = woods[hashId(id) % woods.length];
   const orb = ELEMENT_COLOR[item.element] || c;
+  const acc = accentColor(id, 5);           // distinct tip accent per wand
+  const motif = Math.floor(hrand(id, 11) * 3); // 0=ring, 1=spike collar, 2=twin beads
 
   if (v === 'wand') {
     // Short shaft + small orb, no prongs.
     p.line(5.0, 13.0, 10.0, 5.0, shaftC, 1.3);
     p.line(5.0, 13.0, 10.0, 5.0, shade(shaftC, 1.3), 0.5);
     const gx = 10.4, gy = 4.4;
+    // Per-id collar motif just below the orb.
+    if (motif === 0) p.circle(gx - 1.1, gy + 1.1, 0.55, acc, outline(acc));
+    else if (motif === 1) { p.poly(`${gx - 1.4},${gy + 1.6} ${gx - 0.4},${gy + 0.8} ${gx - 0.2},${gy + 1.9}`, acc, null); }
+    else { p.px(gx - 1.7, gy + 1.4, acc, 0.7, 0.7, 0.95); p.px(gx - 0.9, gy + 2.0, acc, 0.6, 0.6, 0.95); }
     p.circle(gx, gy, 1.6, orb, outline(orb));
     p.circle(gx - 0.4, gy - 0.4, 0.5, shade(orb, 1.8), null);
     p.line(5.2, 12.7, 6.4, 10.9, '#2a1a10', 1.4);
@@ -365,29 +498,77 @@ function paintWand(p, item, t) {
     p.circle(gx, gy, 1.5, orb, outline(orb));
     p.circle(gx - 0.4, gy - 0.4, 0.45, shade(orb, 1.8), null);
     p.circle(gx - 1.8, gy + 1.6, 0.7, shade(orb, 1.2), outline(orb)); // twin bead
+    p.circle(gx + 0.7, gy + 1.4, 0.4, acc, null); // id accent bead
     p.line(4.8, 12.9, 5.9, 11.3, '#2a1a10', 1.5);
     return;
   }
 
-  // Staff: long shaft + claw prongs + big orb.
+  // Staff: long shaft + claw prongs + big orb. Prong colour + count vary by id.
   p.line(4.0, 13.5, 10.5, 4.5, shaftC, 1.8);
   p.line(4.0, 13.5, 10.5, 4.5, shade(shaftC, 1.3), 0.5);
   const gx = 11.0, gy = 3.6;
-  p.line(gx - 1.4, gy + 0.4, gx - 0.4, gy - 1.0, '#d9c46a', 0.8);
-  p.line(gx + 1.4, gy + 0.4, gx + 0.4, gy - 1.0, '#d9c46a', 0.8);
+  const prongC = motif === 0 ? '#d9c46a' : (motif === 1 ? '#c8ccd2' : acc);
+  p.line(gx - 1.4, gy + 0.4, gx - 0.4, gy - 1.0, prongC, 0.8);
+  p.line(gx + 1.4, gy + 0.4, gx + 0.4, gy - 1.0, prongC, 0.8);
+  if (motif === 2) p.line(gx, gy + 0.6, gx, gy - 1.4, prongC, 0.7); // a third prong
   const halo = item.rarity === 'legendary' ? 0.55 : 0.35;
   p.circle(gx, gy, 2.2, mix(orb, '#ffffff', 0.15), null);
   p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ` opacity="${halo}"/>`);
   p.circle(gx, gy, 1.5, orb, outline(orb));
   p.circle(gx - 0.5, gy - 0.5, 0.5, shade(orb, 1.8), null);
+  // A small id-coloured rune speck on the shaft keeps same-colour staves apart.
+  p.px(6.6, 9.6, acc, 0.7, 0.7, 0.9);
   p.line(4.2, 13.2, 5.4, 11.6, '#2a1a10', 1.6);
 }
 
 function paintShield(p, item, t) {
   const c = hexStr(item.color);
+  const id = item.baseId || item.id || '';
   const rim = t > 0.5 ? '#f0d878' : '#c4c9cf';
   const v = variantOf(item, 'heater');
   const el = ELEMENT_COLOR[item.element];
+
+  // --- Bespoke: Medusa Shield (Warden Shield / vine_shield) — round green
+  // shield with a snake-haired medusa face motif. ---
+  if (id === 'vine_shield') {
+    const green = '#3f9a4a', dk = shade(green, 0.7), lt = shade(green, 1.4);
+    p.circle(8, 8, 6.2, green, outline(green));
+    p.circle(8, 8, 6.2, 'none', '#caa84a'); // gold rim
+    // Snakes radiating from the head.
+    for (let a = 0; a < 8; a++) {
+      const ang = (a / 8) * Math.PI * 2 - 0.3;
+      const x1 = 8 + Math.cos(ang) * 2.4, y1 = 8 + Math.sin(ang) * 2.4;
+      const x2 = 8 + Math.cos(ang) * 5.0, y2 = 8 + Math.sin(ang) * 5.0;
+      p.line(x1, y1, x2, y2, dk, 1.0);
+      p.circle(x2, y2, 0.5, lt, null);
+    }
+    // Pale medusa face.
+    p.circle(8, 8.2, 2.3, '#cfe6c0', outline(green));
+    p.circle(6.9, 7.6, 0.55, '#1c3a1c', null); // eyes
+    p.circle(9.1, 7.6, 0.55, '#1c3a1c', null);
+    p.poly('6.8,9.4 9.2,9.4 8,10.4', '#6a2a2a', null); // snarling mouth
+    p.line(5.4, 5.2, 6.6, 4.4, lt, 0.6); // glint
+    return;
+  }
+
+  // --- Bespoke: Dragon Shield — red shield with a horned dragon-head crest. ---
+  if (id === 'dragon_shield') {
+    const red = '#c0291a', dk = shade(red, 0.65), gold = '#e0b84a';
+    p.poly('8,2 13,3.5 13,9 8,14 3,9 3,3.5', red, outline(red));
+    p.parts.push(`<polygon points="8,2 13,3.5 13,9 8,14 3,9 3,3.5" fill="none" stroke="${gold}" stroke-width="0.7"/>`);
+    // Dragon head crest: snout + horns + a glowing eye.
+    p.poly('8,5 10.2,7.4 8,7.8 5.8,7.4', shade(red, 1.25), outline(red)); // brow
+    p.poly('6.6,5.4 5.2,3.4 7.0,4.6', dk, outline(red)); // left horn
+    p.poly('9.4,5.4 10.8,3.4 9.0,4.6', dk, outline(red)); // right horn
+    p.poly('6.6,8 9.4,8 8,11', shade(red, 1.1), outline(red)); // snout
+    p.circle(7.2, 6.8, 0.5, '#ffd24d', null); // eyes
+    p.circle(8.8, 6.8, 0.5, '#ffd24d', null);
+    p.circle(7.2, 6.8, 0.2, '#3a0000', null);
+    p.circle(8.8, 6.8, 0.2, '#3a0000', null);
+    p.px(7.4, 9.6, '#ffe066', 0.5, 0.5, 0.9); p.px(8.4, 10.0, '#ffae5c', 0.5, 0.5, 0.9); // ember nostrils
+    p.line(4.4, 4.4, 5.6, 3.8, shade(red, 1.6), 0.6);
+    return;
+  }
 
   // --- Body silhouette per variant. ---
   if (v === 'buckler') {
@@ -433,12 +614,19 @@ function paintShield(p, item, t) {
     p.circle(8, 4.5, 0.5, el || '#ff5a55', null);
   } else if (v === 'buckler' || v === 'round' || v === 'tower') {
     // Decorate with a gem on higher tiers, else a cross/boss already drawn.
-    if (t > 0.45) gem(p, 8, v === 'tower' ? 8 : 8, 1.5, el || rim);
-  } else if (t > 0.45) {
-    gem(p, 8, 7.5, 1.8, el || rim);
+    if (t > 0.45) gem(p, 8, v === 'tower' ? 8 : 8, 1.5, el || accentColor(id, 4));
+    else p.circle(8, 8, 0.5, accentColor(id, 4), null);
   } else {
-    p.px(7.4, 4.5, rim, 1.2, 6.2, 0.95);
-    p.px(4.8, 6.6, rim, 6.4, 1.2, 0.95);
+    // Heater: per-id emblem so same-tier same-colour shields differ. The crest
+    // shape is chosen by the id hash (cross / chevron / bend / saltire / boss).
+    const acc = el || accentColor(id, 4);
+    const crest = Math.floor(hrand(id, 6) * 5);
+    if (t > 0.45) gem(p, 8, 7.5, 1.7, acc);
+    else if (crest === 0) { p.px(7.4, 4.5, rim, 1.2, 6.2, 0.95); p.px(4.8, 6.6, rim, 6.4, 1.2, 0.95); } // cross
+    else if (crest === 1) { p.poly('4,7 8,4 12,7 12,8.2 8,5.4 4,8.2', acc, null); } // chevron
+    else if (crest === 2) { p.poly('4,5 5.6,4.4 11,11 9.4,11.6', acc, null); } // bend
+    else if (crest === 3) { p.poly('4.4,4.6 6,4 12,11 10.4,11.6', acc, null); p.poly('11.6,4.6 10,4 4,11 5.6,11.6', acc, null); } // saltire
+    else { p.circle(8, 7.5, 1.4, shade(c, 1.2), outline(c)); p.circle(8, 7.5, 0.6, acc, null); } // boss
   }
   // Top-left glint.
   p.line(5.0, 4.2, 6.6, 3.6, shade(c, 1.6), 0.6);
@@ -493,47 +681,129 @@ function paintHelmet(p, item, t) {
   p.line(5.0, 7.6, 6.6, 6.6, shade(c, 1.6), 0.6);
 }
 
+// The classic segmented Tibia breastplate: a plated torso with rounded shoulder
+// pauldrons, a central seam, riveted edges and abdominal lames. Used by all the
+// "plate" family and as the heavy-armour base.
+function paintPlateBody(p, c, opts = {}) {
+  const lt = shade(c, 1.22), dk = shade(c, 0.66), o = outline(c);
+  // Big rounded pauldrons behind the torso.
+  p.circle(4.0, 5.2, 2.0, shade(c, 1.05), o);
+  p.circle(12.0, 5.2, 2.0, shade(c, 1.05), o);
+  p.line(3.0, 4.4, 3.4, 6.0, lt, 0.5); p.line(13.0, 4.4, 12.6, 6.0, lt, 0.5);
+  // Torso breastplate.
+  p.poly('4.6,3.8 11.4,3.8 11.6,9 8,14 4.4,9', c, o);
+  // Neckline cut.
+  p.poly('6.4,3.8 9.6,3.8 8,6.2', dk, null);
+  // Central seam + two pectoral plate edges.
+  p.line(8, 5.6, 8, 13.4, dk, 0.7);
+  p.parts.push(`<path d="M6.2 6.2 Q 8 7.6 9.8 6.2" fill="none" stroke="${dk}" stroke-width="0.5"/>`);
+  // Abdominal lames (stacked bands).
+  for (let i = 0; i < 3; i++) {
+    const y = 9.6 + i * 1.2;
+    p.line(5.4 + i * 0.4, y, 10.6 - i * 0.4, y, dk, 0.5);
+  }
+  // Corner rivets.
+  for (const [rx, ry] of [[5.2, 4.6], [10.8, 4.6], [5.0, 8.6], [11.0, 8.6]]) {
+    p.circle(rx, ry, 0.45, lt, o);
+  }
+  // Highlight down the left pectoral.
+  p.line(6.0, 5.4, 6.0, 8.8, lt, 0.5);
+  if (opts.gem) gem(p, 8, 7.6, 1.1, opts.gem); // chest gem on magic plate
+}
+
 function paintArmor(p, item, t) {
   const c = hexStr(item.color);
-  const id = item.baseId || '';
+  const id = item.baseId || item.id || '';
   const soft = /cloth|leather|studded|robe|shirt/i.test(id);
-  // Torso plate / tunic.
-  p.poly('4.5,4 11.5,4 11.5,13 8,14 4.5,13', c, outline(c));
-  // Pauldrons.
-  p.circle(4.2, 5.0, 1.6, shade(c, soft ? 1.0 : 1.1), outline(c));
-  p.circle(11.8, 5.0, 1.6, shade(c, soft ? 1.0 : 1.1), outline(c));
-  // Neckline.
-  p.poly('6.5,4 9.5,4 8,6', shade(c, 0.8), null);
-  // Center ridge / lacing.
-  if (soft) {
-    p.line(8, 6, 8, 12.5, shade(c, 0.7), 0.5);
-    for (let y = 6.5; y < 12; y += 1.4) p.line(7.2, y, 8.8, y, shade(c, 1.2), 0.4);
-  } else {
-    p.line(8, 5, 8, 13.5, shade(c, 0.65), 0.7); // plate seam
-    p.line(6.0, 6.4, 6.0, 12.5, shade(c, 1.25), 0.5); // glint
+
+  // --- Bespoke: plate-family breastplates (incl. magic/royal plate). ---
+  if (/^plate_armor$|^royal_armor$|^steel_armor$|^crusader_armor$|^knight_armor$/.test(id)) {
+    paintPlateBody(p, c, { gem: id === 'royal_armor' ? '#7fe0ff' : null });
+    return;
   }
-  // Belt.
-  p.px(4.7, 11.4, shade(c, 0.6), 6.6, 1.0);
-  if (t > 0.55) p.circle(8, 11.9, 0.7, '#f0d878', outline('#f0d878')); // buckle gem
+  if (/mage_robe|robe/i.test(id)) {
+    // Mage robe: long hooded robe with a trim and a glowing rune, not a plate.
+    p.poly('5.5,4 10.5,4 12,13.5 4,13.5', c, outline(c));
+    p.poly('6.6,4 9.4,4 8,7', shade(c, 0.75), null); // hood opening
+    p.line(8, 6.5, 8, 13, shade(c, 0.7), 0.6); // central fold
+    p.line(5.2, 13.4, 10.8, 13.4, '#e0c060', 0.7); // hem trim
+    p.circle(8, 9.5, 1.0, accentColor(id, 8), outline(c)); // rune medallion
+    p.line(6.2, 5.6, 6.0, 12.6, shade(c, 1.3), 0.4);
+    return;
+  }
+
+  // Heavy non-soft armour uses the plated body; soft uses tunic.
+  if (!soft) {
+    paintPlateBody(p, c, { gem: t > 0.7 ? (ELEMENT_COLOR[item.element] || '#f0d878') : null });
+    // A faint id-coloured rivet so two same-colour heavy armours never match.
+    p.circle(8, 11.4, 0.4, accentColor(id, 9), null);
+    return;
+  }
+
+  // --- Soft tunic / shirt / leather (laced). ---
+  p.poly('4.5,4 11.5,4 11.5,13 8,14 4.5,13', c, outline(c));
+  p.circle(4.2, 5.0, 1.6, shade(c, 1.0), outline(c));
+  p.circle(11.8, 5.0, 1.6, shade(c, 1.0), outline(c));
+  p.poly('6.5,4 9.5,4 8,6', shade(c, 0.8), null); // neckline
+  p.line(8, 6, 8, 12.5, shade(c, 0.7), 0.5);
+  for (let y = 6.5; y < 12; y += 1.4) p.line(7.2, y, 8.8, y, shade(c, 1.2), 0.4); // lacing
+  p.px(4.7, 11.4, shade(c, 0.6), 6.6, 1.0); // belt
+  // Studded/leather get an id-coloured stud cluster (uniqueness + flavour).
+  if (/studded/i.test(id)) {
+    for (const [sx, sy] of [[6, 7], [10, 7], [6.5, 9.5], [9.5, 9.5]]) p.circle(sx, sy, 0.4, '#cfc0a0', null);
+  }
+  p.circle(8, 11.9, 0.45, accentColor(id, 9), null); // belt-buckle accent (unique)
 }
 
 function paintLegs(p, item, t) {
   const c = hexStr(item.color);
-  // Waist band + two legs.
-  p.px(4.5, 3.5, shade(c, 0.7), 7, 1.4);
-  p.poly('4.5,4.8 7.4,4.8 7.4,13.5 5.0,13.5 4.2,5.2', c, outline(c));
-  p.poly('8.6,4.8 11.5,4.8 11.8,5.2 11.0,13.5 8.6,13.5', c, outline(c));
-  // Knee plates on heavy gear.
-  if (!/cloth|leather|robe/i.test(item.baseId || '')) {
-    p.circle(6.0, 9.0, 1.0, shade(c, 1.15), outline(c));
-    p.circle(10.0, 9.0, 1.0, shade(c, 1.15), outline(c));
+  const id = item.baseId || item.id || '';
+  const soft = /cloth|leather|robe/i.test(id);
+  const lt = shade(c, 1.28), dk = shade(c, 0.66), o = outline(c);
+  // Waist band + two legs (greaves).
+  p.px(4.4, 3.4, dk, 7.2, 1.5);
+  p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ` stroke="${o}" stroke-width="0.4"/>`);
+  p.poly('4.5,4.8 7.4,4.8 7.4,13.5 5.0,13.5 4.2,5.2', c, o);
+  p.poly('8.6,4.8 11.5,4.8 11.8,5.2 11.0,13.5 8.6,13.5', c, o);
+  if (!soft) {
+    // Plated greaves: knee cops, thigh bands and rivets — classic plate legs.
+    p.circle(5.9, 9.0, 1.1, lt, o);   // knee cops
+    p.circle(10.1, 9.0, 1.1, lt, o);
+    for (const ly of [6.4, 11.4]) {   // thigh & shin bands
+      p.line(4.6, ly, 7.3, ly, dk, 0.5);
+      p.line(8.7, ly, 11.4, ly, dk, 0.5);
+    }
+    p.circle(5.6, 5.8, 0.4, lt, o); p.circle(10.4, 5.8, 0.4, lt, o); // hip rivets
+  } else {
+    // Soft trousers: a couple of cloth folds.
+    p.line(5.8, 6, 5.8, 12.8, dk, 0.4);
+    p.line(10.2, 6, 10.2, 12.8, dk, 0.4);
   }
-  p.line(5.5, 5.6, 5.5, 12.5, shade(c, 1.3), 0.4); // glint
+  p.line(5.2, 5.6, 5.2, 12.5, lt, 0.4); // glint
+  // Unique id accent on the waist clasp.
+  p.circle(8, 4.1, 0.45, accentColor(id, 9), null);
 }
 
 function paintBoots(p, item, t) {
   const c = hexStr(item.color);
-  const id = item.baseId || '';
+  const id = item.baseId || item.id || '';
+
+  // --- Steel Boots (Tibia look): greenish-steel plated boots with a hard cuff,
+  // shin plate and rivets. ---
+  if (id === 'steel_boots') {
+    const steel = '#9fb8a8'; // greenish steel
+    const lt = shade(steel, 1.3), dk = shade(steel, 0.65), o = outline(steel);
+    for (const ox of [0, 5.2]) {
+      p.poly(`${3.0 + ox},4 ${5.4 + ox},4 ${5.4 + ox},11 ${6.6 + ox},11 ${6.6 + ox},13 ${3.0 + ox},13`, steel, o);
+      p.px(3.0 + ox, 4.0, dk, 2.4, 1.0);            // hard cuff
+      p.line(3.0 + ox, 8.6, 5.4 + ox, 8.6, dk, 0.5); // shin band
+      p.px(3.0 + ox, 12.0, dk, 3.6, 1.0);            // armoured sole
+      p.line(3.5 + ox, 5.0, 3.5 + ox, 8.0, lt, 0.4); // shin glint
+      p.circle(4.3 + ox, 5.4, 0.35, lt, o);          // rivet
+      p.circle(4.3 + ox, 9.8, 0.35, lt, o);          // rivet
+    }
+    return;
+  }
 
   // --- Boots of Haste (Tibia look): tan/yellow boots + small ankle wings. ---
   if (id === 'fast_boots') {
@@ -567,6 +837,17 @@ function paintBoots(p, item, t) {
       p.poly(`${3.0 + ox},4 ${5.4 + ox},4 ${5.4 + ox},11 ${6.6 + ox},11 ${6.6 + ox},13 ${3.0 + ox},13`, c, outline(c));
       p.px(3.0 + ox, 9.6, shade(c, 0.75), 2.4, 0.9); // cuff
       p.line(3.4 + ox, 5.0, 3.4 + ox, 9.0, shade(c, 1.3), 0.4);
+    }
+  }
+
+  // Per-id cuff trim / lacing so same-colour boots (walking vs studded) differ.
+  if (!winged && !soft && !fast) {
+    const acc = accentColor(id, 9);
+    const style = Math.floor(hrand(id, 12) * 3);
+    for (const ox of [0, 5.2]) {
+      if (style === 0) { p.px(3.0 + ox, 4.0, acc, 2.4, 0.7, 0.95); }                 // colored cuff
+      else if (style === 1) { p.circle(4.0 + ox, 5.0, 0.35, acc, null); p.circle(4.0 + ox, 6.6, 0.35, acc, null); } // studs
+      else { p.line(3.4 + ox, 5.4, 5.0 + ox, 5.4, acc, 0.4); p.line(3.4 + ox, 7.0, 5.0 + ox, 7.0, acc, 0.4); }      // straps
     }
   }
 
@@ -634,32 +915,128 @@ function paintFruit(p, item) {
   p.poly('8.8,4.2 11,3.4 9.4,5.0', '#4caf50', null); // leaf
 }
 
+// Coin stack — Tibia-style. Modes by count:
+//  • FEW (1–4): coins face you, round with a visible face mark, lightly
+//    clustered — easy to tell apart and count.
+//  • 5: exactly the 2×2 of "4" plus ONE coin in the centre.
+//  • MANY (6–15): coins pile into a triangular PYRAMID — a 1/2/3/4/5 stack
+//    (apex→base), filled from the base up. The rows OVERLAP vertically so the
+//    coins read as tokens stacked one on top of another (like the Tibia heap).
+//    15 is the visual cap (the full mountain); more shows the same full stack.
+// Each tier keeps its colour. Drawn top-row→bottom-row so fronts overlap.
 function paintCoin(p, item) {
   const c = hexStr(item.color);
-  // Stack of three discs.
-  for (let i = 2; i >= 0; i--) {
-    const y = 9.5 + i * 0.2 - i * 2.1;
-    p.circle(8, y + 2.0, 3.0, shade(c, 1 - i * 0.05), outline(c));
-    p.circle(8 - 0.8, y + 1.2, 1.0, shade(c, 1.5), null);
+  const lit = shade(c, 1.6), dk = shade(c, 0.62), edge = outline(c);
+  const n = Math.max(1, Math.min(15, Math.floor(item.count || 1)));
+
+  // A tiny "mm" engraved on the coin face (the coin's name — "mm coins").
+  // Drawn with smooth rendering (the icon is crispEdges, which would pixelate
+  // small text) and a darker tone so it reads as stamped metal.
+  const mmMark = (cx, cy, size) => {
+    p.parts.push(
+      `<text x="${cx}" y="${cy + size * 0.36}" font-family="Arial, sans-serif" font-weight="700" font-size="${size}" fill="${dk}" text-anchor="middle" shape-rendering="geometricPrecision" style="pointer-events:none">mm</text>`
+    );
+  };
+
+  // A coin facing the viewer: round disc + rim + glint + the "mm" stamp.
+  const R = 2.0;
+  const coinFace = (cx, cy, r = R) => {
+    p.circle(cx, cy + r * 0.16, r, dk, edge);            // thickness/shadow
+    p.circle(cx, cy, r, c, edge);                        // body
+    p.circle(cx, cy, r * 0.66, shade(c, 1.1), null);     // raised face
+    p.circle(cx - r * 0.3, cy - r * 0.32, r * 0.32, lit, null); // glint
+    mmMark(cx, cy, r * 0.82);                            // "mm" stamp on the face
+  };
+
+  // The 2×2 square used by counts 4 and 5.
+  const SQUARE = [[6, 10.2], [10, 10.2], [6.7, 6.6], [10.3, 6.4]];
+
+  // ---- FEW: 1–4 coins seen from the front ----------------------------------
+  if (n <= 4) {
+    const layouts = {
+      1: [[8, 9]],
+      2: [[6.4, 9.4], [9.6, 8.6]],
+      3: [[6.2, 10], [9.8, 9.6], [8, 6.8]],
+      4: SQUARE,
+    };
+    for (const [x, y] of layouts[n]) coinFace(x, y);
+    return;
   }
-  // Coin face mark on top disc.
-  p.px(7.4, 4.2, shade(c, 0.7), 1.2, 2.0, 0.8);
+
+  // ---- 5: the 2×2 square plus one coin in the centre -----------------------
+  if (n === 5) {
+    for (const [x, y] of SQUARE) coinFace(x, y);
+    coinFace(8.25, 8.4);   // centre coin, drawn last so it sits on top
+    return;
+  }
+
+  // ---- MANY (6–15): a triangular PYRAMID of stacked tokens -----------------
+  // Round coins in rows that overlap VERTICALLY (small DY) so they look stacked
+  // one on top of another. Triangle 1/2/3/4/5: base (5) at the bottom up to a
+  // single coin at the apex. Filled from the base up, so it grows like a heap.
+  const r = 1.7;
+  const heapCoin = (cx, cy) => {
+    p.circle(cx, cy + r * 0.5, r, dk, edge);             // thickness shown below
+    p.circle(cx, cy, r, c, edge);                        // body
+    p.circle(cx, cy, r * 0.6, shade(c, 1.12), null);     // face
+    p.circle(cx - r * 0.32, cy - r * 0.34, r * 0.3, lit, null); // glint
+    mmMark(cx, cy - r * 0.05, r * 0.72);                 // "mm" stamp (toward the visible upper face)
+  };
+  const DX = r * 1.16;   // horizontal step (< 2r → side overlap)
+  const DY = r * 1.02;   // SMALL vertical step → rows overlap (stacked look)
+  // Triangle rows from BASE (widest, bottom) up to the apex; sums to 15.
+  const baseToApex = [5, 4, 3, 2, 1];
+  const take = baseToApex.map(() => 0);
+  let left = n;
+  for (let ri = 0; ri < baseToApex.length && left > 0; ri++) {
+    const t = Math.min(baseToApex[ri], left); take[ri] = t; left -= t;
+  }
+
+  const baseY = 13.4;    // bottom row sits low in the cell
+  // Draw from the TOP row down so each lower (front) row overlaps the one above.
+  for (let ri = baseToApex.length - 1; ri >= 0; ri--) {
+    const k = take[ri];
+    if (!k) continue;
+    const y = baseY - ri * DY;
+    const x0 = 8 - (k - 1) * DX / 2;
+    for (let i = 0; i < k; i++) heapCoin(x0 + i * DX, y);
+  }
 }
 
 function paintContainer(p, item) {
   const c = hexStr(item.color);
+  const o = outline(c), lit = shade(c, 1.18), dk = shade(c, 0.72);
   const id = item.baseId || '';
   const big = (item.capacity || 8) >= 20;
-  if (big) { // framed backpack
-    p.poly('3.5,5 12.5,5 12.5,14 3.5,14', c, outline(c));
-    p.px(3.5, 5, shade(c, 1.15), 9, 1.4); // flap
-    p.px(7.2, 4.4, shade(c, 0.8), 1.6, 2.0); // strap
-    p.px(6.6, 8.5, shade(c, 0.7), 2.8, 1.2); // buckle
-  } else { // pouch
-    p.parts.push(`<path d="M4 7 Q 8 4 12 7 L 13 13 Q 8 15 3 13 Z" fill="${c}" stroke="${outline(c)}" stroke-width="0.6"/>`);
-    p.px(5.5, 6.2, shade(c, 0.7), 5, 1.0); // drawstring
-    p.line(6, 6.4, 6, 5.0, shade(c, 0.7), 0.5);
-    p.line(10, 6.4, 10, 5.0, shade(c, 0.7), 0.5);
+  if (big) {
+    // A real BACKPACK silhouette: a rounded pack body with two shoulder straps
+    // arcing over the top, a buckled top flap and a front pocket — so it reads as
+    // a backpack you'd wear, not a flat briefcase.
+    // Shoulder straps behind the body.
+    p.parts.push(`<path d="M5.4 5 Q 4 9 5 13" fill="none" stroke="${dk}" stroke-width="1.1"/>`);
+    p.parts.push(`<path d="M10.6 5 Q 12 9 11 13" fill="none" stroke="${dk}" stroke-width="1.1"/>`);
+    // Rounded body.
+    p.parts.push(`<path d="M4 7 Q 4 4.5 8 4.5 Q 12 4.5 12 7 L 12 13 Q 12 14.4 10.6 14.4 L 5.4 14.4 Q 4 14.4 4 13 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+    // Front pocket.
+    p.parts.push(`<path d="M5.4 10 L 10.6 10 L 10.6 13.4 Q 10.6 14 10 14 L 6 14 Q 5.4 14 5.4 13.4 Z" fill="${dk}" stroke="${o}" stroke-width="0.5"/>`);
+    // Top flap + buckle.
+    p.parts.push(`<path d="M4.4 6.4 Q 8 5 11.6 6.4 L 11.6 9 Q 8 8.2 4.4 9 Z" fill="${lit}" stroke="${o}" stroke-width="0.5"/>`);
+    p.px(7.2, 8.2, '#caa84a', 1.6, 1.0);              // buckle strap
+    p.px(7.4, 8.3, shade('#caa84a', 0.7), 1.2, 0.7);
+  } else {
+    // A drawstring POUCH: a round sack pinched into a tied neck at the top, with
+    // the cord ends poking up — clearly a little bag, not a skirt.
+    p.parts.push(`<path d="M3.4 10.5 Q 3.4 6.6 8 6.6 Q 12.6 6.6 12.6 10.5 Q 12.6 14.6 8 14.6 Q 3.4 14.6 3.4 10.5 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+    // Cinched neck.
+    p.parts.push(`<path d="M6 6.8 Q 8 5.6 10 6.8 L 9.4 8 Q 8 7.2 6.6 8 Z" fill="${dk}" stroke="${o}" stroke-width="0.5"/>`);
+    // Drawstring cords.
+    p.line(6.6, 6.4, 5.6, 4.6, dk, 0.6);
+    p.line(9.4, 6.4, 10.4, 4.6, dk, 0.6);
+    p.circle(5.6, 4.6, 0.5, dk, null);
+    p.circle(10.4, 4.6, 0.5, dk, null);
+    // A soft highlight on the belly.
+    p.circle(6.4, 10.2, 1.1, lit, null);
+    p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ' opacity="0.5"/>');
   }
   // Themed faces/marks on special bags (kid bling).
   if (/demon/i.test(id)) {
@@ -685,11 +1062,28 @@ function paintContainer(p, item) {
 
 function paintLight(p, item) {
   const c = hexStr(item.color);
-  const id = item.baseId || '';
+  const id = item.baseId || item.id || '';
   if (/torch/i.test(id)) {
-    p.line(8, 14, 8, 8, '#5a3a22', 1.6); // handle
-    p.poly('8,3 10,7 6,7', '#ffb24d', null); // flame
-    p.poly('8,4.5 9,7 7,7', '#ffe066', null);
+    // A proper torch: a bound wooden haft topped by a layered teardrop FLAME
+    // (deep red → orange → yellow → white core) with a couple of sparks, so it
+    // unmistakably reads as fire, not a stick with a triangle. Brighter torches
+    // burn taller/whiter and tint by their own glowColor.
+    const glow = hexStr(item.glowColor || 0xffb24d);
+    const tall = (item.radius || 9) >= 12; // bright torch
+    p.line(8, 15, 8, 9, '#4a3019', 2.0);                 // haft
+    p.line(8, 15, 8, 9, '#6a4423', 0.9);                 // haft highlight
+    p.px(6.9, 8.4, '#3a2614', 2.2, 1.4);                 // binding/head
+    p.line(7, 8.6, 9, 8.6, '#8a5a2a', 0.5);
+    p.line(7, 9.2, 9, 9.2, '#8a5a2a', 0.5);
+    // Flame, built from nested teardrops; the bright torch reaches higher.
+    const top = tall ? 0.6 : 1.4;
+    p.parts.push(`<path d="M8 ${top} Q 11.4 5 9.6 8.4 Q 8 10 6.4 8.4 Q 4.6 5 8 ${top} Z" fill="${shade(glow, 0.85)}"/>`);
+    p.parts.push(`<path d="M8 ${top + 1.6} Q 10.4 5.6 9 8 Q 8 9.2 7 8 Q 5.6 5.6 8 ${top + 1.6} Z" fill="${glow}"/>`);
+    p.parts.push(`<path d="M8 ${top + 3} Q 9.4 6 8.7 7.7 Q 8 8.6 7.3 7.7 Q 6.6 6 8 ${top + 3} Z" fill="${shade(glow, 1.4)}"/>`);
+    p.circle(8, tall ? 5.8 : 6.6, 0.7, '#fff6c8', null); // white-hot core
+    p.circle(10.3, 3.4, 0.45, '#ffd166', null);          // spark
+    p.circle(5.9, 4.4, 0.35, '#ffb24d', null);           // spark
+    if (tall) p.circle(9.4, 2.0, 0.35, '#fff0c0', null); // extra high spark
     return;
   }
   // Glowing gem.
@@ -739,6 +1133,216 @@ function paintLance(p, item) {
 }
 
 // ---------------------------------------------------------------------------
+// Materials & trophies — beast scraps the player farms and sells. Each is drawn
+// procedurally (NOT an emoji) like the rest of the items: the shape is inferred
+// from the id keyword (scale, fang, hide, bone, essence, claw, wing, horn…) and
+// tinted by the material's own colour, so silk, a dragon scale and a demon horn
+// all read as distinct little objects.
+// ---------------------------------------------------------------------------
+// Trophy ids are `trophy_<family>` where <family> is the CREATURE name (rat,
+// spider, demon…), NOT the body-part keyword in its display name. So keyword
+// matching alone would dump nearly every trophy into the generic 'lump'. This
+// map pins each family to the shape that matches what the trophy actually is
+// (a Rat Tail is a tail, a Bat Wing is a wing, a Spider Leg is a leg…).
+const TROPHY_FAMILY_SHAPE = {
+  worm: 'tail', rat: 'tail', bat: 'wing', snake: 'hide', spider: 'leg',
+  scorpion: 'fang', slime: 'blob', frog: 'leg', crab: 'fang', beetle: 'scale',
+  wasp: 'fang', boar: 'fang', wolf: 'fang', bear: 'fang', deer: 'horn',
+  chicken: 'wing', sheep: 'hide', goblin: 'ear', orc: 'fang', troll: 'silk',
+  tiger: 'fang', crystal_dragon: 'scale',
+  ogre: 'wood', kobold: 'fang', dwarf: 'silk', elf: 'silk', lizardman: 'scale',
+  minotaur: 'horn', cyclops: 'eye', skeleton: 'bone', zombie: 'blob',
+  ghost: 'essence', wraith: 'hide', vampire: 'fang', mimic: 'key', imp: 'horn',
+  demon: 'horn', gargoyle: 'wing', golem: 'essence', elemental: 'essence',
+  treant: 'wood', mushroom: 'mushroom', mandrake: 'wood', fairy: 'essence',
+  dragon: 'fang', wyvern: 'fang', hydra: 'scale', serpent: 'scale',
+  harpy: 'wing', shark: 'fang', jellyfish: 'blob', turtle: 'scale',
+  cultist: 'tome', knight: 'crown', mage: 'crystal',
+};
+
+function matShape(id) {
+  const s = String(id || '').toLowerCase();
+  // Trophies resolve by family first (the part before keyword matching ever runs).
+  if (s.startsWith('trophy_')) {
+    const fam = s.slice('trophy_'.length);
+    if (TROPHY_FAMILY_SHAPE[fam]) return TROPHY_FAMILY_SHAPE[fam];
+  }
+  // --- Keyword matching for materials. Specific shapes before generic ones. ---
+  if (/key|lock/.test(s)) return 'key';
+  if (/crown|crest/.test(s)) return 'crown';
+  if (/eye/.test(s)) return 'eye';
+  if (/ear/.test(s)) return 'ear';
+  if (/egg/.test(s)) return 'egg';
+  if (/tome|page|book|scroll|grimoire/.test(s)) return 'tome';
+  if (/leg/.test(s)) return 'leg'; // spider/frog leg — a thin jointed limb, NOT a ball
+  if (/wing|feather/.test(s)) return 'wing';
+  if (/horn|antler|tusk/.test(s)) return 'horn';
+  if (/fang|tooth|sting|talon|claw|stinger/.test(s)) return 'fang';
+  if (/scale|shell|chitin|carapace|fin|plate/.test(s)) return 'scale';
+  if (/bone|skull/.test(s)) return 'bone';
+  if (/crystal|shard|gem|frost|mana/.test(s)) return 'crystal';
+  if (/silk|thread|hair|braid|beard|lock|mane|fur(?!nace)/.test(s)) return 'silk';
+  if (/hide|pelt|leather|wool|rags|cloak|robe|shroud|skin/.test(s)) return 'hide';
+  if (/jelly|slime|tentacle|ectoplasm|flesh|ooze/.test(s)) return 'blob';
+  if (/vial|venom|blood|antidote|poison|gland|potion|elixir/.test(s)) return 'vial';
+  if (/honey|royal/.test(s)) return 'honey';
+  if (/cheese/.test(s)) return 'cheese';
+  if (/mushroom|spore|cap/.test(s)) return 'mushroom';
+  if (/ingot/.test(s)) return 'ingot';
+  if (/ore|iron|stone|rock|metal/.test(s)) return 'ore';
+  if (/bark|wood|root|branch|splinter|stick/.test(s)) return 'wood';
+  if (/essence|dust|soul|magma|hellfire|core|storm|spirit/.test(s)) return 'essence';
+  if (/tail/.test(s)) return 'tail';
+  return 'lump';
+}
+
+function paintMaterial(p, item) {
+  const c = hexStr(item.color || 0x9a8a6a);
+  const o = outline(c), lit = shade(c, 1.3), dk = shade(c, 0.7);
+  switch (matShape(item.baseId)) {
+    case 'scale':
+      // Overlapping plates.
+      p.poly('4,9 8,5 12,9 8,13', c, o);
+      p.poly('6,8 8,6 10,8 8,10', lit, null);
+      p.line(8, 6, 8, 12, dk, 0.5);
+      break;
+    case 'fang':
+      // A curved tooth/claw.
+      p.poly('6,3 10,4 8,14', c, o);
+      p.poly('6.6,3.6 8.6,4.4 8,9', lit, null);
+      break;
+    case 'horn':
+      p.parts.push(`<path d="M5 13 Q 6 5 12 3 Q 8 7 7.5 13 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+      p.line(6.4, 11, 8.6, 6, lit, 0.6);
+      break;
+    case 'hide':
+      // A stretched pelt.
+      p.poly('4,5 7,3 9,3 12,5 11,12 8,14 5,12', c, o);
+      p.circle(7, 7, 0.6, dk, null); p.circle(9.5, 8.5, 0.5, dk, null);
+      break;
+    case 'bone':
+      p.line(5, 11, 11, 5, c, 2.2);
+      p.circle(5, 11, 1.3, c, o); p.circle(4.2, 11.6, 1.0, c, o);
+      p.circle(11, 5, 1.3, c, o); p.circle(11.8, 4.4, 1.0, c, o);
+      break;
+    case 'essence':
+      p.circle(8, 8, 4.5, c, null);
+      p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ' opacity="0.3"/>');
+      p.circle(8, 8, 2.6, lit, o);
+      p.px(7, 6.4, '#ffffff', 1, 1, 0.8);
+      break;
+    case 'crystal':
+      gem(p, 8, 8, 4, c);
+      p.px(6.6, 6, '#ffffff', 0.9, 0.9, 0.85);
+      break;
+    case 'wing':
+      p.parts.push(`<path d="M4 12 Q 5 4 13 5 Q 8 8 12 11 Q 8 10 4 12 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+      p.line(5, 11, 12, 5.5, dk, 0.5);
+      break;
+    case 'silk':
+      // A wound spool of thread.
+      p.rectO(5, 5, 6, 6, c, o);
+      for (let i = 0; i < 4; i++) p.line(5, 6 + i * 1.4, 11, 6 + i * 1.4, lit, 0.4);
+      break;
+    case 'vial':
+      p.poly('6.5,3 9.5,3 9.5,5 11,13 5,13 6.5,5', shade('#cfe8ff', 1), '#9fb0c2');
+      p.poly('6.2,8 9.8,8 10.6,13 5.4,13', c, null); // liquid
+      break;
+    case 'ore':
+      // A rough mineral chunk with embedded glinting veins.
+      p.poly('4,9 6,5 11,5 13,10 9,13 5,12', c, o);
+      p.px(6, 7, lit, 2, 1.4, 0.7); // facet
+      p.px(9.6, 8.4, shade(c, 1.6), 0.9, 0.9, 0.9); // ore speck
+      p.px(7.2, 10.4, shade(c, 1.6), 0.8, 0.8, 0.9);
+      break;
+    case 'ingot':
+      // A trapezoid metal bar with a bright top edge.
+      p.poly('4.5,10 11.5,10 12.5,13 3.5,13', dk, o);
+      p.poly('5,7.5 11,7.5 11.5,10 4.5,10', c, o);
+      p.line(5.4, 8, 10.6, 8, lit, 0.6); // top sheen
+      break;
+    case 'wood':
+      // A short log / root: rounded ends with grain rings.
+      p.parts.push(`<path d="M4 6 Q 4 5 5 5 L 11 5 Q 12 5 12 6 L 12 10 Q 12 11 11 11 L 5 11 Q 4 11 4 10 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+      p.circle(11, 8, 1.4, dk, null); // cut end
+      p.circle(11, 8, 0.7, lit, null);
+      p.line(5, 7, 10, 7, dk, 0.4); p.line(5, 9, 10, 9, dk, 0.4); // grain
+      break;
+    case 'mushroom':
+      // Domed cap on a short stalk, with spots.
+      p.px(7, 9, shade('#efe6d2', 1), 2, 4); // stalk
+      p.parts.push(`<path d="M3.5 9 Q 8 2.5 12.5 9 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`); // cap
+      p.circle(6.4, 7, 0.6, lit, null); p.circle(9.6, 7.2, 0.5, lit, null); p.circle(8, 5.6, 0.5, lit, null); // spots
+      break;
+    case 'cheese':
+      // A wedge with a couple of holes.
+      p.poly('3,11 13,5 13,11', c, o);
+      p.line(3, 11, 13, 11, dk, 0.5); // front rind edge
+      p.circle(9, 9.4, 0.8, dk, null); p.circle(11, 8.2, 0.55, dk, null); // holes
+      break;
+    case 'honey':
+      // A hex jar of glistening honey with a drip.
+      p.poly('5,5 11,5 12,8 11,12 5,12 4,8', shade(c, 0.85), o);
+      p.poly('5.6,5.6 10.4,5.6 11.2,8 10.4,11.2 5.6,11.2 4.8,8', c, null);
+      p.px(6, 6.4, lit, 1.2, 4, 0.7); // sheen
+      p.poly('7.4,12 8.6,12 8,14.4', c, null); // drip
+      break;
+    case 'blob':
+      // A wobbly gelatinous droplet with a bright highlight (jelly/slime/ooze).
+      p.parts.push(`<path d="M4 9 Q 4 4.5 8 4.5 Q 12 4.5 12 9 Q 12 13 8 13 Q 4 13 4 9 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+      p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('/>', ' opacity="0.85"/>');
+      p.circle(6.6, 7.2, 1.0, shade(c, 1.7), null); // gloss
+      p.circle(9.4, 10, 0.6, lit, null);
+      break;
+    case 'leg':
+      // A thin jointed limb (spider/frog leg): two segments meeting at a knee,
+      // tapering to a pointed tip — reads clearly as a leg, never a ball.
+      p.line(3.5, 4, 8, 8.5, c, 1.7); // upper segment
+      p.line(8, 8.5, 12.5, 13, c, 1.5); // lower segment
+      p.line(3.5, 4, 8, 8.5, lit, 0.5); // segment glints
+      p.line(8, 8.5, 12.5, 13, lit, 0.45);
+      p.circle(8, 8.5, 1.1, shade(c, 0.85), o); // knee joint
+      p.poly('12.5,13 13.8,13.6 13,11.8', c, o); // clawed tip
+      break;
+    case 'ear':
+      // A pointed humanoid ear (goblin) with an inner fold.
+      p.parts.push(`<path d="M6 13 Q 4 9 6 5 Q 8 3 10 4 Q 12 6 9.5 13 Z" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+      p.parts.push(`<path d="M7 11 Q 6 8 7.5 6 Q 9 5 9.5 7" fill="none" stroke="${dk}" stroke-width="0.6"/>`); // inner fold
+      break;
+    case 'tail':
+      p.parts.push(`<path d="M4 13 Q 10 13 11 7 Q 11 4 8 4" fill="none" stroke="${c}" stroke-width="2"/>`);
+      p.circle(8, 4, 1.0, c, o);
+      break;
+    case 'eye':
+      p.circle(8, 8, 4, '#f0ece0', o);
+      p.circle(8, 8, 2, c, null);
+      p.circle(8, 8, 0.9, '#101014', null);
+      p.px(6.8, 6.8, '#ffffff', 0.9, 0.9, 0.9);
+      break;
+    case 'crown':
+      p.poly('4,12 4,7 6,9 8,5 10,9 12,7 12,12', c, o);
+      p.circle(8, 6, 0.7, '#ff5a55', null);
+      break;
+    case 'key':
+      p.circle(6, 6, 2.2, 'none', c); p.parts[p.parts.length - 1] = p.parts[p.parts.length - 1].replace('stroke-width="0.6"', 'stroke-width="1.4"');
+      p.line(7.5, 7.5, 12, 12, c, 1.4); p.line(12, 12, 13, 11, c, 1.4); p.line(11, 11, 12, 10, c, 1.4);
+      break;
+    case 'egg':
+      p.parts.push(`<ellipse cx="8" cy="9" rx="3.2" ry="4" fill="${c}" stroke="${o}" stroke-width="0.6"/>`);
+      p.px(6.6, 6.5, lit, 1.2, 1.6, 0.7);
+      break;
+    case 'tome':
+      p.rectO(4, 4, 8, 9, c, o);
+      p.px(4, 4, dk, 1.4, 9); // spine
+      p.line(6, 6.5, 11, 6.5, lit, 0.4); p.line(6, 8.5, 11, 8.5, lit, 0.4); p.line(6, 10.5, 11, 10.5, lit, 0.4);
+      break;
+    default: // 'lump' — a rounded nugget of stuff
+      p.circle(8, 9, 3.6, c, o);
+      p.circle(6.6, 7.6, 1.1, lit, null);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch.
 // ---------------------------------------------------------------------------
 const WEAPON_PAINTERS = { sword: paintSword, axe: paintAxe, mace: paintMace, lance: paintLance, bow: paintBow, wand: paintWand, shield: paintShield };
@@ -749,21 +1353,26 @@ function paintItem(p, item) {
   const t = tier01(item);
   // Currency / consumables first (they carry kind).
   if (item.kind === 'coin') return paintCoin(p, item);
-  if (item.kind === 'light') return paintLight(p, item);
+  if (item.kind === 'light') { paintLight(p, item); uniqueStamp(p, item); return; }
   if (item.kind === 'potion') {
+    // Potions are the ONE exception to the uniqueness rule (no stamp): they may
+    // look near-identical and vary only by liquid colour.
     return (item.tier === 'fruit') ? paintFruit(p, item) : paintPotion(p, item);
   }
+  // Beast scraps: materials and trophies get a drawn icon (not an emoji).
+  if (item.kind === 'material' || item.kind === 'trophy' || item.type === 'trophy') { paintMaterial(p, item); uniqueStamp(p, item); return; }
   // Containers.
-  if (item.slot === 'bag' || item.type === 'container') return paintContainer(p, item);
+  if (item.slot === 'bag' || item.type === 'container') { paintContainer(p, item); uniqueStamp(p, item); return; }
   // Weapons by type.
-  if (item.type && WEAPON_PAINTERS[item.type]) return WEAPON_PAINTERS[item.type](p, item, t);
+  if (item.type && WEAPON_PAINTERS[item.type]) { WEAPON_PAINTERS[item.type](p, item, t); uniqueStamp(p, item); return; }
   // Armour by slot.
-  if (item.slot && SLOT_PAINTERS[item.slot]) return SLOT_PAINTERS[item.slot](p, item, t);
+  if (item.slot && SLOT_PAINTERS[item.slot]) { SLOT_PAINTERS[item.slot](p, item, t); uniqueStamp(p, item); return; }
   // Shield can arrive as type:'shield' (handled above) or slot:'shield'.
-  if (item.slot === 'shield') return paintShield(p, item, t);
+  if (item.slot === 'shield') { paintShield(p, item, t); uniqueStamp(p, item); return; }
   // Fallback: a labelled tile so nothing is invisible.
   p.rectO(2, 2, 12, 12, hexStr(item.color || 0x888888), outline(item.color || 0x888888));
   p.px(6, 6, '#fff', 4, 4, 0.6);
+  uniqueStamp(p, item);
 }
 
 // ---------------------------------------------------------------------------
@@ -771,27 +1380,35 @@ function paintItem(p, item) {
 // ---------------------------------------------------------------------------
 const cache = new Map();
 
-function cacheKey(item) {
+function cacheKey(item, mirror) {
+  // Coins are the one item whose icon changes with the stack size (the pile
+  // grows 1→25), so the count is part of their key. Other stackables (potions,
+  // etc.) look the same at any count, so count is excluded to keep cache hits.
+  const coinCount = item.kind === 'coin' ? Math.min(15, Math.max(1, Math.floor(item.count || 1))) : '';
   return [
     item.kind || '', item.type || '', item.slot || '', item.baseId || '',
     item.element || '', item.rarity || '', item.color || '', item.tier || '',
     item.coverage || '', item.capacity || '', item.speedBonus || '', item.levelReq || '',
+    coinCount, mirror ? 'M' : '',
   ].join('|');
 }
 
 // Returns an inline <svg> string for the given backpack/equip item instance.
 // Accepts both backpack instances (baseId) and raw shop definitions (id), and
 // for definitions infers `slot` from a 'container'/weapon shape where needed.
-export function iconFor(item) {
+// `opts.mirror` flips the icon horizontally — used when a weapon is held in the
+// off-hand (shield slot), so it reads as gripped in the other hand.
+export function iconFor(item, opts) {
   if (!item) return '';
+  const mirror = !!(opts && opts.mirror);
   // Shop defs carry `id` not `baseId`; normalise so per-item painters can match.
   if (!item.baseId && item.id) item = { ...item, baseId: item.id };
-  const key = cacheKey(item);
+  const key = cacheKey(item, mirror);
   let svg = cache.get(key);
   if (svg) return svg;
   const p = new Painter();
   try { paintItem(p, item); } catch (_) { /* leave whatever drew */ }
-  svg = p.svg();
+  svg = mirror ? p.mirrorSvg() : p.svg();
   cache.set(key, svg);
   return svg;
 }

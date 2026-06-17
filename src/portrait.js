@@ -84,6 +84,7 @@ export function renderCreatureViews(creature, size = 180) {
     const built = buildCreatureModel(creature.family, {
       color: creature.color,
       scale: creature.variantScale || 1,
+      design: creature.design,
     });
     if (!built || !built.group) return null;
     scene.add(built.group);

@@ -53,15 +53,25 @@ html, body {
   backdrop-filter: blur(4px);
 }
 
+/* Controls reminder. Moved out of the bottom-center (where it sat on top of the
+   hotbar) to the top, just under the clock row, and made unobtrusive: it wraps
+   instead of forcing one long line, and fades itself out a few seconds after the
+   game starts (see #hint.faded) so it isn't a permanent banner. */
 #hint {
-  position: absolute; bottom: calc(62px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
-  color: #fff; font-size: 13px; white-space: nowrap;
-  background: rgba(10, 16, 40, .55);
-  padding: 8px 16px; border-radius: 20px;
+  position: absolute; top: calc(52px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  max-width: min(680px, 92vw); text-align: center;
+  color: #e8eefc; font-size: 12px; line-height: 1.5;
+  background: rgba(10, 16, 40, .5);
+  padding: 6px 14px; border-radius: 14px;
   backdrop-filter: blur(4px);
+  transition: opacity .6s; opacity: .92;
 }
+#hint.faded { opacity: 0; }
 
 body.touch #hint { display: none; }
+/* On a narrow window the long hint would wrap into the right panel; keep it
+   clear of the ~188px panel so it never sits behind the minimap. */
+@media (max-width: 520px) { #hint { max-width: calc(100vw - 210px); font-size: 11px; } }
 
 /* Touch controls */
 #controls-ui { position: fixed; inset: 0; pointer-events: none; z-index: 6; }
@@ -89,11 +99,14 @@ body.touch #hint { display: none; }
   border: 2px solid rgba(255,255,255,.4);
   background: rgba(10, 16, 40, .45);
   color: #fff; font-size: 26px;
+  display: flex; align-items: center; justify-content: center;
   pointer-events: auto;
   cursor: pointer;
   backdrop-filter: blur(4px);
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
+.round-btn svg { display: block; }
 
 .round-btn:active { background: rgba(255,255,255,.3); }
 
@@ -103,6 +116,9 @@ body.touch #hint { display: none; }
 
 .touch-only { display: none; }
 body.touch .touch-only { display: block; }
+/* Round action buttons stay flex-centered (their SVG glyph needs centering)
+   even when .touch-only flips them to visible. */
+body.touch .round-btn.touch-only { display: flex; }
 body:not(.touch) #stick-base { display: none !important; }
 
 /* Character creation */
@@ -305,19 +321,38 @@ body:not(.touch) #stick-base { display: none !important; }
   display: flex; flex-direction: column; gap: 8px;
   background: rgba(8,12,30,.55); backdrop-filter: blur(6px);
   transition: transform .25s; overflow-y: auto;
+  /* Let the panel scroll vertically on touch (html/body block all gestures). */
+  touch-action: pan-y; overscroll-behavior: contain;
 }
 .side-right { right: 0; border-left: 1px solid rgba(255,255,255,.12); }
 .side-left  { left: 0;  border-right: 1px solid rgba(255,255,255,.12); }
-.side-right.collapsed { transform: translateX(174px); }
-.side-left.collapsed  { transform: translateX(-174px); }
+/* Collapse by sliding the whole panel off-screen but leaving the toggle tab
+   (18px) poking out. Using the panel's OWN width keeps the tab visible at every
+   breakpoint — a hard-coded px value pushed the narrower mobile panels fully
+   off-screen, so they "disappeared" with no way to reopen them. */
+.side-right.collapsed { transform: translateX(calc(100% - 18px)); }
+.side-left.collapsed  { transform: translateX(calc(-100% + 18px)); }
 .windows { display: flex; flex-direction: column; gap: 8px; }
 #panel-toggle, #panel-toggle-left {
   position: absolute; top: 50%; transform: translateY(-50%);
-  width: 18px; height: 50px; border: none;
+  width: 18px; height: 50px; border: none; z-index: 8;
   background: rgba(8,12,30,.8); color: #fff; cursor: pointer; font-size: 14px;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 #panel-toggle      { left: -2px;  border-radius: 6px 0 0 6px; }
 #panel-toggle-left { right: -2px; border-radius: 0 6px 6px 0; }
+/* When EXPANDED the tab pokes out past the panel's inner edge (the -2px above).
+   When COLLAPSED the panel slides off-screen leaving only an 18px sliver of its
+   OUTER edge visible, so move the tab to that sliver and keep it fully on-screen
+   (right:0 / left:0). Without this the tab sat 2px past the viewport edge and got
+   clipped under body{overflow:hidden}, so the collapsed panel couldn't be
+   reopened — exactly the "panels disappear" bug. */
+.side-right.collapsed #panel-toggle      { left: 0; }
+.side-left.collapsed  #panel-toggle-left { right: 0; }
+/* Fatter, taller tab on touch so the collapsed panel is easy to grab back. Keep
+   the collapsed width <= the 18px sliver so it never overflows the screen edge. */
+body.touch #panel-toggle, body.touch #panel-toggle-left { width: 24px; height: 64px; font-size: 16px; }
+body.touch .side-right.collapsed #panel-toggle, body.touch .side-left.collapsed #panel-toggle-left { width: 18px; }
 /* Tibia-style window: a title bar + body, collapsible and (for bags) closable,
    reorderable by dragging the head. Lives stacked inside #side-panel. */
 .win {
@@ -486,7 +521,7 @@ body:not(.touch) #stick-base { display: none !important; }
   box-shadow: inset 0 0 0 1px rgba(180,150,80,.2),
               inset 0 1px 4px rgba(0,0,0,.5);
 }
-#cap-icon { font-size: 13px; line-height: 1; }
+#cap-icon { font-size: 13px; line-height: 1; display: inline-flex; vertical-align: -2px; color: #d5c382; }
 #cap-text::before { content: "Cap: "; opacity: .7; font-weight: 600; }
 #cap-row .over, #cap-text.over { color: #ff6b5b; }
 
@@ -516,7 +551,18 @@ body:not(.touch) #stick-base { display: none !important; }
   border: 1px solid rgba(255,255,255,.2); border-radius: 14px; padding: 16px;
   box-shadow: 0 14px 50px rgba(0,0,0,.5);
 }
-.ctx-head { font-size: 17px; font-weight: 800; margin-bottom: 8px; }
+.ctx-head { font-size: 17px; font-weight: 800; margin-bottom: 8px; padding-right: 26px; }
+/* Close X pinned top-right of any context dialog (shop, vendor, NPC chat, …). */
+.ctx-x {
+  position: absolute; top: 8px; right: 10px; width: 28px; height: 28px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 8px; cursor: pointer; font-size: 18px; line-height: 1; font-weight: 700;
+}
+.ctx-x:hover { background: rgba(255,80,80,.85); border-color: rgba(255,120,120,.9); }
+/* Per-item stat line under a shop/vendor row. */
+.shop-stats { font-size: 11px; opacity: .8; margin: 2px 0 0 26px; line-height: 1.35; }
+.shop-stats .st { margin-right: 8px; white-space: nowrap; }
 .ctx-sub, .ctx-gold { font-size: 12px; opacity: .85; margin-bottom: 10px; }
 .ctx-body { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
 .ctx-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -532,7 +578,20 @@ body:not(.touch) #stick-base { display: none !important; }
 }
 .shop-row span:first-child { flex: 1; }
 .shop-row .price { color: #f1c40f; }
+.shop-row .price-no { color: #e2685a; }   /* can't afford it */
 .shop-row button { padding: 5px 12px; border-radius: 7px; border: none; background: #2f86c9; color: #fff; cursor: pointer; }
+.shop-row button:disabled { background: #444b54; color: #8b95a0; cursor: not-allowed; opacity: .7; }
+
+/* Mount vendor + mounts panel rows: a richer card with name, description tag. */
+.mount-list { max-height: 56vh; overflow-y: auto; }
+.mount-row { align-items: flex-start; }
+.mount-row .mount-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.mount-row .mount-desc { font-size: 11px; opacity: .7; line-height: 1.35; }
+.mount-row .mount-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: #2ecc71; color: #06210f; font-weight: 700; }
+.mount-row .mount-tag.locked { background: #555c66; color: #c7ced6; font-weight: 600; }
+.mount-row.mount-active { border: 1px solid #2ecc71; background: rgba(46,204,113,.10); }
+.mount-row.mount-locked { opacity: .55; }
+.mount-row.mount-locked .mount-desc { font-style: italic; }
 .depot-cols { flex-direction: row; gap: 10px; }
 .depot-cols > div { flex: 1; }
 .col-h { font-size: 12px; font-weight: 700; opacity: .8; margin-bottom: 6px; }
@@ -600,9 +659,18 @@ body.touch .side-panel { width: 150px; }
 #crosshair::before, #crosshair::after {
   content: ''; position: absolute; background: rgba(255,255,255,.85);
   box-shadow: 0 0 2px rgba(0,0,0,.8);
+  transition: background .08s linear, box-shadow .08s linear;
 }
 #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
 #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+/* A locked target: the cross goes red so the player KNOWS the next hit will land.
+   A soft red glow + a faint ring make it pop without recolouring the creature. */
+#crosshair.on-target::before, #crosshair.on-target::after {
+  background: #ff3b3b;
+  box-shadow: 0 0 6px rgba(255,40,40,.95), 0 0 2px rgba(0,0,0,.7);
+}
+#crosshair.on-target { animation: crosshair-lock .18s ease-out; }
+@keyframes crosshair-lock { 0% { transform: translate(-50%, -50%) scale(1.45); } 100% { transform: translate(-50%, -50%) scale(1); } }
 body.touch #crosshair { display: none !important; }
 
 
@@ -1001,6 +1069,11 @@ body.touch #crosshair { display: none !important; }
 .sp-skillbar { flex: 1; height: 8px; border-radius: 5px; background: rgba(255,255,255,.12); overflow: hidden; }
 .sp-skillbar-fill { display: block; height: 100%; background: linear-gradient(90deg,#5dd6ff,#3a9bdd); }
 .sp-skill.locked { opacity: .5; }
+/* A learned, castable spell row can be dragged onto the hotbar. The grab cursor
+   and a faint dotted handle on hover signal it. */
+.sp-skill.sp-skill-drag { cursor: grab; }
+.sp-skill.sp-skill-drag:hover { border-color: rgba(126,201,255,.5); }
+.sp-skill.sp-skill-drag.drag-source { opacity: .4; }
 /* Per-tier section: a labelled group of skills with its own SP pool. */
 .sp-tier { margin-bottom: 12px; padding: 6px 0 2px; border-top: 1px solid rgba(255,255,255,.1); }
 .sp-tier:first-child { border-top: none; }
