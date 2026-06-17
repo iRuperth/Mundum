@@ -19,11 +19,12 @@ import { ZONES } from './zones.js';
 import { Net } from './net.js';
 import { buildGMPanel, showAnnounceBanner } from './gm.js';
 import { audio } from './audio.js';
-import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore } from './data/items.js';
+import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore, getLight, instanceFromLight } from './data/items.js';
 import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt } from './data/professions.js';
 import { SkillSystem } from './skills.js';
 import { skillIcon } from './skillIcons.js';
 import { Hotbar } from './hotbar.js';
+import { KeyboardPanel } from './keyboardPanel.js';
 import { CharacterStats, weaponTypeToSkill } from './characterStats.js';
 import { SkillPanel } from './skillPanel.js';
 import { Wiki } from './wiki.js';
@@ -213,7 +214,9 @@ function setViewModel(item, level) {
 // hidden whenever a bow or a two-handed weapon is held (the off-hand is taken).
 function setViewShield(shieldItem, weaponItem) {
   if (viewShieldMesh) { viewShield.remove(viewShieldMesh); viewShieldMesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); viewShieldMesh = null; }
-  const blocked = !shieldItem
+  // Only draw the off-hand SHIELD viewmodel for an actual shield (a dual-wielded
+  // off-hand weapon is shown by the third-person model, not here).
+  const blocked = !shieldItem || shieldItem.type !== 'shield'
     || (weaponItem && (weaponItem.type === 'bow' || weaponItem.twoHanded));
   if (blocked) return;
   const color = shieldItem.color || 0x8a5a2b;
@@ -352,6 +355,9 @@ profile.gm = isGMName(profile.name);
 // at the origin (the capital); a player can change it at a Town Hall (residency).
 let homeCity = CITIES.find((c) => c.id === profile.homeCityId) || nearestCity(0, 0);
 const player = new Player(scene, world, profile);
+// The inventory must exist before applyVocationStats()/recomputeCombatStats()
+// run during boot (they read equipped-ring bonuses via inv.skillBonus/equipBonus).
+const inv = new Inventory();
 spawnInCity(homeCity);
 world.update(player.pos.x, player.pos.z, true);
 
@@ -452,7 +458,8 @@ function recomputeCombatStats() {
   const weaponType = player.weapon ? player.weapon.type : null;
   // The Tibia use-skill for the held weapon drives basic-attack damage + miss
   // (read by CombatSystem.attack).
-  player.weaponSkill = charStats ? charStats.weaponSkillLevel(weaponType) : 10;
+  player.weaponSkill = (charStats ? charStats.weaponSkillLevel(weaponType) : 10)
+    + (inv.skillBonus ? inv.skillBonus(weaponTypeToSkill(weaponType)) : 0);   // ring/amulet skill rings
   const base = weaponAttackSpeed(weaponType);
   const dexMul = charStats ? charStats.attackSpeedMul() : 1;
   const speedMul = dexMul * passives.attackSpeedMul;
@@ -484,9 +491,21 @@ function regenVitals(dt) {
   } else if (player.mana >= player.maxMana) {
     regenManaAcc = 0;
   }
+  // Ring/amulet flat per-second regen (Life Ring +N hp/s, Mana Ring +N mana/s).
+  const hpr = inv.equipBonus ? inv.equipBonus('hpRegenPerSec') : 0;
+  const mpr = inv.equipBonus ? inv.equipBonus('manaRegenPerSec') : 0;
+  if (hpr || mpr) {
+    ringRegenAcc += dt;
+    if (ringRegenAcc >= 1) {
+      const secs = Math.floor(ringRegenAcc);
+      if (hpr && player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + secs * hpr);
+      if (mpr && player.mana < player.maxMana) player.mana = Math.min(player.maxMana, player.mana + secs * mpr);
+      ringRegenAcc -= secs;
+    }
+  } else { ringRegenAcc = 0; }
 }
+let ringRegenAcc = 0;
 
-const inv = new Inventory();
 const depot = new DepotStore();
 const questLog = new QuestLog();
 const worldNpcs = new WorldNpcs(scene, world, citiesBuild.interiors);
@@ -725,7 +744,8 @@ addEventListener('keydown', (e) => {
   if (e.code !== 'Escape' || controls.chatting) return;
   if (typeof skillPanel !== 'undefined' && skillPanel && skillPanel.isOpen) { skillPanel.close(); return; }
   if (typeof wiki !== 'undefined' && wiki && wiki.isOpen) { wiki.close(); return; }
-  if (gameUI && gameUI.closeAllWindows && gameUI.closeAllWindows()) return;  // open bags
+  // Backpack/bag windows are intentionally NOT closed by Escape — they stay open
+  // (close them with their own ✕). Only overlays/panels below are Escape-closable.
   if (minimap.expanded) { minimap.toggle(false); return; }
 });
 // M toggles the full-screen map (open if closed, close if open).
@@ -782,9 +802,28 @@ const hotbar = new Hotbar(document.getElementById('hotbar'), {
   },
 });
 
+// MapleStory-style on-screen KEYBOARD: drag skills/potions onto any key, then
+// press that key to use it. Shares the same options + activation as the hotbar.
+const activateEntry = (entry) => {
+  if (!entry) return;
+  if (entry.kind === 'skill') castSkill(entry);
+  else if (entry.kind === 'potion') useHotbarPotion(entry);
+  else if (entry.kind === 'light') toggleTorch();
+};
+const keyboardPanel = new KeyboardPanel({
+  getOptions: () => hotbarOptions(),
+  activate: (entry) => activateEntry(entry),
+  onChange: () => { saveLocal(); },
+});
+
 const controls = new Controls(canvas, ui, {
   onToggleCamera: () => { firstPerson = !firstPerson; introCam = 0; },
-  onHotbarKey: (digit) => { if (state === 'play' && player.alive) hotbar.activateKey(digit); },
+  onHotbarKeyCode: (code) => {
+    if (state !== 'play' || !player.alive) return;
+    // A custom Keyboard-panel bind wins; else fall back to the number-row hotbar.
+    if (keyboardPanel.handleKey(code)) return;
+    hotbar.handleKey(code);
+  },
   onLockChange: (locked) => {
     ui.hint.classList.toggle('hidden', locked);
     // Freeing the mouse re-shows the reminder (and restarts its fade); grabbing
@@ -875,7 +914,9 @@ const combat = new CombatSystem(scene, world, {
     // Shielding (Tibia use-skill) blocks part of the blow — but only when you
     // actually carry a shield (a two-handed weapon means no shield, no block and
     // no training). Defensive buffs reduce damage further.
-    const shield = inv.equip && inv.equip.shield;
+    // A shield can sit in EITHER hand now, so look in both hand slots for it.
+    const shield = inv.equip && ((inv.equip.shield && inv.equip.shield.type === 'shield' && inv.equip.shield)
+      || (inv.equip.weapon && inv.equip.weapon.type === 'shield' && inv.equip.weapon));
     const twoHanded = player.weapon && player.weapon.twoHanded;
     let dmgIn = dmg;
     if (shield && !twoHanded && charStats) {
@@ -910,8 +951,8 @@ const combat = new CombatSystem(scene, world, {
   onLoot: (loot) => {
     if (loot.gold) {
       inv.addGold(loot.gold); player.gold = inv.gold;
-      // Show the haul by DENOMINATION ("22 monedas de bronce"), not a bare number.
-      gameUI.toast(`+${coinLootLabel(loot.gold, getLang())} 💰`, 'loot');
+      // Show the haul as a single mm-coins total ("+5 mm coins"), not by denomination.
+      gameUI.toast(`+${coinLootLabel(loot.gold)} 💰`, 'loot');
       persistProgress();
     }
   },
@@ -1032,6 +1073,13 @@ if (btnWiki) btnWiki.addEventListener('click', (e) => { e.stopPropagation(); tog
 addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyY' && !controls.chatting) toggleWiki(); });
 const btnMounts = document.getElementById('btn-mounts');
 if (btnMounts) btnMounts.addEventListener('click', (e) => { e.stopPropagation(); openMountsPanel(); });
+// Hotkeys: open the MapleStory-style on-screen Keyboard panel — drag powers and
+// potions onto keys. Opens from the ⌨ button or the '\' key.
+const btnHotkeys = document.getElementById('btn-hotkeys');
+if (btnHotkeys) btnHotkeys.addEventListener('click', (e) => { e.stopPropagation(); keyboardPanel.toggle(); });
+addEventListener('keydown', (e) => {
+  if (state === 'play' && e.code === 'Backslash' && !controls.chatting) { e.preventDefault(); keyboardPanel.toggle(); }
+});
 // (Escape-to-close for wiki is handled by the unified Escape handler above.)
 
 document.getElementById('hud-mute').addEventListener('click', (e) => {
@@ -1175,6 +1223,7 @@ async function startGame() {
   loadSave();
 
   giveStarterGear();
+  if (player.level >= 20) upgradeTorchToBright();   // already past 20 on load → bright torch
   recompute();
   gameUI.setName(profile.name);
   onQuestProgress();
@@ -1194,9 +1243,13 @@ async function startGame() {
   ui.hud.classList.remove('hidden');
   ui.controlsUi.classList.remove('hidden');
   panelRefs.sidePanel.classList.remove('hidden');
-  // Left panel: shown (so its pull-out tab is visible) but collapsed/empty by
-  // default — drag windows over to use it.
-  document.getElementById('side-panel-left').classList.remove('hidden');
+  // Left panel: open by default too (same as the right panel). Its pull-out tab
+  // still collapses/expands it, and windows can be dragged over to it.
+  const leftPanel = document.getElementById('side-panel-left');
+  leftPanel.classList.remove('hidden');
+  gameUI._setPanelCollapsed(leftPanel, false);
+  // The floating circular minimap (top-right, outside the panels).
+  document.getElementById('minimap-box').classList.remove('hidden');
   gameUI.openBackpack('main'); // backpack window open by default, Tibia-style
   document.getElementById('chat').classList.remove('hidden');
   if (isTouch) document.getElementById('crosshair').classList.remove('hidden');
@@ -1582,7 +1635,9 @@ function setupChat() {
     if (e.code === 'Tab') e.preventDefault();
     if (e.code === 'Enter') {
       const text = input.value.trim();
-      if (text) { net.sendChat(text); addChatLine(profile.name, text); }
+      // sendChat echoes the line locally (online or offline), so do NOT addChatLine
+      // here too — that printed every message twice.
+      if (text) net.sendChat(text);
       input.value = '';
       input.classList.add('hidden');
       controls.chatting = false;
@@ -1760,7 +1815,9 @@ function castSkill(skill) {
   // Effect strength comes from the SKILL level; Magic Level (use-skill) and any
   // active damage buff scale it further — so a mage's spells clearly out-hit a
   // knight's, matching the user's "magic level raises power" intent.
-  const statMul = charStats.spellPowerMul() * buffMods().damageMul;
+  // Ring/amulet magic-level bonus boosts spell power at the same 1.5%/level rate.
+  const mlRing = inv.equipBonus ? inv.equipBonus('magicLevelBonus') : 0;
+  const statMul = (charStats.spellPowerMul() + mlRing * 0.015) * buffMods().damageMul;
   skillSystem.cast(def, player.pos, player.yaw, skillLv, {
     damageArea: (center, radius, amount) => {
       const hits = combat.damageArea(center, radius, Math.round(amount * statMul));
@@ -1844,10 +1901,14 @@ function useHotbarPotion(entry) {
   doUsePotion(idx);
 }
 
-// What the player can put on the hotbar right now: usable skills + held potions.
+// What the player can put on the hotbar right now: LEARNED skills (≥1 point) +
+// held consumables (potions/fruit) + a carried torch.
 function hotbarOptions() {
   const skills = skillsForLevel(player.profession, player.level)
     .filter((s) => s.kind !== 'passive') // passives apply automatically, never cast
+    // Only skills the player has actually LEARNED (spent a point on) are castable,
+    // so an unlearned power like Energy Bolt never shows up to assign.
+    .filter((s) => charStats && charStats.skillLevel(s.id) >= 1)
     .map((s) => ({
       id: s.id, name: (s.name && (s.name[getLang()] || s.name.es)) || s.id,
       icon: SKILL_ICON[s.kind] || '✨', iconHtml: skillIcon(s), manaCost: s.manaCost || 0,
@@ -1857,17 +1918,56 @@ function hotbarOptions() {
     }));
   const seen = new Set();
   const potions = [];
+  // Consumables: potions AND fruit/food both stack here (anything you "use up").
   const addPotion = (it) => {
     if (it && it.kind === 'potion' && !seen.has(it.baseId)) {
       seen.add(it.baseId);
       potions.push({ id: it.baseId, baseId: it.baseId, name: potionName(it), icon: it.icon || '🧪' });
     }
   };
+  // A carried TORCH can sit on the bar too, to light/snuff it fast. One entry.
+  let torchEntry = null;
+  const addTorch = (it) => {
+    if (it && it.kind === 'light' && !it.passive && !torchEntry) {
+      torchEntry = { id: it.baseId, baseId: it.baseId, name: (typeof it.name === 'string' ? it.name : potionName(it)), icon: it.icon || '🔥', kind: 'light' };
+    }
+  };
+  // Scan the extra (fire) slot for the torch, then the whole backpack.
+  addTorch(inv.equip && inv.equip.extra);
   for (const it of inv.backpack) {
     addPotion(it);
-    if (it && it.contents) for (const inner of it.contents) addPotion(inner);
+    addTorch(it);
+    if (it && it.contents) for (const inner of it.contents) { addPotion(inner); addTorch(inner); }
   }
+  // The torch rides in the consumables list so the keyboard panel and hotbar menu
+  // both offer it without special-casing; its 'light' kind routes to toggleTorch.
+  if (torchEntry) potions.push(torchEntry);
   return { skills, potions };
+}
+
+// Rebuild a saved hotbar entry ({kind,id,baseId}) into a full live entry so it
+// shows its icon and fires correctly after a reload. Skills resolve from the
+// profession tree; potions/lights from the item tables (icon painted lazily).
+function resolveHotbarEntry(saved) {
+  if (!saved) return null;
+  if (saved.kind === 'skill') {
+    const sk = getSkill(saved.id);
+    if (!sk) return null;
+    return {
+      id: sk.id, name: (sk.name && (sk.name[getLang()] || sk.name.es)) || sk.id,
+      icon: SKILL_ICON[sk.kind] || '✨', iconHtml: skillIcon(sk),
+      manaCost: sk.manaCost || 0, cooldown: sk.cooldown || 1, kind: 'skill', skillKind: sk.kind,
+    };
+  }
+  // potion / light: resolve a fresh instance just for its name + icon. The
+  // hotbar's entryIcon() paints potions/lights via iconFor() from kind+baseId, so
+  // no iconHtml is needed here.
+  const item = resolveItem(saved.baseId || saved.id, () => 0.5, player.level, getLang());
+  if (!item) return { kind: saved.kind, id: saved.id, baseId: saved.baseId, name: saved.baseId || '', icon: '🧪' };
+  return {
+    kind: saved.kind, id: item.baseId, baseId: item.baseId,
+    name: potionName(item), icon: item.icon || (saved.kind === 'light' ? '🔥' : '🧪'),
+  };
 }
 
 // A potion's display name handles both string and {es,en} shapes.
@@ -1979,6 +2079,25 @@ function giveStarterGear() {
   }
 }
 
+// At level 20 the plain Torch becomes a Bright Torch. Swap every 'torch' the
+// player holds (the lit fire slot + the backpack + nested bags) for a bright one,
+// keeping it in the same place. Preserves the lit state of the equipped torch.
+function upgradeTorchToBright() {
+  const brightDef = getLight('bright_torch');
+  if (!brightDef) return;
+  let changed = false;
+  const swap = (it) => {
+    if (it && it.kind === 'light' && it.baseId === 'torch') { Object.assign(it, instanceFromLight(brightDef, getLang())); changed = true; return true; }
+    return false;
+  };
+  swap(inv.equip.extra);
+  for (const it of inv.backpack) { swap(it); if (it && it.contents) for (const inner of it.contents) swap(inner); }
+  if (changed) {
+    recomputeLight();
+    gameUI.toast(getLang() === 'en' ? '🔥 Your torch flares into a Bright Torch!' : '🔥 ¡Tu antorcha se vuelve una Antorcha Brillante!', 'levelup');
+  }
+}
+
 function recompute() {
   player.defense = inv.totalDefense();
   player.weapon = inv.weapon();
@@ -1987,8 +2106,13 @@ function recompute() {
 
   recomputeLight();
   equipVisuals.refresh(inv.equip, player.level);
-  setViewModel(inv.equip.weapon, player.level);
-  setViewShield(inv.equip.shield, inv.equip.weapon);
+  // Either hand may hold the weapon now. The first-person viewmodel always shows
+  // the weapon you actually fight with (player.weapon), and the off-hand view
+  // shows whatever sits in the OTHER hand (a shield, or nothing).
+  const heldWeapon = player.weapon;
+  const offHandItem = (inv.equip.weapon && inv.equip.weapon === heldWeapon) ? inv.equip.shield : inv.equip.weapon;
+  setViewModel(heldWeapon, player.level);
+  setViewShield(offHandItem, heldWeapon);
   gameUI.renderAll();
   gameUI.setCapacity(player.level);
   saveLocal();
@@ -2019,6 +2143,9 @@ function gainXp(xp) {
         audio.sfx.levelUp();
       }
     }
+    // At level 20 your humble torch flares into a BRIGHT TORCH — upgrade any
+    // plain torch the player carries (equipped fire slot or in the bag).
+    if (before < 20 && player.level >= 20) upgradeTorchToBright();
     equipVisuals.refresh(inv.equip, player.level);
     // The ambient bots cheer you on — a trickle of "gratz!" over the next few
     // seconds (bots.congratulate staggers them; only on the surface where bots live).
@@ -2997,6 +3124,8 @@ function serializeSave() {
     level: player.level, exp: player.exp, gold: inv.gold,
     equipment: inv.serialize(), depot: depot.serialize(), quests: questLog.serialize(), stats: charStats.serialize(),
     mounts: mounts.serialize(),
+    hotbar: hotbar.serialize(),       // quickslot bar contents (number row)
+    keyboard: keyboardPanel.serialize(), // MapleStory-style key→action binds
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
     // Stamp every local save so, on reload, we can tell whether the (async, often
     // lagging) cloud row is actually fresher than what we last wrote locally.
@@ -3018,6 +3147,8 @@ function applyCloudSave(data) {
   if (data.quests) questLog.load(data.quests);
   if (data.stats) charStats.load(data.stats);
   if (data.mounts) mounts.load(data.mounts);
+  if (data.hotbar) hotbar.load(data.hotbar, resolveHotbarEntry);
+  if (data.keyboard) keyboardPanel.load(data.keyboard, resolveHotbarEntry);
   applyVocationStats(true);
   recompute();
 }
@@ -3038,6 +3169,8 @@ function applyCharacterRow(row) {
   if (row.stats) charStats.load(row.stats);
   if (row.quests) questLog.load(row.quests);
   if (row.mounts) mounts.load(row.mounts);
+  if (row.hotbar) hotbar.load(row.hotbar, resolveHotbarEntry);
+  if (row.keyboard) keyboardPanel.load(row.keyboard, resolveHotbarEntry);
   if (Array.isArray(row.friends)) { friends.clear(); for (const f of row.friends) friends.add(f); }
   applyVocationStats(true);
   if (row.pos && typeof row.pos.x === 'number') {
