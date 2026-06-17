@@ -227,7 +227,28 @@ export function buildCharacter(profile) {
     chestArmor.scale.y = 1 + b * 0.02;
   }
 
+  // While mounted, the hero sits on the saddle instead of walking. Set by the
+  // player when the mount system reports it's riding (see player.update).
+  let seated = false;
+  function setSeated(on) { seated = !!on; }
+
   function animate(phase, intensity, grounded, dt = 0) {
+    // SEATED (mounted) pose wins over everything: a static straddle, no gait. The
+    // model faces +Z; legL sits at -X, legR at +X. rotation.x<0 swings a leg
+    // FORWARD (+Z), so a small negative lifts the thighs; rotation.z splays the
+    // feet OUTWARD down the mount's flanks (legL needs -z, legR needs +z). Arms
+    // come forward as if holding the reins.
+    if (seated) {
+      breathe(dt, true);
+      legL.pivot.rotation.set(-0.95, 0, -0.42);
+      legR.pivot.rotation.set(-0.95, 0, 0.42);
+      armL.pivot.rotation.set(-0.7, 0, 0.18);
+      armR.pivot.rotation.set(-0.7, 0, -0.18);
+      armL.pivot.rotation.y = 0;
+      armR.pivot.rotation.y = 0;
+      if (cape) { cape.rotation.x = -0.2; cape.rotation.z = 0; }
+      return;
+    }
     const sw = Math.sin(phase) * 0.75 * Math.min(1, intensity);
     // GM cape: drift backward and sway side to side as the hero moves; settle
     // upright when standing still.
@@ -346,6 +367,7 @@ export function buildCharacter(profile) {
     mats,
     setColors,
     animate,
+    setSeated,
     triggerAttack,
     updateAttack,
     attackProgress,

@@ -220,18 +220,24 @@ export class Auth {
       const slot = f.slot != null ? clampSlot(f.slot) : firstFreeSlot(existing);
       if (slot == null) return { ok: false, error: 'no free slot' };
 
-      const row = characterRow(user.id, slot, f);
-      const { data, error } = await this.client
-        .from('characters')
-        .insert(row)
-        .select()
-        .single();
-      // A unique-violation on the name index means someone took it concurrently.
-      if (error) {
+      // Insert, dropping any optional column the DB doesn't have (same resilience
+      // as saveCharacter) so a schema lagging behind the code can't block account
+      // creation outright.
+      let attempt = characterRow(user.id, slot, f);
+      for (let i = 0; i < 8; i++) {
+        const { data, error } = await this.client
+          .from('characters')
+          .insert(attempt)
+          .select()
+          .single();
+        if (!error) return { ok: true, character: unpackLook(data) };
+        const missing = columnNotFound(error);
+        if (missing && missing in attempt) { delete attempt[missing]; continue; }
+        // A unique-violation on the name index means someone took it concurrently.
         const taken = /duplicate key|unique/i.test(error.message || '');
         return { ok: false, error: taken ? 'name taken' : error.message };
       }
-      return { ok: true, character: unpackLook(data) };
+      return { ok: false, error: 'too many missing columns' };
     } catch (err) {
       return { ok: false, error: errMsg(err) };
     }
@@ -301,20 +307,50 @@ export class Auth {
       if (s.stats != null) row.stats = s.stats;
       if (s.quests != null) row.quests = s.quests;
       if (s.friends != null) row.friends = s.friends;
+      // Owned/active mounts. Like `friends`, this is an OPTIONAL column (schema_v4);
+      // if the DB lacks it the resilient retry below strips it and the rest still
+      // saves. Local storage keeps it regardless. See supabase/ADD_mounts_column.sql.
+      if (s.mounts != null) row.mounts = s.mounts;
       if (s.pos != null) row.pos = s.pos;
       else if (s.x != null) row.pos = { x: s.x, y: s.y, z: s.z };
 
-      const { error } = await this.client
-        .from('characters')
-        .update(row)
-        .eq('id', id)
-        .eq('user_id', user.id);
-      if (error) return { ok: false, error: error.message };
-      return { ok: true };
+      // Resilient write: if the project's DB is missing an OPTIONAL column (e.g.
+      // `friends`, added by schema_v3), PostgREST rejects the WHOLE update with
+      // PGRST204 ("Could not find the 'X' column"). That silently dropped every
+      // cloud save — gold/exp/items never persisted across sessions. So when a
+      // column-not-found error names a column, strip it and retry, instead of
+      // losing the entire save over one missing column.
+      let attempt = { ...row };
+      for (let i = 0; i < 8; i++) {
+        const { error } = await this.client
+          .from('characters')
+          .update(attempt)
+          .eq('id', id)
+          .eq('user_id', user.id);
+        if (!error) return { ok: true };
+        const missing = columnNotFound(error);
+        if (missing && missing in attempt) { delete attempt[missing]; continue; }
+        return { ok: false, error: error.message };
+      }
+      return { ok: false, error: 'too many missing columns' };
     } catch (err) {
       return { ok: false, error: errMsg(err) };
     }
   }
+}
+
+// If a Supabase/PostgREST error means "this column doesn't exist", return the
+// column name so the caller can drop it and retry. Matches both the schema-cache
+// message ("Could not find the 'friends' column of 'characters'") and the raw
+// Postgres 42703 ("column characters.friends does not exist").
+function columnNotFound(error) {
+  if (!error) return null;
+  const code = error.code || '';
+  const msg = error.message || '';
+  if (code !== 'PGRST204' && code !== '42703' && !/find the '.*' column|column .* does not exist/i.test(msg)) return null;
+  let m = msg.match(/find the '([^']+)' column/i);
+  if (!m) m = msg.match(/column (?:[\w.]*\.)?["']?([a-z_][a-z0-9_]*)["']?\s+does not exist/i);
+  return m ? m[1] : null;
 }
 
 // Lowest slot index in 0..MAX-1 not yet taken, or null when full.

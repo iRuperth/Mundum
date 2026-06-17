@@ -1,5 +1,6 @@
 import { getWeapon, getArmor, getContainer, getPotion, instanceFromPotion, instanceFromCoin, rollWeaponInstance, RARITY, COINS, getCoin, getLight, instanceFromLight } from './data/items.js';
 import { getTrophy, instanceFromTrophy } from './data/trophies.js';
+import { getMaterial, instanceFromMaterial, genericMaterial } from './data/materials.js';
 
 export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra'];
 const BASE_CAPACITY = 400;
@@ -10,9 +11,11 @@ function norm(id) {
 }
 
 // Items that merge into a single stack (by baseId) instead of taking a cell each.
-// Coins and consumables (potions/fruit) stack; gear stays one-per-cell.
+// Coins, consumables (potions/fruit), trophies and crafting materials stack so a
+// grind doesn't flood the bag with 30 separate silk cells; gear stays one-per-cell.
 function isStackable(item) {
-  return !!item && (item.kind === 'coin' || item.kind === 'potion');
+  return !!item && (item.kind === 'coin' || item.kind === 'potion'
+    || item.kind === 'trophy' || item.kind === 'material');
 }
 
 // Effective weight of an item: a stack weighs per-unit × count, and a container
@@ -28,6 +31,8 @@ export function itemWeight(item) {
 
 // Resolve a loot itemId leniently against weapons, armors, containers, potions.
 export function resolveItem(itemId, rng, level, lang) {
+  // `norm` turns dashes into underscores, so a loot id authored as 'iron-sword'
+  // resolves to the real 'iron_sword' gear (those used to silently never drop).
   const id = norm(itemId);
   if (id === 'gold') return null;
   if (getWeapon(id)) return rollWeaponInstance(id, rng || (() => 0.5));
@@ -43,7 +48,13 @@ export function resolveItem(itemId, rng, level, lang) {
   if (coin) return instanceFromCoin(coin, 1, lang || 'es');
   const trophy = getTrophy(id);
   if (trophy) return instanceFromTrophy(trophy, lang || 'es');
-  return null;
+  // Crafting/sellable materials (silk, hides, scales, essences…). Looked up by
+  // the original id (with dashes) so 'spider-leg' etc. now actually drop.
+  const material = getMaterial(itemId) || getMaterial(id);
+  if (material) return instanceFromMaterial(material, lang || 'es');
+  // Last resort: any other authored loot id (e.g. unfinished gear names) drops as
+  // a generic sellable material instead of vanishing, so the loot is never lost.
+  return genericMaterial(itemId, level || 1, lang || 'es');
 }
 
 export function instanceFromArmor(a) {
@@ -71,14 +82,29 @@ export function instanceFromContainer(c) {
   };
 }
 
+const WEAPON_TYPES = ['sword', 'axe', 'mace', 'lance', 'bow', 'wand'];
+function isWeapon(item) {
+  return !!item && (item.type === 'weapon' || WEAPON_TYPES.includes(item.type));
+}
+
 function slotForItem(item) {
   if (!item) return null;
   if (item.type === 'armor') return item.slot;
   if (item.type === 'container') return 'bag';
-  if (item.type === 'weapon' || ['sword', 'axe', 'mace', 'lance', 'bow', 'wand'].includes(item.type)) return 'weapon';
+  if (isWeapon(item)) return 'weapon';
   if (item.type === 'shield') return 'shield';
   if (item.kind === 'light') return 'extra'; // torches/lanterns go in the extra slot
   return null;
+}
+
+// Whether `item` may be placed in the given paperdoll `slot`. Besides its natural
+// slot, a ONE-HANDED weapon may also go in the off-hand (shield) slot, so you can
+// hold a blade/wand/bow in the other hand (it renders mirrored). Two-handed
+// weapons can't go off-hand.
+function canGoInSlot(item, slot) {
+  if (slotForItem(item) === slot) return true;
+  if (slot === 'shield' && isWeapon(item) && !item.twoHanded) return true;
+  return false;
 }
 
 // Whether a vocation may equip an item. Items carry `vocation`: 'knight' |
@@ -220,26 +246,66 @@ export class Inventory {
     return this.carriedWeight() + itemWeight(item) <= this.capacity(level);
   }
 
-  // Dry-run addToBackpack: 'ok' | 'full' | 'heavy' without mutating anything, so
-  // a ground pickup can be left untouched when it wouldn't fit.
-  wouldAccept(item, level) {
-    if (!this.canCarry(item, level)) return 'heavy';
-    if (isStackable(item) && this.backpack.some((it) => it.kind === item.kind && it.baseId === item.baseId)) return 'ok';
-    if (this.backpack.length >= this.bagCapacity) return 'full';
-    return 'ok';
+  // The nested containers carried in the main backpack (bags inside the bag),
+  // newest first — used to overflow loot into them when the top level is full.
+  _nestedBags() {
+    return this.backpack.filter((it) => it && it.type === 'container' && Array.isArray(it.contents));
   }
 
-  // Add to backpack. Returns 'ok' | 'full' | 'heavy'. Stackable items (coins)
-  // merge into an existing stack of the same baseId instead of taking a new cell.
+  // Is there ANY free cell for `item` — top level OR inside a nested bag? Lets a
+  // stackable merge anywhere, or a fresh cell anywhere. (Capacity-only; weight is
+  // checked separately by canCarry.)
+  _hasSlotAnywhere(item) {
+    if (isStackable(item)) {
+      if (this.backpack.some((it) => it.kind === item.kind && it.baseId === item.baseId)) return true;
+      for (const bag of this._nestedBags()) {
+        if (bag.contents.some((it) => it.kind === item.kind && it.baseId === item.baseId)) return true;
+      }
+    }
+    if (this.backpack.length < this.bagCapacity) return true;
+    // A nested bag can't itself hold another bag, so only non-containers overflow.
+    if (item.type !== 'container') {
+      for (const bag of this._nestedBags()) if (bag.contents.length < (bag.capacity || 0)) return true;
+    }
+    return false;
+  }
+
+  // Dry-run addToBackpack: 'ok' | 'full' | 'heavy' without mutating anything, so
+  // a ground pickup can be left untouched when it wouldn't fit. Considers nested
+  // bags too, so "the backpack is full" only when every carried bag is also full.
+  wouldAccept(item, level) {
+    if (!this.canCarry(item, level)) return 'heavy';
+    return this._hasSlotAnywhere(item) ? 'ok' : 'full';
+  }
+
+  // Add to backpack. Returns 'ok' | 'full' | 'heavy'. Stackable items merge into
+  // an existing stack of the same baseId. When the TOP level is full, the item
+  // overflows into the first nested bag that has room — so carrying a backpack
+  // inside a backpack inside a backpack really does give you that much space.
   addToBackpack(item, level) {
     if (!this.canCarry(item, level)) return 'heavy';
+    // 1) Merge into an existing stack, top level first, then any nested bag.
     if (isStackable(item)) {
-      const stack = this.backpack.find((it) => it.kind === item.kind && it.baseId === item.baseId);
-      if (stack) { stack.count = (stack.count || 1) + (item.count || 1); return 'ok'; }
+      const top = this.backpack.find((it) => it.kind === item.kind && it.baseId === item.baseId);
+      if (top) { top.count = (top.count || 1) + (item.count || 1); return 'ok'; }
+      for (const bag of this._nestedBags()) {
+        const s = bag.contents.find((it) => it.kind === item.kind && it.baseId === item.baseId);
+        if (s) { s.count = (s.count || 1) + (item.count || 1); return 'ok'; }
+      }
     }
-    if (this.backpack.length >= this.bagCapacity) return 'full';
-    this.backpack.unshift(item); // newest item shows up first in the backpack
-    return 'ok';
+    // 2) A free cell at the top level.
+    if (this.backpack.length < this.bagCapacity) {
+      this.backpack.unshift(item); // newest item shows up first in the backpack
+      return 'ok';
+    }
+    // 3) Top level full → overflow into the first nested bag with a free cell.
+    //    (A container itself never nests, so only non-containers overflow.)
+    if (item.type !== 'container') {
+      for (const bag of this._nestedBags()) {
+        if (bag.contents.length < (bag.capacity || 0)) { bag.contents.unshift(item); return 'ok'; }
+      }
+    }
+    return 'full';
   }
 
   removeFromBackpack(index) {
@@ -309,8 +375,16 @@ export class Inventory {
     if (toEquip) {
       const slot = to.c.slice(6);
       if (fromEquip) return { ok: false, reason: 'noslot' }; // slot→slot unsupported
-      if (slotForItem(item) !== slot) return { ok: false, reason: 'noslot' };
-      const r = this.equipFromBackpack(from.i, level); // only valid from main backpack
+      // The EXTRA slot is a universal utility pocket: it takes ANYTHING (a torch
+      // to light, but also coins, a spare bag/backpack, a potion…), not just its
+      // natural slot type — so the player can stash whatever they want there.
+      if (slot === 'extra') {
+        if (from.c !== 'main') return { ok: false, reason: 'noslot' }; // only from main bag
+        const r = this.equipToExtra(from.i);
+        return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+      }
+      if (!canGoInSlot(item, slot)) return { ok: false, reason: 'noslot' };
+      const r = this.equipFromBackpack(from.i, level, slot); // only valid from main backpack
       return r.ok ? { ok: true } : { ok: false, reason: r.reason, need: r.need };
     }
     if (fromEquip) {
@@ -373,11 +447,13 @@ export class Inventory {
     return { ok: true };
   }
 
-  // Equip an item from the backpack index. Returns { ok, reason }.
-  equipFromBackpack(index, level) {
+  // Equip an item from the backpack index. `targetSlot` optionally forces which
+  // paperdoll slot to use (e.g. a one-handed weapon into the off-hand 'shield'
+  // slot); when omitted it goes to the item's natural slot. Returns { ok, reason }.
+  equipFromBackpack(index, level, targetSlot) {
     const item = this.backpack[index];
     if (!item) return { ok: false, reason: 'none' };
-    const slot = slotForItem(item);
+    const slot = (targetSlot && canGoInSlot(item, targetSlot)) ? targetSlot : slotForItem(item);
     if (!slot) return { ok: false, reason: 'noslot' };
     if ((item.levelReq || 1) > level) return { ok: false, reason: 'level', need: item.levelReq };
     // Vocation gate: you can carry/trade any item but only equip your class's.
@@ -402,6 +478,19 @@ export class Inventory {
       this.equip.weapon = null;
     }
     return { ok: true, slot };
+  }
+
+  // Put ANY backpack item into the universal EXTRA slot (the torch pocket, but it
+  // accepts coins, bags, potions, anything). No level/vocation gate — it's just a
+  // stash slot. Whatever was there swaps back into the backpack.
+  equipToExtra(index) {
+    const item = this.backpack[index];
+    if (!item) return { ok: false, reason: 'none' };
+    this.backpack.splice(index, 1);
+    const prev = this.equip.extra;
+    this.equip.extra = item;
+    if (prev) this.backpack.unshift(prev);
+    return { ok: true, slot: 'extra' };
   }
 
   unequip(slot) {
@@ -448,6 +537,20 @@ export class Inventory {
     };
     for (const s of EQUIP_SLOTS) fixIcon(this.equip[s]);
     for (const it of this.backpack) { fixIcon(it); if (it && it.contents) it.contents.forEach(fixIcon); }
+    // Migration: older saves equipped a small 8-slot "bag" as the main container
+    // (it was labelled a backpack but was really a pouch). Promote it to a proper
+    // 20-slot brown backpack and tuck a brown bag inside, preserving every item.
+    // The equipped container's items live in `this.backpack` (top-level), so they
+    // ride along untouched when we swap the shell.
+    const eb = this.equip.bag;
+    if (eb && eb.type === 'container' && (eb.capacity || 0) < 20
+        && /(^|_)bag$/.test(eb.baseId || '') && !/backpack/.test(eb.baseId || '')) {
+      this.equip.bag = instanceFromContainer(getContainer('backpack'));
+      // Hand the player back a bag inside, like a fresh character gets — but only
+      // if they don't already have a spare container carried, to avoid piling up.
+      const hasCarriedBag = this.backpack.some((it) => it && it.type === 'container');
+      if (!hasCarriedBag) this.backpack.push(instanceFromContainer(getContainer('bag')));
+    }
     // Consolidate potions saved before they stacked: give each a count and merge
     // same-baseId duplicates within each container into a single stack.
     const mergePotions = (arr) => {

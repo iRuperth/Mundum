@@ -2,13 +2,18 @@
 // joystick, right half = drag to look).
 const LOOK_MOUSE = 0.0024;
 const LOOK_TOUCH = 0.005;
-const STICK_RADIUS = 48;
+const STICK_RADIUS = 52;
+// Below this fraction of the stick radius we treat the joystick as centred, so a
+// resting thumb doesn't make the character creep (a common "feels stuck/drifty"
+// complaint on phones).
+const STICK_DEADZONE = 0.16;
 
 export class Controls {
   constructor(canvas, ui, opts) {
     this.canvas = canvas;
     this.ui = ui;
     this.isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+    this.opts = opts;
     this.enabled = false;
 
     this.keys = new Set();
@@ -39,6 +44,14 @@ export class Controls {
       if (e.code === 'KeyC' && !e.repeat) opts.onToggleCamera();
       if (e.code === 'KeyR' && !e.repeat) opts.onToggleRange?.();
       if (e.code === 'KeyF' && !e.repeat) this._lightToggleQueued = true;
+      // G mounts / dismounts the active mount (M is the map, so G is the mount key).
+      if (e.code === 'KeyG' && !e.repeat) opts.onToggleMount?.();
+      // Tab (or M) frees / re-grabs the mouse, like Escape but without the
+      // browser's "press Esc to exit" overlay — a clearer way to reach the UI.
+      if ((e.code === 'Tab' || e.code === 'KeyM') && !e.repeat) {
+        e.preventDefault();
+        opts.onToggleMouse?.();
+      }
       // Number keys 1-9 and 0 trigger the matching hotbar slot.
       if (!e.repeat && /^(Digit|Numpad)[0-9]$/.test(e.code)) {
         opts.onHotbarKey?.(parseInt(e.code.slice(-1), 10));
@@ -75,7 +88,9 @@ export class Controls {
     });
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (!this.enabled || e.pointerType !== 'touch') return;
+      // In touch mode, route ANY pointer (real touch, or a mouse when mobile
+      // mode is forced on a desktop browser) through the joystick / look-drag.
+      if (!this.enabled || !this.isTouch) return;
       if (e.clientX < innerWidth * 0.45 && this._stick.id === null) {
         this._stick.id = e.pointerId;
         this._stick.ox = e.clientX;
@@ -146,6 +161,16 @@ export class Controls {
     });
   }
 
+  // Switch input routing between touch and desktop at runtime (the "mobile mode"
+  // toggle). Clears any half-finished joystick/look gesture so nothing stays
+  // pinned to a finger that is no longer down.
+  setTouch(on) {
+    this.isTouch = on;
+    this._stick.id = null; this._stick.x = 0; this._stick.y = 0;
+    this._lookPtr.id = null;
+    if (this.ui.stickBase) this.ui.stickBase.style.display = 'none';
+  }
+
   // The on-screen touch attack button always attacks, regardless of the
   // camera-mode mouse mapping. Kept separate from the raw mouse buttons.
   consumeAttack() {
@@ -187,15 +212,24 @@ export class Controls {
     if (k.has('KeyS') || k.has('ArrowDown')) z -= 1;
     if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
     if (k.has('KeyD') || k.has('ArrowRight')) x += 1;
-    x += this._stick.x;
-    z += this._stick.y;
+    // Apply a deadzone + rescale so the joystick gives smooth full-range control
+    // past the deadzone instead of an abrupt jump, and never drifts near centre.
+    let sx = this._stick.x, sy = this._stick.y;
+    const sm = Math.hypot(sx, sy);
+    if (sm < STICK_DEADZONE) { sx = 0; sy = 0; }
+    else {
+      const scaled = (sm - STICK_DEADZONE) / (1 - STICK_DEADZONE) / sm;
+      sx *= scaled; sy *= scaled;
+    }
+    x += sx;
+    z += sy;
     const len = Math.hypot(x, z);
     if (len > 1) { x /= len; z /= len; }
     this.move.x = x;
     this.move.z = z;
     // on touch, pushing the joystick to its edge means sprint
-    const stickMag = Math.hypot(this._stick.x, this._stick.y);
-    this.sprint = k.has('ShiftLeft') || k.has('ShiftRight') || stickMag > 0.94;
+    const stickMag = Math.hypot(sx, sy);
+    this.sprint = k.has('ShiftLeft') || k.has('ShiftRight') || stickMag > 0.92;
   }
 
   consumeLook() {
