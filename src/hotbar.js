@@ -30,6 +30,7 @@ export class Hotbar {
     for (let i = 0; i < SLOTS; i++) {
       const cell = document.createElement('div');
       cell.className = 'hb-slot empty';
+      cell.style.touchAction = 'none'; // let the drag-out gesture own the pointer
       const key = document.createElement('span');
       key.className = 'hb-key';
       key.textContent = i === 9 ? '0' : String(i + 1);
@@ -41,6 +42,7 @@ export class Hotbar {
       cell.addEventListener('click', () => this.activate(i));
       cell.addEventListener('contextmenu', (e) => { e.preventDefault(); this.openAssign(i, e); });
       this._bindLongPress(cell, i);
+      this._bindDragOut(cell, i);
 
       // Accept items dragged from the backpack (desktop HTML5 drag).
       cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drop-hover'); });
@@ -66,6 +68,51 @@ export class Hotbar {
     cell.addEventListener('touchstart', start, { passive: true });
     cell.addEventListener('touchend', cancel);
     cell.addEventListener('touchmove', cancel);
+  }
+
+  // Drag a filled slot OFF the bar to remove it (mouse + touch). A small ghost
+  // follows the pointer; releasing anywhere outside #hotbar clears the slot. A
+  // tap that never crosses the drag threshold still activates the slot (the
+  // click handler is left untouched). This is the drag counterpart to the
+  // assign menu's "empty" option, so spells can be removed by dragging too.
+  _bindDragOut(cell, i) {
+    cell.addEventListener('pointerdown', (e) => {
+      if ((e.button !== undefined && e.button !== 0) || !this.slots[i]) return;
+      const startX = e.clientX, startY = e.clientY, pointerId = e.pointerId;
+      let ghost = null, dragging = false;
+      const onMove = (ev) => {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
+          dragging = true;
+          try { cell.setPointerCapture(pointerId); } catch (_) { /* ignore */ }
+          ghost = document.createElement('div');
+          ghost.className = 'drag-ghost shown';
+          ghost.innerHTML = entryIcon(this.slots[i]);
+          document.body.appendChild(ghost);
+          cell.classList.add('drag-source');
+        }
+        if (ghost) ghost.style.transform = `translate3d(${ev.clientX}px, ${ev.clientY}px, 0) translate(-50%, -50%)`;
+      };
+      const onUp = (ev) => {
+        cell.removeEventListener('pointermove', onMove);
+        cell.removeEventListener('pointerup', onUp);
+        cell.removeEventListener('pointercancel', onUp);
+        try { cell.releasePointerCapture(pointerId); } catch (_) { /* ignore */ }
+        if (ghost) ghost.remove();
+        cell.classList.remove('drag-source');
+        if (!dragging) return;
+        // Suppress the click that follows a real drag so removal doesn't also fire the slot.
+        const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+        cell.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => cell.removeEventListener('click', swallow, { capture: true }), 0);
+        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+        // Dropped back on the bar (any slot) → keep; dropped off the bar → remove.
+        if (!over || !over.closest || !over.closest('#hotbar')) this.setSlot(i, null);
+      };
+      cell.addEventListener('pointermove', onMove);
+      cell.addEventListener('pointerup', onUp);
+      cell.addEventListener('pointercancel', onUp);
+    });
   }
 
   setSlot(i, entry) { this.slots[i] = entry; this.render(); }

@@ -20,11 +20,18 @@ function rarityClass(item) {
   return 'rar-normal';
 }
 
-function itemIcon(item) {
+// Weapon types that read as "handed" — a blade/bow/staff held in a hand. When
+// one of these sits in the off-hand (shield) slot, its icon is mirrored so it
+// looks gripped in the other hand (the user's request).
+const HANDED_WEAPON_TYPES = new Set(['sword', 'axe', 'mace', 'lance', 'bow', 'wand']);
+
+function itemIcon(item, slot) {
   // Procedural pixel-art SVG, unique per item (type/tier/element/rarity/colour).
   // Returns an inline <svg> string; safe to drop into innerHTML like the old
   // emoji glyphs, so drag-drop, count badges and tooltips keep working.
-  return iconFor(item);
+  // A handed weapon in the off-hand (shield) slot is mirrored.
+  const mirror = slot === 'shield' && item && HANDED_WEAPON_TYPES.has(item.type);
+  return iconFor(item, mirror ? { mirror: true } : undefined);
 }
 
 // Plain-text glyph for contexts that can't render SVG (e.g. the drag ghost uses
@@ -36,21 +43,16 @@ function itemGlyph(item) {
   return TYPE_ICON[item.type] || '❔';
 }
 
-// Inner HTML for a backpack/window cell. Coins render as a little pile of discs
-// tinted by tier with a count badge; everything else uses its icon glyph.
+// Inner HTML for a backpack/window cell. The procedural SVG icon (iconFor)
+// carries the look for everything, INCLUDING coins — whose icon is the Tibia
+// pyramid pile (1–5 facing, 6–15 stacked) with the "mm" stamp. Stacks add a
+// count badge.
 function cellInner(item) {
-  if (item.kind === 'coin') {
-    const hex = '#' + (item.color || 0xcd7f32).toString(16).padStart(6, '0');
-    const n = item.count || 1;
-    const show = n > 999 ? Math.floor(n / 1000) + 'k' : n;
-    return `<span class="coin-pile cell" style="--coin:${hex}"><i></i><i></i><i></i></span>` +
-           `<span class="cell-count">${show}</span>`;
-  }
   // The SVG icon carries its own colours, so the cell wrapper no longer tints it.
   const icon = `<span class="ico">${itemIcon(item)}</span>`;
-  // Stacked consumables (potions/fruit) show a count badge, like coins.
+  // Coins + stacked consumables/materials/trophies show a count badge.
   const n = item.count || 1;
-  if (item.kind === 'potion' && n > 1) {
+  if (item.kind === 'coin' || (n > 1 && (item.kind === 'potion' || item.kind === 'material' || item.kind === 'trophy'))) {
     const show = n > 999 ? Math.floor(n / 1000) + 'k' : n;
     return icon + `<span class="cell-count">${show}</span>`;
   }
@@ -152,7 +154,7 @@ export class UI {
       el.classList.remove('rar-normal', 'rar-elite', 'rar-legendary', 'filled');
       if (item) {
         el.classList.add('filled', rarityClass(item));
-        el.innerHTML = `<span class="ico">${itemIcon(item)}</span>`;
+        el.innerHTML = `<span class="ico">${itemIcon(item, slot)}</span>`;
       } else {
         el.innerHTML = `<span class="ph">${slotPlaceholderIcon(slot)}</span>`;
       }
@@ -424,7 +426,7 @@ export class UI {
         actions.push({ label: '🎒 ' + this.inv.backpack[bagIdx].name, fn: () => this.hooks.moveIntoBag(index, bagIdx) });
       }
     }
-    actions.push({ label: t('drop'), fn: () => this.hooks.dropItem(index, bagIndex) });
+    actions.push({ label: t('drop'), fn: () => this._dropWithPrompt(item, index, bagIndex) });
     this.openContext(item, actions);
   }
 
@@ -443,7 +445,7 @@ export class UI {
       if (item.count >= 100 && (item.tier || 0) < 4) {
         actions.push({ label: '🔼 ' + t('convertCoin'), fn: () => { this.hooks.convertCoin(item.baseId); this.renderAll(); } });
       }
-      actions.push({ label: t('drop'), fn: () => this.hooks.dropItem(i) });
+      actions.push({ label: t('drop'), fn: () => this._dropWithPrompt(item, i) });
       this.openContext(item, actions);
       return;
     }
@@ -453,7 +455,7 @@ export class UI {
       : { label: t('equip'), fn: () => this.hooks.equip(i) };
     const actions = [primary];
     if (item.kind === 'potion') actions.push({ label: '⌨ ' + t('toHotbar'), fn: () => this.hooks.assignHotbar(item) });
-    actions.push({ label: t('drop'), fn: () => this.hooks.dropItem(i) });
+    actions.push({ label: t('drop'), fn: () => this._dropWithPrompt(item, i) });
     this.openContext(item, actions);
   }
 
@@ -509,6 +511,75 @@ export class UI {
     this._bindDrag(el, () => {
       const item = this.inv.equip[slot];
       return item ? { item, from: { c: 'equip:' + slot, i: 0 } } : null;
+    });
+  }
+
+  // Make a Spells-window row draggable onto the hotbar. Spells are no longer
+  // auto-placed — the player drags the ones they want onto a slot. Reuses the
+  // same pointer-drag ghost/hit-test as items, but the payload is a hotbar
+  // "skill" entry and the only meaningful drop target is a hotbar slot.
+  // `getSpell()` returns the entry to place (read at drag-start) or null.
+  makeSpellDraggable(el, getSpell) {
+    el.style.touchAction = 'none';
+    el.style.userSelect = 'none';
+    el.classList.add('spell-draggable');
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      // Don't start a drag when the press lands on an interactive child (the "+"
+      // spend button) — let that button get its own click. Otherwise touch jitter
+      // would turn every "+" tap into a drag and the post-drag click-swallow would
+      // eat the spend.
+      if (e.target.closest('button, input, .sp-plus')) return;
+      const spell = getSpell();
+      if (!spell) return;
+      if (document.pointerLockElement) document.exitPointerLock();
+      const startX = e.clientX, startY = e.clientY, pointerId = e.pointerId;
+      let ghost = null, dragging = false, gx = e.clientX, gy = e.clientY;
+      try { el.setPointerCapture(pointerId); } catch (_) { /* ignore */ }
+      const clearHovers = () => document.querySelectorAll('.drop-hover').forEach((s) => s.classList.remove('drop-hover'));
+      const placeGhost = () => { if (ghost) ghost.style.transform = `translate3d(${gx}px, ${gy}px, 0) translate(-50%, -50%)`; };
+      // Larger threshold on touch (finger jitter) than mouse, so a tap never
+      // accidentally becomes a drag.
+      const DRAG_PX = (e.pointerType === 'touch') ? 12 : 5;
+      const onMove = (ev) => {
+        gx = ev.clientX; gy = ev.clientY;
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_PX) return;
+          dragging = true;
+          ghost = document.createElement('div');
+          ghost.className = 'drag-ghost';
+          ghost.innerHTML = spell.iconHtml || spell.icon || '';
+          document.body.appendChild(ghost);
+          el.classList.add('drag-source');
+          placeGhost();
+          requestAnimationFrame(() => ghost && ghost.classList.add('shown'));
+        }
+        placeGhost();
+        clearHovers();
+        const tgt = this._dropTargetUnder(document.elementFromPoint(ev.clientX, ev.clientY));
+        if (tgt.kind === 'hotbar' && tgt.el) tgt.el.classList.add('drop-hover');
+      };
+      const onUp = (ev) => {
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+        el.removeEventListener('pointercancel', onUp);
+        try { el.releasePointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
+        clearHovers();
+        if (dragging) {
+          // Swallow only a click on the row itself (not a child button, which we
+          // never started a drag from anyway).
+          const swallow = (ce) => { if (!ce.target.closest('button, input, .sp-plus')) { ce.stopPropagation(); ce.preventDefault(); } };
+          el.addEventListener('click', swallow, { capture: true, once: true });
+          setTimeout(() => el.removeEventListener('click', swallow, { capture: true }), 0);
+          const tgt = this._dropTargetUnder(document.elementFromPoint(ev.clientX, ev.clientY));
+          if (tgt.kind === 'hotbar' && this.hooks.assignSpellToSlot) this.hooks.assignSpellToSlot(tgt.idx, spell);
+        }
+        if (ghost) ghost.remove();
+        el.classList.remove('drag-source');
+      };
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointercancel', onUp);
     });
   }
 
@@ -630,7 +701,7 @@ export class UI {
     }
     if (tgt.kind === 'world' && this.hooks.dropItem) {
       const bagRef = from.c === 'main' ? undefined : from.c;
-      this.hooks.dropItem(from.i, bagRef);
+      this._dropWithPrompt(item, from.i, bagRef);
       return;
     }
     if (tgt.kind === 'equip') {
@@ -659,10 +730,10 @@ export class UI {
 
   // Ask how many of a stack to move, then call onConfirm(n). A slider + number
   // input default to the whole stack; confirming moves that many.
-  _promptSplit(item, onConfirm) {
+  _promptSplit(item, onConfirm, title) {
     const max = item.count || 1;
     const card = this.refs.contextCard;
-    card.innerHTML = `<div class="ctx-head">${t('split') || 'Split'}</div>
+    card.innerHTML = `<div class="ctx-head">${title || t('split') || 'Split'}</div>
       <div class="ctx-body">${item.name} · ${max}</div>`;
     const row = document.createElement('div');
     row.className = 'split-row';
@@ -694,6 +765,19 @@ export class UI {
     actions.appendChild(ok); actions.appendChild(cancel);
     card.appendChild(actions);
     card.classList.remove('hidden');
+  }
+
+  // Drop an item to the ground. For a stack (count > 1) it first asks HOW MANY to
+  // throw, so you never accidentally drop the whole pile; a single item drops at
+  // once. `bagRef` is undefined for the main backpack, else the nested-bag index.
+  _dropWithPrompt(item, i, bagRef) {
+    if (!this.hooks.dropItem) return false;
+    if ((item.count || 1) > 1) {
+      this._promptSplit(item, (n) => this.hooks.dropItem(i, bagRef, n), t('dropHowMany') || '¿Cuántos tirar?');
+      return true;   // a quantity dialog is now showing in the context card
+    }
+    this.hooks.dropItem(i, bagRef);
+    return false;
   }
 
   // True when releasing here should toss the item into the world rather than
@@ -760,20 +844,85 @@ export class UI {
     for (const a of actions) {
       const b = document.createElement('button');
       b.textContent = a.label;
-      b.addEventListener('click', () => { a.fn(); this.closeContext(); });
+      // An action that returns true is opening its OWN dialog in this same card
+      // (e.g. "Drop" asking how many) — don't close it out from under itself.
+      b.addEventListener('click', () => { if (a.fn() !== true) this.closeContext(); });
       row.appendChild(b);
     }
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    row.appendChild(close);
     card.appendChild(row);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
   closeContext() {
     this.refs.contextCard.classList.add('hidden');
+  }
+
+  // Pin a close "✕" to the top-right corner of a context dialog. Replaces the
+  // old full-width "Close" buttons everywhere (shops, vendors, NPC chat, depot,
+  // teleport, …) with a single consistent corner control.
+  addCloseX(card) {
+    const x = document.createElement('button');
+    x.className = 'ctx-x';
+    x.textContent = '✕';
+    x.title = t('close');
+    x.setAttribute('aria-label', t('close'));
+    x.addEventListener('click', () => this.closeContext());
+    card.appendChild(x);
+    return x;
+  }
+
+  // A short stat line for a shop/vendor item def (weapon attack/element, shield &
+  // armor defense, potion restore, container slots). Returns '' when there's
+  // nothing meaningful to show. Bilingual via the i18n table.
+  itemStatLine(def) {
+    const parts = [];
+    const r = (a, b) => (a === b ? `${a}` : `${a}–${b}`);
+    if (def.atkMin != null || def.atkMax != null) {
+      parts.push(`<span class="st">⚔ ${t('stAtk')} ${r(def.atkMin || 0, def.atkMax || def.atkMin || 0)}</span>`);
+    }
+    if (def.defense) parts.push(`<span class="st">🛡 ${t('stDef')} ${def.defense}</span>`);
+    if (def.element && def.element !== 'none') parts.push(`<span class="st">✦ ${elementName(def.element)}</span>`);
+    if (def.twoHanded) parts.push(`<span class="st">✋ ${t('stTwoH')}</span>`);
+    if (def.kind === 'potion') {
+      const rt = t('rt_' + (def.restoreType || 'hp'));
+      if (def.restorePct) parts.push(`<span class="st">✚ +${Math.round(def.restorePct * 100)}% ${rt}</span>`);
+      else if (def.restore) parts.push(`<span class="st">✚ +${def.restore} ${rt}</span>`);
+    }
+    if (def.capacity) parts.push(`<span class="st">🎒 ${def.capacity} ${t('stSlots')}</span>`);
+    if (def.speedBonus) parts.push(`<span class="st">👟 +${def.speedBonus}</span>`);
+    if (def.levelReq && def.levelReq > 1) parts.push(`<span class="st">★ ${t('stLvl')} ${def.levelReq}</span>`);
+    if (def.weight) parts.push(`<span class="st">⚖ ${def.weight}</span>`);
+    return parts.length ? `<div class="shop-stats">${parts.join('')}</div>` : '';
+  }
+
+  // Sort a shop/vendor stock list by level requirement then price, so cheap
+  // low-level goods come first and pricey high-level gear last.
+  sortStock(stock, priceOf) {
+    return [...stock].sort((a, b) =>
+      (a.levelReq || 1) - (b.levelReq || 1) || (priceOf(a) - priceOf(b)));
+  }
+
+  // "Are you sure?" confirm dialog before a purchase. Shows the item, its price
+  // and stats; Confirm runs `onConfirm`, the X / Cancel returns to `back`.
+  confirmBuy(def, label, price, onConfirm, back) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">${t('confirmBuyTitle')}</div>
+      <div class="ctx-body"><span class="row-ico">${iconFor(def)}</span> ${label}<br>
+        <b class="price">${price} 💰</b></div>${this.itemStatLine(def)}`;
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const yes = document.createElement('button');
+    yes.textContent = t('confirmBuyYes');
+    yes.addEventListener('click', () => { onConfirm(); });
+    const no = document.createElement('button');
+    no.className = 'ctx-close';
+    no.textContent = t('cancel') || 'Cancelar';
+    no.addEventListener('click', () => back());
+    actions.append(yes, no);
+    card.appendChild(actions);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
   }
 
   toast(msg, kind) {
@@ -785,33 +934,38 @@ export class UI {
     setTimeout(() => { el.remove(); }, 3200);
   }
 
-  // Shop dialog: buy basic gear with gold.
+  // Shop dialog: buy basic gear with gold. Stock is sorted by level then price;
+  // unaffordable rows are disabled; buying asks for confirmation first.
   openShop(city) {
-    const stock = shopStock();
+    const stock = this.sortStock(shopStock(), (d) => d.value);
     const card = this.refs.contextCard;
     card.innerHTML = `<div class="ctx-head">${t('shop')} · ${city.name}</div>
-      <div class="ctx-gold">💰 ${this.inv.gold}</div>`;
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${this.inv.gold}</b></div>`;
     const list = document.createElement('div');
     list.className = 'shop-list';
     const lang = getLang();
     for (const def of stock) {
+      const item = document.createElement('div');
       const row = document.createElement('div');
       row.className = 'shop-row';
       // Potions carry a bilingual {es,en} name and an icon; gear uses a string.
       const label = typeof def.name === 'string' ? def.name : (def.name[lang] || def.name.es);
-      row.innerHTML = `<span><span class="row-ico">${iconFor(def)}</span> ${label}</span><span class="price">${def.value} 💰</span>`;
+      const afford = this.inv.gold >= def.value;
+      row.innerHTML = `<span><span class="row-ico">${iconFor(def)}</span> ${label}</span><span class="price${afford ? '' : ' price-no'}">${def.value} 💰</span>`;
       const buy = document.createElement('button');
       buy.textContent = t('buy');
-      buy.addEventListener('click', () => this.hooks.buy(def, () => this.openShop(city)));
+      buy.disabled = !afford;                       // can't afford → greyed out
+      buy.addEventListener('click', () => this.confirmBuy(
+        def, label, def.value,
+        () => this.hooks.buy(def, () => this.openShop(city)),
+        () => this.openShop(city)));
       row.appendChild(buy);
-      list.appendChild(row);
+      item.appendChild(row);
+      item.insertAdjacentHTML('beforeend', this.itemStatLine(def));
+      list.appendChild(item);
     }
     card.appendChild(list);
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    card.appendChild(close);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
@@ -822,9 +976,9 @@ export class UI {
     const lang = getLang();
     const card = this.refs.contextCard;
     card.innerHTML = `<div class="ctx-head">${npc.name}</div>
-      <div class="ctx-gold">💰 ${this.inv.gold}</div>`;
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${this.inv.gold}</b></div>`;
 
-    const stock = shopStockFor(shop);
+    const stock = this.sortStock(shopStockFor(shop), (d) => buyPrice(shop, d));
     if (stock.length) {
       const buyHead = document.createElement('div');
       buyHead.className = 'ctx-sub'; buyHead.textContent = t('buy');
@@ -832,16 +986,24 @@ export class UI {
       const list = document.createElement('div');
       list.className = 'shop-list';
       for (const def of stock) {
+        const item = document.createElement('div');
         const row = document.createElement('div');
         row.className = 'shop-row';
         const label = typeof def.name === 'string' ? def.name : (def.name[lang] || def.name.es);
         const price = buyPrice(shop, def);
-        row.innerHTML = `<span><span class="row-ico">${iconFor(def)}</span> ${label}</span><span class="price">${price} 💰</span>`;
+        const afford = this.inv.gold >= price;
+        row.innerHTML = `<span><span class="row-ico">${iconFor(def)}</span> ${label}</span><span class="price${afford ? '' : ' price-no'}">${price} 💰</span>`;
         const buy = document.createElement('button');
         buy.textContent = t('buy');
-        buy.addEventListener('click', () => this.hooks.buy(def, () => this.openVendor(npc), price));
+        buy.disabled = !afford;
+        buy.addEventListener('click', () => this.confirmBuy(
+          def, label, price,
+          () => this.hooks.buy(def, () => this.openVendor(npc), price),
+          () => this.openVendor(npc)));
         row.appendChild(buy);
-        list.appendChild(row);
+        item.appendChild(row);
+        item.insertAdjacentHTML('beforeend', this.itemStatLine(def));
+        list.appendChild(item);
       }
       card.appendChild(list);
     }
@@ -878,11 +1040,83 @@ export class UI {
       card.appendChild(empty);
     }
 
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    card.appendChild(close);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // Mount vendor (stable master): sells the two `source:'shop'` mounts. `mounts`
+  // is the MountSystem (to show owned state); hooks.buy(mount) purchases one.
+  openMountVendor(npc, stock, mounts, hooks) {
+    const lang = getLang();
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">🐎 ${npc.name}</div>
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${this.inv.gold}</b></div>
+      <div class="ctx-sub">${t('mountStat')}</div>`;
+    const list = document.createElement('div');
+    list.className = 'shop-list mount-list';
+    for (const m of stock) {
+      const owned = mounts.has(m.id);
+      const afford = this.inv.gold >= m.cost;
+      const row = document.createElement('div');
+      row.className = 'shop-row mount-row';
+      const name = m.name[lang] || m.name.es;
+      const desc = (m.desc && (m.desc[lang] || m.desc.es)) || '';
+      row.innerHTML = `<div class="mount-info"><b>${name}</b>` +
+        `<span class="mount-desc">${desc}</span></div>` +
+        `<span class="price${afford || owned ? '' : ' price-no'}">${owned ? '✔' : m.cost + ' 💰'}</span>`;
+      const buy = document.createElement('button');
+      buy.textContent = owned ? t('active') : t('buy');
+      buy.disabled = owned || !afford;
+      if (!owned) buy.addEventListener('click', () => hooks.buy(m));
+      row.appendChild(buy);
+      list.appendChild(row);
+    }
+    card.appendChild(list);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // Mounts panel: every mount (owned highlighted, locked greyed), pick the active
+  // one and mount/dismount. `all` is the full MOUNTS list; `mounts` is the system.
+  openMountsPanel(mounts, all, hooks) {
+    const lang = getLang();
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">🐎 ${t('mountsTitle')}</div>
+      <div class="ctx-sub">${t('mountStat')} · ${t('pressGToMount')}</div>`;
+    const ownedCount = mounts.ownedList().length;
+    if (!ownedCount) {
+      const empty = document.createElement('div');
+      empty.className = 'ctx-body';
+      empty.textContent = t('noMounts');
+      card.appendChild(empty);
+    }
+    const list = document.createElement('div');
+    list.className = 'shop-list mount-list';
+    for (const m of all) {
+      const owned = mounts.has(m.id);
+      const isActive = mounts.activeId === m.id;
+      const row = document.createElement('div');
+      row.className = 'shop-row mount-row' + (owned ? '' : ' mount-locked') + (isActive ? ' mount-active' : '');
+      const name = m.name[lang] || m.name.es;
+      const source = m.source === 'shop' ? t('mountFromShop') : t('mountFromQuest', m.levelReq);
+      const tag = owned ? (isActive ? `<span class="mount-tag">${t('active')}</span>` : '') : `<span class="mount-tag locked">🔒 ${t('locked')}</span>`;
+      row.innerHTML = `<div class="mount-info"><b>${name}</b> ${tag}` +
+        `<span class="mount-desc">${owned ? ((m.desc && (m.desc[lang] || m.desc.es)) || '') : source}</span></div>`;
+      if (owned) {
+        const btn = document.createElement('button');
+        if (isActive) {
+          btn.textContent = mounts.isMounted() ? t('dismounted') : t('mount');
+          btn.addEventListener('click', () => hooks.toggle());
+        } else {
+          btn.textContent = t('equip');
+          btn.addEventListener('click', () => hooks.select(m.id));
+        }
+        row.appendChild(btn);
+      }
+      list.appendChild(row);
+    }
+    card.appendChild(list);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
@@ -905,11 +1139,7 @@ export class UI {
       list.appendChild(row);
     }
     card.appendChild(list);
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    card.appendChild(close);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
@@ -934,13 +1164,9 @@ export class UI {
       btn.textContent = t('residencySettle');
       btn.addEventListener('click', () => { onSettle(); this.openResidency(npc, city, true, onSettle); });
     }
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
     actions.appendChild(btn);
-    actions.appendChild(close);
     card.appendChild(actions);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
@@ -985,11 +1211,7 @@ export class UI {
       card.appendChild(line);
     }
     card.appendChild(list);
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    card.appendChild(close);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
@@ -1047,11 +1269,7 @@ export class UI {
 
     cols.append(bpCol, dpCol);
     card.appendChild(cols);
-    const close = document.createElement('button');
-    close.textContent = t('close');
-    close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    card.appendChild(close);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
@@ -1073,10 +1291,7 @@ export class UI {
     tradeBtn.textContent = '🤝 ' + (t('trade') || 'Intercambiar');
     tradeBtn.addEventListener('click', () => { info.onTrade(); });
     card.append(friendBtn, tradeBtn);
-    const close = document.createElement('button');
-    close.textContent = t('close'); close.className = 'ctx-close';
-    close.addEventListener('click', () => this.closeContext());
-    card.appendChild(close);
+    this.addCloseX(card);
     card.classList.remove('hidden');
   }
 
