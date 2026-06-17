@@ -8,7 +8,8 @@ let sfxGain = null;    // sfx sub-bus
 
 let musicVol = 0.25;
 let sfxVol = 0.4;
-let muted = false;
+// Sound OFF by default for now (testing). The HUD ♪ button toggles it back on.
+let muted = true;
 let musicRunning = false;
 
 // Scheduler state
