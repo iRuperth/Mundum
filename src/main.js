@@ -3871,7 +3871,26 @@ function doAttack() {
 const aimPoint = new THREE.Vector3();
 function aimPointFor(target) {
   if (target && !target.dead && !target.dying) {
-    aimPoint.set(target.pos.x, target.pos.y + 0.8, target.pos.z);
+    // Aim at the EXACT spot on the target's body the crosshair is on (head,
+    // torso or feet) — the point on its feet→head capsule closest to the camera
+    // ray — so the shot lands precisely where you aim, even up a slope or
+    // overhead, instead of always at a fixed torso height.
+    const s = target.def.variantScale || 1;
+    const y0 = target.pos.y + 0.15 * s, y1 = target.pos.y + 1.45 * s;
+    const ox = camera.position.x, oy = camera.position.y, oz = camera.position.z;
+    const dl = Math.hypot(camDir.x, camDir.y, camDir.z) || 1;
+    const dx = camDir.x / dl, dy = camDir.y / dl, dz = camDir.z / dl;
+    // Closest height on the vertical body segment to the ray (10 samples).
+    let bestD2 = Infinity, bestY = (y0 + y1) / 2;
+    for (let i = 0; i <= 10; i++) {
+      const sy = y0 + (y1 - y0) * (i / 10);
+      let t = (target.pos.x - ox) * dx + (sy - oy) * dy + (target.pos.z - oz) * dz;
+      if (t < 0) t = 0;
+      const gx = ox + dx * t - target.pos.x, gy = oy + dy * t - sy, gz = oz + dz * t - target.pos.z;
+      const d2 = gx * gx + gy * gy + gz * gz;
+      if (d2 < bestD2) { bestD2 = d2; bestY = sy; }
+    }
+    aimPoint.set(target.pos.x, bestY, target.pos.z);
     return;
   }
   // March down the ray; stop at terrain so a downward shot hits the ground where
@@ -4007,7 +4026,10 @@ function updateWandBolt(dt) {
   // Gently steer toward a live target so the path reads as "homing in", not a
   // straight line that misses once the enemy has moved.
   if (alive) {
-    const want = wandBolt._hand.set(tgt.pos.x - wandBolt.pos.x, (tgt.pos.y + 0.8) - wandBolt.pos.y, tgt.pos.z - wandBolt.pos.z);
+    // Home toward the target's true body centre (scaled to its size), so the
+    // homing stays accurate for tall and short creatures alike.
+    const cy = tgt.pos.y + 0.8 * (tgt.def.variantScale || 1);
+    const want = wandBolt._hand.set(tgt.pos.x - wandBolt.pos.x, cy - wandBolt.pos.y, tgt.pos.z - wandBolt.pos.z);
     if (want.lengthSq() > 1e-4) {
       want.normalize().multiplyScalar(BOLT_SPEED);
       wandBolt.vel.lerp(want, Math.min(1, dt * 8));
