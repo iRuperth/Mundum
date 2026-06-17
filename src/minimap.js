@@ -162,20 +162,70 @@ export class Minimap {
     if (cave.viewFloor < cave.floorCount - 1) { ctx.fillStyle = '#ff9a3a'; ctx.fillText('▼', 4, s - 18); }
   }
 
+  // Build (or reuse) the offscreen terrain layer for the given view. Cached and
+  // rebuilt only when the quantized center cell, range, or size changes — so a
+  // standing/slow-moving player pays the noise cost roughly once, not per frame.
+  _terrainLayer(s, cx, cz, range, legend) {
+    const step = legend ? 6 : 8;
+    // Quantize the cache center to a block of `step` world-pixels (coarse, so the
+    // cache survives normal walking), and remember the quantized center. The live
+    // _render() blits this with a sub-pixel offset (see drawImage in _render) to
+    // keep it pixel-aligned with the city/dot transforms, so coarse quantization
+    // doesn't cause visible drift. Rebuilt only when you cross a block or zoom.
+    const worldPerPx = range / (s / 2);
+    const block = worldPerPx * step;
+    const qx = Math.round(cx / block);
+    const qz = Math.round(cz / block);
+    this._terrCx = qx * block; this._terrCz = qz * block;   // cached center (for the offset)
+    const key = `${s}|${range.toFixed(1)}|${step}|${qx}|${qz}`;
+    if (this._terrKey === key && this._terrCanvas) return this._terrCanvas;
+
+    // Render with a `pad`-pixel border on every side so the live blit can shift
+    // the layer by up to ±one block without exposing an empty edge.
+    const pad = step * 2;
+    this._terrPad = pad;
+    const cs = s + pad * 2;
+    if (!this._terrCanvas || this._terrCanvas.width !== cs) {
+      this._terrCanvas = (typeof OffscreenCanvas !== 'undefined')
+        ? new OffscreenCanvas(cs, cs)
+        : Object.assign(document.createElement('canvas'), { width: cs, height: cs });
+      this._terrCtx = this._terrCanvas.getContext('2d');
+    }
+    const tctx = this._terrCtx;
+    const half = s / 2;
+    const ccx = this._terrCx, ccz = this._terrCz;
+    // Fill the padded canvas; map pixel (px,py) in the FINAL view sits at
+    // (px+pad, py+pad) in this canvas, and runs from -pad..s+pad.
+    for (let py = -pad; py < s + pad; py += step) {
+      for (let px = -pad; px < s + pad; px += step) {
+        const wx = ccx + ((px - half) / half) * range;
+        const wz = ccz + ((py - half) / half) * range;
+        tctx.fillStyle = terrainColor(this.world, wx, wz);
+        tctx.fillRect(px + pad, py + pad, step, step);
+      }
+    }
+    this._terrKey = key;
+    return this._terrCanvas;
+  }
+
   // Render one frame into ctx, centered on world point (cx, cz) at the given range.
   _render(ctx, s, cx, cz, range, player, peers, creatures, legend) {
     const half = s / 2;
     ctx.clearRect(0, 0, s, s);
 
-    const step = legend ? 6 : 8;
-    for (let py = 0; py < s; py += step) {
-      for (let px = 0; px < s; px += step) {
-        const wx = cx + ((px - half) / half) * range;
-        const wz = cz + ((py - half) / half) * range;
-        ctx.fillStyle = terrainColor(this.world, wx, wz);
-        ctx.fillRect(px, py, step, step);
-      }
-    }
+    // TERRAIN LAYER (the expensive part — ~625 cells × ~7 fbm-noise evals each).
+    // It only depends on (centerCell, range, size), so we render it ONCE to an
+    // offscreen canvas and blit it every frame, rebuilding only when the player
+    // crosses a block or zoom changes. This removes thousands of noise evals/frame
+    // (the dominant minimap cost) — dots/POIs are still drawn fresh below.
+    // The cache is centered on a quantized point; blit it shifted by the live-vs-
+    // cached center delta (in map pixels) so it stays aligned with the dots.
+    const terr = this._terrainLayer(s, cx, cz, range, legend);
+    const perPxT = half / range;
+    const ddx = (this._terrCx - cx) * perPxT, ddz = (this._terrCz - cz) * perPxT;
+    const pad = this._terrPad || 0;
+    // The padded layer's (pad,pad) is view-origin (0,0); shift by the live delta.
+    ctx.drawImage(terr, Math.round(-pad + ddx), Math.round(-pad + ddz));
 
     // City walls: draw each city's perimeter (rectangle for the grid capital, a
     // circle for round towns) plus a center marker, so the map shows the outline
