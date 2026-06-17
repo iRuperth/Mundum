@@ -45,6 +45,8 @@ export function resolveItem(itemId, rng, level, lang) {
   if (armor) return instanceFromArmor(armor);
   const cont = getContainer(id);
   if (cont) return instanceFromContainer(cont);
+  const quiver = getQuiver(id);
+  if (quiver) return instanceFromQuiver(quiver);
   const potion = getPotion(id);
   if (potion) return instanceFromPotion(potion, lang || 'es');
   const light = getLight(id);
@@ -229,16 +231,44 @@ export class Inventory {
     return true;
   }
 
-  // Convert 100 coins of a tier into 1 of the next tier up. Returns true/false.
+  // Total count of a coin tier across ALL its (possibly split, ≤100) stacks.
+  _coinTierTotal(id) {
+    let n = 0;
+    for (const s of this._coinStacksRaw()) if (s.baseId === id) n += (s.count || 0);
+    return n;
+  }
+
+  // Remove `n` coins of a tier across its stacks (emptied stacks are dropped).
+  _takeCoins(id, n) {
+    let left = n;
+    for (const s of this._coinStacksRaw()) {
+      if (left <= 0) break;
+      if (s.baseId !== id) continue;
+      const take = Math.min(s.count || 0, left);
+      s.count -= take; left -= take;
+    }
+    for (const s of this._coinStacksRaw().slice()) if (s.count <= 0) this._removeCoinStack(s);
+  }
+
+  // Convert 100 coins of a tier into 1 of the next tier up. Works across split
+  // ≤100 stacks (sums the tier). Returns true/false.
   convertCoin(id) {
     const idx = COINS.findIndex((c) => c.id === id);
     if (idx < 0 || idx >= COINS.length - 1) return false; // diamond can't go up
-    const from = this._coinStack(id, false);
-    if (!from || from.count < 100) return false;
-    from.count -= 100;
-    if (from.count <= 0) this._removeCoinStack(from);
-    const up = this._coinStack(COINS[idx + 1].id, true);
-    up.count += 1;
+    if (this._coinTierTotal(id) < 100) return false;
+    this._takeCoins(id, 100);
+    this.addCoins(COINS[idx + 1].id, 1);   // capped + overflow aware
+    return true;
+  }
+
+  // Break ONE coin of `id` back DOWN into 100 of the tier below (the inverse of
+  // convertCoin). Bronze (tier 0) can't go lower.
+  convertCoinDown(id) {
+    const idx = COINS.findIndex((c) => c.id === id);
+    if (idx <= 0) return false;                 // bronze (lowest tier) can't split down
+    if (this._coinTierTotal(id) < 1) return false;
+    this._takeCoins(id, 1);
+    this.addCoins(COINS[idx - 1].id, 100);  // capped + overflow aware (→ a 100 stack)
     return true;
   }
 
@@ -268,6 +298,58 @@ export class Inventory {
     for (const s of EQUIP_SLOTS) if (this.equip[s]) w += itemWeight(this.equip[s]);
     for (const it of this.backpack) w += itemWeight(it);
     return w;
+  }
+
+  // Every cell the player holds, top-level + inside nested bags. Used by the
+  // quest gates to count keys/dusts and by the item-spend on quest turn-in.
+  _allCells() {
+    const out = [];
+    for (const it of this.backpack) {
+      if (!it) continue;
+      out.push(it);
+      if (Array.isArray(it.contents)) for (const c of it.contents) if (c) out.push(c);
+    }
+    return out;
+  }
+
+  // How many of an item (by baseId) the player carries, summing stack counts.
+  // Accepts dash/underscore variants so 'demon-bone' and 'demon_bone' both match.
+  countById(baseId) {
+    const want = String(baseId || '').toLowerCase();
+    const alt = want.replace(/-/g, '_');
+    const alt2 = want.replace(/_/g, '-');
+    let n = 0;
+    for (const it of this._allCells()) {
+      const id = String(it.baseId || '').toLowerCase();
+      if (id === want || id === alt || id === alt2) n += (it.count || 1);
+    }
+    return n;
+  }
+
+  // True if the player holds at least `count` of `baseId`.
+  hasItems(baseId, count = 1) { return this.countById(baseId) >= count; }
+
+  // Spend (remove) `count` of `baseId` across stacks/cells; emptied cells drop.
+  // Returns how many were actually removed (clamped to what was held).
+  removeById(baseId, count = 1) {
+    const want = String(baseId || '').toLowerCase();
+    const alt = want.replace(/-/g, '_');
+    const alt2 = want.replace(/_/g, '-');
+    const match = (it) => { const id = String(it.baseId || '').toLowerCase(); return id === want || id === alt || id === alt2; };
+    let left = count, removed = 0;
+    const sweep = (arr) => {
+      for (let i = arr.length - 1; i >= 0 && left > 0; i--) {
+        const it = arr[i];
+        if (!it || !match(it)) continue;
+        const take = Math.min(it.count || 1, left);
+        it.count = (it.count || 1) - take;
+        left -= take; removed += take;
+        if ((it.count || 0) <= 0) arr.splice(i, 1);
+      }
+    };
+    sweep(this.backpack);
+    for (const bag of this._nestedBags()) sweep(bag.contents);
+    return removed;
   }
 
   capacity(level) {
@@ -493,11 +575,16 @@ export class Inventory {
     const target = dstArr[to.i];
     const sameContainer = from.c === to.c;
 
-    // Merge into a same-tier stack already sitting on the target cell.
+    // Merge into a same-tier stack already sitting on the target cell, capped at
+    // MAX_STACK — the overflow stays on the source stack (a 100-cap split).
     if (target && isStackable(item) && isStackable(target) && target.baseId === item.baseId && target !== item) {
-      target.count = (target.count || 1) + (moving != null ? moving : (item.count || 1));
-      if (moving != null) item.count -= moving;
-      else srcArr.splice(from.i, 1);
+      const want = (moving != null ? moving : (item.count || 1));
+      const room = MAX_STACK - (target.count || 1);
+      if (room <= 0) return { ok: false, reason: 'full' };   // target stack is maxed
+      const add = Math.min(room, want);
+      target.count = (target.count || 1) + add;
+      item.count = (item.count || 1) - add;
+      if (item.count <= 0) srcArr.splice(from.i, 1);
       return { ok: true };
     }
 

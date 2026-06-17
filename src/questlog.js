@@ -13,11 +13,47 @@ export class QuestLog {
   isActive(id) { return !!this.active[id]; }
   isDone(id) { return !!this.done[id]; }
 
-  canAccept(id, level) {
+  // `ctx` (optional) carries the world gates an imaginative quest can demand:
+  //   { isNight: bool, hasItems: (itemId, count) => bool }
+  // A quest may be `nightOnly` (only offered after dark) and/or list
+  // `requiresItems: [{ itemId, count }]` — a thematic KEY or barter the player
+  // must already hold to even start it (e.g. a demon-bone key to pass the hound).
+  // When no ctx is supplied (older callers), the world gates are skipped so the
+  // quest still shows; the level gate always applies.
+  canAccept(id, level, ctx) {
     const q = getQuest(id);
     if (!q) return false;
     if (this.active[id] || this.done[id]) return false;
-    return level >= (q.minLevel || 1);
+    if (level < (q.minLevel || 1)) return false;
+    if (ctx) {
+      if (q.nightOnly && !ctx.isNight) return false;
+      if (q.dayOnly && ctx.isNight) return false;
+      if (q.requiresItems && ctx.hasItems) {
+        for (const r of q.requiresItems) {
+          if (!ctx.hasItems(r.itemId, r.count || 1)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // Why a quest can't be accepted yet (for a helpful NPC line). Returns one of
+  // 'ok' | 'level' | 'night' | 'day' | 'items' | 'taken'. Mirrors canAccept.
+  acceptBlocker(id, level, ctx) {
+    const q = getQuest(id);
+    if (!q) return 'taken';
+    if (this.active[id] || this.done[id]) return 'taken';
+    if (level < (q.minLevel || 1)) return 'level';
+    if (ctx) {
+      if (q.nightOnly && !ctx.isNight) return 'night';
+      if (q.dayOnly && ctx.isNight) return 'day';
+      if (q.requiresItems && ctx.hasItems) {
+        for (const r of q.requiresItems) {
+          if (!ctx.hasItems(r.itemId, r.count || 1)) return 'items';
+        }
+      }
+    }
+    return 'ok';
   }
 
   accept(id) {
