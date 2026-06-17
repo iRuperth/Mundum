@@ -118,3 +118,58 @@ export class PlayerStatus {
   // Refresh the in-combat slow window (call when a slowing foe hits again).
   refreshSlowCombat() { if (this.slowCombatLeft > 0) this.slowCombatLeft = COMBAT_LINGER; }
 }
+
+// --- Creature-side status (the PLAYER inflicting effects ON creatures) --------
+// Tibia-style: a sorcerer's fire spells BURN (damage over time, no slow), a
+// druid's ice/poison spells SLOW and POISON (a long damage-over-time bleed). The
+// burn/poison total scales with the spell power so a strong nuke leaves a strong
+// DOT. Slow cuts the creature's move speed for a duration. Each creature owns one
+// of these; combat.js ticks it and applies the drained HP.
+export const CREATURE_DOT_INTERVAL = 1;   // creatures tick faster than the player (1s) so DOTs read
+export const CREATURE_SLOW_DUR = 6;        // seconds a slow lasts (refreshed by re-hits)
+export const CREATURE_SLOW_MUL = 0.5;      // slowed creatures move at 50% (druid control)
+
+export class CreatureStatus {
+  constructor() {
+    this.burnLeft = 0; this.burnStep = 0; this.burnAcc = 0;
+    this.poisonLeft = 0; this.poisonStep = 0; this.poisonAcc = 0;
+    this.slowLeft = 0;
+  }
+
+  // Apply a damage-over-time pool. `total` HP drained over time in `step` chunks
+  // each interval. Re-applying takes the STRONGER pool (max), so a bigger nuke
+  // refreshes a weak DOT but a weak one never shrinks a strong one.
+  applyBurn(total, step) {
+    if (total > this.burnLeft) { this.burnLeft = total; this.burnStep = Math.max(1, step); }
+  }
+  applyPoison(total, step) {
+    if (total > this.poisonLeft) { this.poisonLeft = total; this.poisonStep = Math.max(1, step); }
+  }
+  applySlow(dur = CREATURE_SLOW_DUR) { this.slowLeft = Math.max(this.slowLeft, dur); }
+
+  get slowed() { return this.slowLeft > 0; }
+  speedMultiplier() { return this.slowLeft > 0 ? CREATURE_SLOW_MUL : 1; }
+  get active() { return this.burnLeft > 0 || this.poisonLeft > 0 || this.slowLeft > 0; }
+
+  // Advance time; returns the HP to drain this frame ({ amount, kind } per tick)
+  // via the onTick callback so combat.js can subtract it and float the number.
+  tick(dt, onTick) {
+    if (this.burnLeft > 0) {
+      this.burnAcc += dt;
+      while (this.burnAcc >= CREATURE_DOT_INTERVAL && this.burnLeft > 0) {
+        this.burnAcc -= CREATURE_DOT_INTERVAL;
+        const amt = Math.min(this.burnStep, this.burnLeft);
+        this.burnLeft -= amt; onTick(amt, 'burn');
+      }
+    } else this.burnAcc = 0;
+    if (this.poisonLeft > 0) {
+      this.poisonAcc += dt;
+      while (this.poisonAcc >= CREATURE_DOT_INTERVAL && this.poisonLeft > 0) {
+        this.poisonAcc -= CREATURE_DOT_INTERVAL;
+        const amt = Math.min(this.poisonStep, this.poisonLeft);
+        this.poisonLeft -= amt; onTick(amt, 'poison');
+      }
+    } else this.poisonAcc = 0;
+    if (this.slowLeft > 0) { this.slowLeft -= dt; if (this.slowLeft < 0) this.slowLeft = 0; }
+  }
+}
