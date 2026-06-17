@@ -3,7 +3,7 @@
 // Stats scale with level + role so the game gets progressively harder.
 // Everything is expanded deterministically at module load (no Math.random).
 
-import { getWeapon, getArmor, getContainer, WEAPONS, ARMORS } from './items.js';
+import { getWeapon, getArmor, getContainer, WEAPONS, ARMORS, isSecretItem } from './items.js';
 import { trophyForFamily } from './trophies.js';
 
 // Family model keys. The renderer builds one procedural mesh per key; every
@@ -38,10 +38,14 @@ function round(n) { return Math.max(1, Math.round(n)); }
 function baseStats(level, role) {
   const m = ROLE_MODS[role] || ROLE_MODS.normal;
   const lv = Math.max(1, level);
-  const hp = 8 + lv * 5 + lv * lv * 0.22;           // ~13 at lv1, ~4000 at lv125
-  const attack = 2 + lv * 1.0 + lv * lv * 0.008;    // grows steadily
-  const defense = 0 + lv * 0.75 + lv * lv * 0.004;
-  const exp = 2 + lv * 1.6 + lv * lv * 0.28;         // ~4 at lv1, ~4600 at lv125
+  // Compressed for the Tibia-7.4 damage rebalance (weapon attack capped ~50/53,
+  // damage formula re-tuned in combat.js). HP/attack/defense come down in
+  // lockstep so a same-level normal mob takes ~8-12 basic hits and a boss ~5x
+  // that; EXP is deliberately UNCHANGED so leveling pace stays identical.
+  const hp = 8 + lv * 3.0 + lv * lv * 0.10;          // ~11 at lv1, ~2120 at lv130
+  const attack = 1.5 + lv * 0.62 + lv * lv * 0.009;  // ~2 at lv1, ~234 at lv130
+  const defense = 0 + lv * 0.40 + lv * lv * 0.0020;  // ~0 at lv1, ~86 at lv130
+  const exp = 2 + lv * 1.6 + lv * lv * 0.28;          // ~4 at lv1, ~4600 at lv125 (unchanged)
   return {
     hp: round(hp * m[0]),
     attack: round(attack * m[1]),
@@ -97,6 +101,16 @@ function potionDropsForLevel(level, role) {
   }
   return out;
 }
+
+// The full demon set + its bags, attached to every demon variant. The chances
+// here are placeholders — rebalanceLoot() rewrites each into the 1/N kill grind,
+// scaled by the dropping demon's level (weaker demon = rarer item).
+const DEMON_SET_LOOT = [
+  drop('demon_bag', 1),       drop('demon_backpack', 0.2),
+  drop('demon_shield', 0.1),  drop('demon_armor', 0.1),
+  drop('demon_legs', 0.1),    drop('demon_helmet', 0.1),
+  drop('demon_boots', 0.1),   drop('demon_amulet', 0.1),
+];
 
 // Family definitions. Each family lists:
 //   key, biome, element, aggressive default, aggroRange, speed, baseLevel,
@@ -535,7 +549,10 @@ const FAMILY_DEFS = [
     variants: [
       ['', 1.0, 0x000000, 0, 'tank', 1.0, []],
       ['Stone Gargoyle', 1.3, 0x445544, 38, 'tank', 1.25, []],
-      ['Demon Gargoyle', 1.6, 0x663333, 48, 'boss', 1.45, [drop('demon-shield', 0.08)]],
+      // The Demon Gargoyle is a demon too: it carries the demon bag/backpack and a
+      // (very rare, it's only lv48) shot at the demon set — "incluso el demon gárgola".
+      ['Demon Gargoyle', 1.6, 0x663333, 48, 'boss', 1.45,
+        [drop('demon_bag', 1), drop('demon_backpack', 0.2), drop('demon_shield', 0.1), drop('demon_armor', 0.1)]],
     ],
   },
   {
@@ -819,15 +836,19 @@ const FAMILY_DEFS = [
     variants: [
       // The Demon (Tibia ~lv88): the apex. Melee + life-drain energy + huge
       // fireball area + heals. The Demon Lord is the abyss overlord.
-      ['Lesser Demon', 1.1, 0xbb2211, 0, 'boss', 0.8, [drop('demon_shield', 0.05)],
+      // Every demon variant carries the FULL demon set + bag/backpack so the set
+      // "only comes from demons" (the user's rule). rebalanceLoot then re-rates
+      // each piece into the 1/N kill grind, scaled by the variant's level — so
+      // the same demon shield is far rarer off a Lesser Demon than a Demon Lord.
+      ['Lesser Demon', 1.1, 0xbb2211, 0, 'boss', 0.8, DEMON_SET_LOOT,
         { levelAbs: 75, attackKind: 'caster',
           areaAttack: { kind: 'fire', radius: 5, damageMul: 1.5, chance: 0.4 },
           selfHeal: { amount: 0.05, chance: 0.4 } }],
-      ['Demon', 1.5, 0xaa1111, 0, 'boss', 1.1, [drop('demon_shield', 0.06), drop('demon_armor', 0.04)],
+      ['Demon', 1.5, 0xaa1111, 0, 'boss', 1.1, DEMON_SET_LOOT,
         { levelAbs: 88, attackKind: 'caster',
           areaAttack: { kind: 'fire', radius: 6, damageMul: 1.7, chance: 0.45 },
           selfHeal: { amount: 0.06, chance: 0.45 } }],
-      ['Demon Lord', 2.4, 0x550000, 0, 'boss', 1.9, [drop('demon_armor', 0.1), drop('demon_helmet', 0.06), drop('demon_amulet', 0.06), drop('soul-gem', 0.6)],
+      ['Demon Lord', 2.4, 0x550000, 0, 'boss', 1.9, [...DEMON_SET_LOOT, drop('soul-gem', 0.6)],
         { levelAbs: 110, supreme: true, attackKind: 'caster',
           areaAttack: { kind: 'fire', radius: 9, damageMul: 2.0, chance: 0.5 },
           selfHeal: { amount: 0.08, chance: 0.5 } }],
@@ -935,80 +956,91 @@ function buildCreatures() {
   return out;
 }
 
-// --- Drop-rate rebalance + high-end item distribution ----------------------
-// The user wants tight, Tibia-style drop odds, NOT the loose 5-40% the variants
-// were authored with:
-//   • common gear (shopTier 'shop')        -> 2-5%
-//   • epic gear   (shopTier 'epic')         -> 1-3%
-//   • legendary   (shopTier 'legendary-tier')-> 0.01% (a day of farming = ~one or none)
-// Junk/material/flavor drops (hides, scales, gems — ids that aren't real
-// equipment) keep their authored chances; they're meant to be common.
+// --- Drop-rate rebalance: Tibia "X kills per item" ---------------------------
+// The user wants drops to read like real Tibia: rare gear comes from killing many
+// of a creature, and — crucially — the WEAKER the creature, the HARDER it is to
+// pull a given item from it ("matar 60 demons por un demon shield"). So the same
+// item is much rarer off a low-level mob than off a high-level one.
 //
-// Then the marquee high-end items (demon shield, demon armor, etc.) are seeded
-// onto SEVERAL strong, high-level creatures at a tiny chance, so they're not the
-// exclusive reserve of one boss but still brutally rare to farm.
+// Model. Every equipment drop is expressed as a target "1 in N kills":
+//   N = baseKills(item-tier) × levelHandicap(creature) × (legendary ? 2 : 1)
+// then chance = 1/N. baseKills sets how grindy the item itself is (a backpack is
+// cheap, a demon shield is a marathon); levelHandicap makes the same item rarer
+// off a weaker creature (a level-48 demon-gargoyle gives a demon shield far less
+// often than a level-110 demon lord). Materials/junk keep their authored, common
+// chances. SECRET (GM-only) items are stripped from every loot table entirely.
 
 // Resolve a loot itemId to its equipment def (or null for junk/materials).
 function equipDefFor(itemId) {
   return getWeapon(itemId) || getArmor(itemId) || getContainer(itemId) || null;
 }
 
-// The capped chance for an equipment drop, by its shop tier and a stable hash so
-// items don't all land on the exact same number. Returns null = leave as-is.
-function cappedChance(def, seed) {
-  const j = ((Math.sin(seed) * 43758.5453) % 1 + 1) % 1;   // deterministic 0..1
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+// Deterministic 0..1 jitter from a seed, so two creatures dropping the same item
+// don't land on the EXACT same odds (reads more natural in the wiki).
+function jitter(seed) { return ((Math.sin(seed) * 43758.5453) % 1 + 1) % 1; }
+
+// Baseline "1 in N kills" for a piece of equipment, before the creature-level
+// handicap. Driven by the item's tier and slot so the marquee endgame sets feel
+// like the Tibia grind the user described (demon shield ~60, armor ~100, legs
+// ~150, boots ~200; demon bag ~1, backpack ~5). Returns the kill count N.
+function baseKillsFor(def) {
+  const id = def.id;
+  // Hand-tuned marquee items (the user's exact targets) win over the generic tier.
+  const EXACT = {
+    // demon set — the canonical "X kills" ladder
+    demon_shield: 60, demon_armor: 100, demon_legs: 150, demon_helmet: 130,
+    demon_boots: 200, demon_amulet: 110, demon_backpack: 5, demon_sword: 220,
+    demon_axe: 240,
+    // demon bag is the trivial one: almost every demon carries one (~1/1, but the
+    // level handicap still makes a weak demon-gargoyle a touch less than certain)
+    demon_bag: 1,
+    // dragon set — a notch easier than demon
+    dragon_armor: 70, dragon_legs: 90, dragon_helmet: 80, dragon_shield: 50,
+    dragon_boots: 110, dragon_backpack: 6,
+    golden_armor: 60, golden_legs: 70, golden_backpack: 8,
+  };
+  if (EXACT[id] != null) return EXACT[id];
+  // Containers (bags/backpacks) are the cheap, fun drops.
+  if (def.slot === 'bag') return def.capacity >= 20 ? 6 : 2;
+  // Generic by tier.
   const tier = def.shopTier;
-  if (tier === 'legendary-tier') return 0.0001 + j * 0.0001;   // ~0.01% (0.01-0.02%)
-  if (tier === 'epic') return 0.01 + j * 0.02;                  // 1-3%
-  // everything buyable ('shop') or untagged equipment -> common band
-  return 0.02 + j * 0.03;                                       // 2-5%
+  if (tier === 'legendary-tier') return 180;   // ~1/180 even off a strong foe
+  if (tier === 'epic') return 45;              // ~1/45
+  return 18;                                   // common/shop gear ~1/18
 }
 
-function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+// How much HARDER a given creature is to pull its item from, as a multiplier on
+// the kill count, purely from its LEVEL. The user's rule: the weaker the creature,
+// the harder. We anchor "no handicap" (×1) at a strong level-100 foe and ramp the
+// multiplier up sharply as the creature gets weaker, so a level-48 source needs
+// roughly twice as many kills as a level-100 source for the SAME item.
+function levelHandicap(level) {
+  const lv = Math.max(1, level || 1);
+  // 1.0 at lv100+, ~2.0 at lv50, ~3.0 at lv25, capped so trash isn't impossible.
+  const h = 100 / lv;
+  return Math.max(1, Math.min(3.2, h));
+}
 
-// The high-end items that should come from MANY strong foes, each id paired with
-// the minimum creature level that may drop it. Distributed below at tiny odds.
-const HIGH_END_DROPS = [
-  { id: 'demon_shield',  minLevel: 55 },
-  { id: 'demon_armor',   minLevel: 75 },
-  { id: 'demon_helmet',  minLevel: 85 },
-  { id: 'demon_legs',    minLevel: 85 },
-  { id: 'golden_armor',  minLevel: 40 },
-  { id: 'golden_legs',   minLevel: 40 },
-  { id: 'dragon_shield', minLevel: 45 },
-  { id: 'dragon_armor',  minLevel: 55 },
-  { id: 'mastermind_shield', minLevel: 70 },
-  { id: 'magic_sword',   minLevel: 80 },
-  { id: 'demon_sword',   minLevel: 85 },
-  { id: 'soul-gem',      minLevel: 50 },
-];
+// Is this id a LEGENDARY-tier piece (the "double difficulty" bracket)?
+function isLegendaryTier(def) { return def && def.shopTier === 'legendary-tier'; }
 
 function rebalanceLoot(creatures) {
   for (const c of creatures) {
+    // 1) Strip any SECRET (GM-only) item that slipped into an authored table.
+    c.loot = c.loot.filter((e) => !isSecretItem(e.itemId));
+
+    // 2) Re-rate every equipment drop as 1/N kills, scaled by the creature level.
     for (const entry of c.loot) {
-      if (entry.itemId === 'gold' || entry.potion) continue;   // gold + potions handled elsewhere
+      if (entry.itemId === 'gold' || entry.potion || entry.trophy) continue;
       const def = equipDefFor(entry.itemId);
       if (!def) continue;                                      // junk/material — leave common
-      const capped = cappedChance(def, hashStr(c.id + entry.itemId));
-      // Only ever LOWER an authored chance (never raise a deliberately-rare one).
-      if (capped != null && entry.chance > capped) entry.chance = capped;
-    }
-  }
-
-  // Seed the marquee items onto every sufficiently strong creature that doesn't
-  // already drop them, at a tiny chance — so a Warlock, Banshee, Vampire Count,
-  // Dragon Lord etc. can all drop a demon shield, but only with a day's luck.
-  for (const c of creatures) {
-    for (const hd of HIGH_END_DROPS) {
-      if ((c.level || 1) < hd.minLevel) continue;
-      if (c.loot.some((l) => l.itemId === hd.id)) continue;    // already drops it
-      const def = equipDefFor(hd.id);
-      // Scale the floor odds a touch with how far the creature out-levels the
-      // requirement (a level-110 demon is likelier than a level-55 warlock), but
-      // keep it minuscule. Soul-gem (a quest material) gets a slightly higher rate.
-      const over = Math.min(1, ((c.level || 1) - hd.minLevel) / 60);
-      const base = hd.id === 'soul-gem' ? 0.003 : (def && def.shopTier === 'legendary-tier' ? 0.0002 : 0.0008);
-      c.loot.push({ itemId: hd.id, chance: +(base * (1 + over)).toFixed(5) });
+      const baseN = baseKillsFor(def);
+      const handicap = levelHandicap(c.level);
+      const legMul = isLegendaryTier(def) ? 2 : 1;             // legendary = 2× harder
+      const j = 0.85 + jitter(hashStr(c.id + entry.itemId)) * 0.3; // ±15% natural spread
+      const N = Math.max(1, Math.round(baseN * handicap * legMul * j));
+      entry.chance = +(1 / N).toFixed(5);
     }
   }
 }
@@ -1019,8 +1051,8 @@ function rebalanceLoot(creatures) {
 // chances that scale to the creature's level. Deterministic (hash-seeded), so the
 // same creature always offers the same pool.
 const GEAR_POOL = [
-  ...WEAPONS.filter((w) => w.shopTier !== 'legendary-tier'),
-  ...ARMORS.filter((a) => a.shopTier !== 'legendary-tier'),
+  ...WEAPONS.filter((w) => w.shopTier !== 'legendary-tier' && !w.secret),
+  ...ARMORS.filter((a) => a.shopTier !== 'legendary-tier' && !a.secret),
 ];
 
 function seededShuffle(arr, seed) {
@@ -1046,11 +1078,37 @@ function addNonThematicGear(creatures) {
     const picks = seededShuffle(pool, hashStr(c.id) >>> 0).slice(0, slots);
     for (const g of picks) {
       if (c.loot.some((l) => l.itemId === g.id)) continue;
-      // base chance by tier, lifted a touch for bosses; capped low so gear stays
-      // a treat, not a flood. Epic gear rarer than common.
-      const tierBase = g.shopTier === 'epic' ? 0.012 : 0.035;
-      const chance = +(tierBase * ((c.boss || c.supreme) ? 1.8 : 1)).toFixed(4);
-      c.loot.push({ itemId: g.id, chance });
+      // Use the SAME 1/N model: kill count by tier × level handicap, eased a touch
+      // for bosses (they're worth the trek, so their gear drops a bit more often).
+      const baseN = baseKillsFor(g);
+      const N = Math.max(1, Math.round(baseN * levelHandicap(c.level) * ((c.boss || c.supreme) ? 0.6 : 1)));
+      c.loot.push({ itemId: g.id, chance: +(1 / N).toFixed(5) });
+    }
+  }
+}
+
+// LEGENDARY drops from the strongest foes: the user's "1 of every ~500 strong
+// monsters drops a legendary". Every legendary-tier weapon/armor (except the
+// SECRET GM-only ones) is seeded onto high-level creatures at ~1/500, picked by
+// a level band so a legendary only falls from foes near or above its own tier.
+const LEGENDARY_POOL = [
+  ...WEAPONS.filter((w) => w.shopTier === 'legendary-tier' && !w.secret),
+  ...ARMORS.filter((a) => a.shopTier === 'legendary-tier' && !a.secret),
+];
+function addLegendaryDrops(creatures) {
+  const STRONG = 55;                       // "strong monster" floor
+  for (const c of creatures) {
+    if ((c.level || 1) < STRONG) continue;
+    for (const leg of LEGENDARY_POOL) {
+      // Only foes within reach of the item's own tier can drop it (a level-55
+      // foe won't drop a level-130 celestial-tier legendary).
+      const req = leg.levelReq || 1;
+      if ((c.level || 1) < req - 15) continue;
+      if (c.loot.some((l) => l.itemId === leg.id)) continue;
+      // ~1/500 base, eased slightly on true bosses/supremes so a Demon Lord is a
+      // better legendary farm than a random level-60 mob, but still ~1/350.
+      const N = (c.boss || c.supreme) ? 350 : 500;
+      c.loot.push({ itemId: leg.id, chance: +(1 / N).toFixed(5) });
     }
   }
 }
@@ -1071,6 +1129,36 @@ for (const c of CREATURES) {
 
 // Spread level-appropriate, non-class gear across every creature.
 addNonThematicGear(CREATURES);
+
+// Seed legendary-tier gear onto the strongest foes at ~1/500 (the user's rule).
+addLegendaryDrops(CREATURES);
+
+// QUEST DUSTS: themed families grind a stackable "dust" the keymaster NPCs demand
+// (e.g. 100 demon dust + 50 vampire dust → a demon-bone key). Fairly common (~40%)
+// so the collection quests are a real grind without being a slot-machine.
+const DUST_BY_FAMILY = {
+  demon: 'demon-dust', imp: 'demon-dust', gargoyle: 'demon-dust',
+  vampire: 'vampire-dust', bat: 'vampire-dust',
+  dragon: 'dragon-dust', wyvern: 'dragon-dust', crystal_dragon: 'frost-dust', hydra: 'dragon-dust',
+  skeleton: 'undead-dust', zombie: 'undead-dust', ghost: 'undead-dust', wraith: 'undead-dust',
+  // wider web for the mid-tier gear quests
+  orc: 'orc-dust', goblin: 'orc-dust', kobold: 'orc-dust',
+  troll: 'troll-dust', ogre: 'troll-dust',
+  scorpion: 'desert-dust', beetle: 'desert-dust',   // beetle covers scarabs
+  elemental: 'ele-dust', golem: 'ele-dust',
+  wolf: 'beast-dust', bear: 'beast-dust', tiger: 'beast-dust', boar: 'beast-dust',
+  cultist: 'ghoul-dust', mage: 'ele-dust', cyclops: 'troll-dust',
+};
+for (const c of CREATURES) {
+  const dust = DUST_BY_FAMILY[c.family];
+  if (!dust) continue;
+  if (c.loot.some((l) => l.itemId === dust)) continue;
+  c.loot.push({ itemId: dust, chance: 0.4 });
+  // Ice/frost variants also drop frost dust on top of their family dust.
+  if (/frost|ice|winter|glacial|crystal/.test(c.id) && dust !== 'frost-dust') {
+    c.loot.push({ itemId: 'frost-dust', chance: 0.4 });
+  }
+}
 
 // Behaviour flags read by combat.js: which families FLEE at low HP, which FLY,
 // and which inflict a status. Applied per family so the AI/status systems light
