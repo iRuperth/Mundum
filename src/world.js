@@ -77,16 +77,41 @@ export class World {
     this.matRock = new THREE.MeshLambertMaterial({ color: 0x8d8d86, flatShading: true });
     this.matCactus = new THREE.MeshLambertMaterial({ color: 0x4e8a4a, flatShading: true });
 
-    this.geoTrunk = new THREE.CylinderGeometry(0.16, 0.26, 1.7, 5);
+    // A small deterministic vertex jitter turns smooth primitives into knobbly,
+    // hand-carved looking shapes — bark ridges on trunks, lumpy foliage, craggy
+    // rocks — without adding any draw calls (these are instanced base geometries,
+    // so the cost is paid exactly once). flatShading then faceting reads each
+    // displaced face as its own plane, giving real relief in the lighting.
+    const jitter = (geo, amt, seed) => {
+      const p = geo.attributes.position;
+      let s = seed >>> 0;
+      const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296 - 0.5; };
+      for (let i = 0; i < p.count; i++) {
+        p.setXYZ(i, p.getX(i) + rnd() * amt, p.getY(i) + rnd() * amt, p.getZ(i) + rnd() * amt);
+      }
+      p.needsUpdate = true;
+      geo.computeVertexNormals();
+      return geo;
+    };
+
+    // Trunk: more sides + a gentle bark wobble so it isn't a clean cone.
+    this.geoTrunk = new THREE.CylinderGeometry(0.16, 0.28, 1.7, 7);
     this.geoTrunk.translate(0, 0.85, 0);
-    this.geoCanopy = new THREE.IcosahedronGeometry(1.45, 0);
+    jitter(this.geoTrunk, 0.05, 0x51a2e3);
+    // Canopy: bump the icosahedron to detail 1 (more faces) then push the
+    // vertices around so the foliage looks clumpy and full instead of a ball.
+    this.geoCanopy = new THREE.IcosahedronGeometry(1.45, 1);
     this.geoCanopy.scale(1, 1.3, 1);
     this.geoCanopy.translate(0, 2.8, 0);
-    this.geoRock = new THREE.IcosahedronGeometry(0.8, 0);
+    jitter(this.geoCanopy, 0.34, 0x9e3779);
+    // Rock: detail 1 + heavy jitter = a proper craggy boulder with facets.
+    this.geoRock = new THREE.IcosahedronGeometry(0.8, 1);
     this.geoRock.scale(1, 0.72, 1);
-    // A simple columnar cactus (one tall ribbed-looking cylinder), instanced.
-    this.geoCactus = new THREE.CylinderGeometry(0.28, 0.34, 1.9, 7);
+    jitter(this.geoRock, 0.22, 0x2545f9);
+    // A columnar cactus: more ribs + slight wobble so each segment reads.
+    this.geoCactus = new THREE.CylinderGeometry(0.28, 0.34, 1.9, 9);
     this.geoCactus.translate(0, 0.95, 0);
+    jitter(this.geoCactus, 0.035, 0x7f4a2b);
 
     const viewDist = radius * CHUNK * 0.92;
     scene.fog = new THREE.Fog(0x7ec9ff, viewDist * 0.45, viewDist);
@@ -104,6 +129,24 @@ export class World {
   // the next `rim` meters it eases back to natural terrain.
   registerCityFlat(x, z, y, radius, rim = 8) {
     this.cityFlats.push({ x, z, y, radius, rim });
+  }
+
+  // 0 inside any city's flat core, ramping to 1 past its rim. Used to fade the
+  // cosmetic ground bump OUT under cities so the lumpy terrain never pokes up
+  // through the flat paved slabs (that mismatch showed as grass slivers between
+  // the cobbles and a hard seam across the plaza).
+  cityFlatFactor(x, z) {
+    let f = 1;
+    for (const c of this.cityFlats) {
+      const d = Math.hypot(x - c.x, z - c.z);
+      if (d <= c.radius) return 0;
+      const reach = c.radius + c.rim;
+      if (d < reach) {
+        const t = (d - c.radius) / c.rim;     // 0 at pad edge → 1 at rim edge
+        f = Math.min(f, t * t * (3 - 2 * t)); // smoothstep
+      }
+    }
+    return f;
   }
 
   // Register a permanent collidable circle (building wall segment, crate, etc.).
@@ -159,6 +202,27 @@ export class World {
   }
 
   heightAt(x, z) {
+    // City pads FIRST, with squared distances (no sqrt). A point inside a pad
+    // CORE (d <= radius) is exactly that pad's flat level — and the core ALWAYS
+    // wins, even if a nearby city's wider rim also reaches here, so two cities
+    // whose influence zones overlap never let one city's sloping rim poke up
+    // through the other's flat ground (that mismatch made walls/trees float at a
+    // city edge). Resolving the core here lets us return BEFORE the expensive
+    // terrain noise below — a city's chunks have thousands of in-core vertices
+    // that used to compute (and discard) three fbm octaves each; skipping that is
+    // what removes the hitch when crossing a city's edge. Only when a point is in
+    // no core but one or more rims do we compute the natural height and blend.
+    let bestRim = null, bestRimD = Infinity;
+    for (const c of this.cityFlats) {
+      const dx = x - c.x, dz = z - c.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 <= c.radius * c.radius) return c.y;     // inside a flat core: done, no noise
+      const reach = c.radius + c.rim;
+      if (d2 >= reach * reach) continue;             // outside this city's reach
+      const edge = Math.sqrt(d2) - c.radius;         // how far into the rim
+      if (edge < bestRimD) { bestRimD = edge; bestRim = c; }
+    }
+
     const n = this.noise;
     const cont = n.fbm(x * 0.0016, z * 0.0016, 3);
     const hills = n.fbm(x * 0.012 + 71, z * 0.012 - 33, 4);
@@ -179,20 +243,6 @@ export class World {
     h = (h + 6) * mask - 6;            // lift then scale so beaches stay near 0
     if (mask <= 0) h = Math.min(h, -3 - (Math.hypot(x, z) - WORLD_RADIUS) * 0.02);
 
-    // City pads. A point inside a pad CORE (d <= radius) is exactly that pad's
-    // flat level — and the core ALWAYS wins, even if a nearby city's wider rim
-    // also reaches here, so two cities whose influence zones overlap never let
-    // one city's sloping rim poke up through the other's flat ground (that
-    // mismatch is what made walls/trees float at a city edge). Only when a point
-    // is in no core but one or more rims do we blend, taking the nearest rim.
-    let bestRim = null, bestRimD = Infinity;
-    for (const c of this.cityFlats) {
-      const d = Math.hypot(x - c.x, z - c.z);
-      if (d <= c.radius) return c.y;                 // inside a flat core: done
-      if (d >= c.radius + c.rim) continue;           // outside this city's reach
-      const edge = d - c.radius;                     // how far into the rim
-      if (edge < bestRimD) { bestRimD = edge; bestRim = c; }
-    }
     if (bestRim) {
       const t = (bestRimD) / bestRim.rim;            // 0 at pad edge, 1 at rim edge
       const k = t * t * (3 - 2 * t);                 // smoothstep
@@ -242,6 +292,25 @@ export class World {
     const north = -z + wobble;
     if (north <= SNOW_EDGE) return 0;
     return Math.min(1, (north - SNOW_EDGE) / (SNOW_FULL - SNOW_EDGE));
+  }
+
+  // Cold AND heat at once, sharing the cold noise so it's computed only once.
+  // Returns { cold, heat } identical to coldFactor()/heatFactor() but ~3× cheaper
+  // than calling biomeAt + coldFactor + heatFactor separately (each of which
+  // recomputed the same fbm). Used by the per-vertex chunk build, the hot path.
+  climateAt(x, z, h) {
+    const n = this.noise;
+    // cold (== coldFactor == _coldRaw)
+    const coldWob = (n.fbm(x * 0.0012 + 9, z * 0.0012, 3) - 0.5) * 420
+                  + (n.fbm(x * 0.0035 + 51, z * 0.0035, 4) - 0.5) * 200;
+    const north = -z + coldWob;
+    const cold = north <= SNOW_EDGE ? 0 : Math.min(1, (north - SNOW_EDGE) / (SNOW_FULL - SNOW_EDGE));
+    // heat (== heatFactor), with cold winning ties
+    const heatWob = (n.fbm(x * 0.0012 + 77, z * 0.0012 - 40, 3) - 0.5) * 480;
+    let east = x + heatWob - Math.max(0, h - 14) * 14;
+    let heat = east <= TEMPERATE_EDGE ? 0 : Math.min(1, (east - TEMPERATE_EDGE) / (REGION_EDGE - TEMPERATE_EDGE));
+    heat = Math.max(0, heat - cold);
+    return { cold, heat };
   }
 
   // The discrete biome at a world point, derived from the smooth climate. Coast
@@ -308,9 +377,20 @@ export class World {
       this.queue = this.queue.filter((q) => !this.chunks.has(q.key));
     }
     {
-      const deadline = performance.now() + 6;   // ~6 ms of chunk work per frame
+      // Time-budgeted streaming. A single chunk costs several ms, so we check the
+      // deadline BEFORE each build and stop once we'd overrun — that keeps any one
+      // frame from stacking two heavy builds (the hitch when crossing into a new
+      // area). We still force exactly ONE chunk only while the player is standing
+      // on missing ground (the very first chunks under them), so they never fall
+      // through; once the immediate ring exists, builds happen purely in spare
+      // time and the rest of the radius fills over the next frames.
+      const here = `${cx},${cz}`;
+      const standingOnGap = !this.chunks.has(here);
+      const deadline = performance.now() + 5;   // ~5 ms of chunk work per frame
       let built = 0;
-      while (this.queue.length && (built < 1 || performance.now() < deadline)) {
+      while (this.queue.length) {
+        const forceOne = standingOnGap && built === 0;
+        if (!forceOne && performance.now() >= deadline) break;
         const { key, cx: qx, cz: qz } = this.queue.shift();
         if (!this.chunks.has(key)) { this._buildChunk(qx, qz); built++; }
       }
@@ -361,15 +441,25 @@ export class World {
     for (let i = 0; i < pos.count; i++) {
       const wx = pos.getX(i) + ox, wz = pos.getZ(i) + oz;
       const h = this.heightAt(wx, wz);
-      pos.setY(i, h);
+      // Purely-visual micro-relief: a fine high-frequency bump on top of the
+      // gameplay height so grass/dirt/sand has lumps and tussocks instead of a
+      // glassy surface. Kept tiny (a few cm) and NOT fed back into heightAt, so
+      // collision, spawning and placement still use the smooth ground. Faded out
+      // under city pads so the lumpy ground never pokes through the flat paving.
+      const bumpF = this.cityFlatFactor(wx, wz);
+      const bump = bumpF * ((n.fbm(wx * 0.45 + 13, wz * 0.45 - 9, 2) - 0.5) * 0.16
+                 + (n.fbm(wx * 1.7 - 5, wz * 1.7 + 21, 1) - 0.5) * 0.06);
+      pos.setY(i, h + bump);
       const slope = (Math.abs(this.heightAt(wx + 1.3, wz) - h) +
                      Math.abs(this.heightAt(wx, wz + 1.3) - h)) / 1.3;
       const jitter = n.hash(Math.round(wx * 7), Math.round(wz * 7));
-      const biome = this.biomeAt(wx, wz, h);   // reuse the height we just computed
 
-      // Smooth climate so frost and sand blend IN gradually across the fringe.
-      const cold = this.coldFactor(wx, wz, h);
-      const heat = this.heatFactor(wx, wz, h);
+      // Smooth climate (cold/heat) computed ONCE, then the discrete biome derived
+      // from it — instead of biomeAt + coldFactor + heatFactor each recomputing
+      // the same noise. This is the per-vertex hot path, so the saving is large.
+      const { cold, heat } = this.climateAt(wx, wz, h);
+      const biome = h < 1.4 ? 'beach' : h > 22 ? 'mountain'
+                  : cold >= 0.5 ? 'snow' : heat >= 0.5 ? 'desert' : 'forest';
       if (h < 1.1) {
         // Coast: snowy shores read icy, deserts get pale sand, rest is normal sand.
         if (biome === 'snow') tmpColor.copy(C_SNOW_GRASS);
