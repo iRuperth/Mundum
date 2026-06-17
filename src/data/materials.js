@@ -113,6 +113,42 @@ const M = [
   // scraps & tomes
   ['rags',          'Harapos',              'Rags',                 2,   0x9a8a7a, '🧷'],
   ['dark-tome',     'Tomo Oscuro',          'Dark Tome',            34,  0x553366, '📕'],
+
+  // --- QUEST DUSTS: ground from slain foes, demanded by keymaster NPCs. These
+  // drop from their themed family (seeded in creatures.js) and are spent to earn
+  // a quest KEY. Worth a little gold so they're never pure dead weight.
+  ['demon-dust',    'Polvo de Demonio',     'Demon Dust',           18,  0xaa1111, '🌋'],
+  ['vampire-dust',  'Polvo de Vampiro',     'Vampire Dust',         16,  0x661122, '🩸'],
+  ['dragon-dust',   'Polvo de Dragón',      'Dragon Dust',          20,  0xcc3322, '✨'],
+  ['undead-dust',   'Polvo de los Muertos', 'Undead Dust',          12,  0xccddee, '💀'],
+  ['frost-dust',    'Polvo Helado',         'Frost Dust',           14,  0xbfe8ff, '❄️'],
+
+  // more dusts for the wider quest web (mid-tier families)
+  ['orc-dust',      'Polvo de Orco',        'Orc Dust',             10,  0x6a8a4a, '🟢'],
+  ['troll-dust',    'Polvo de Troll',       'Troll Dust',           9,   0x6a7a5a, '🟫'],
+  ['desert-dust',   'Polvo del Desierto',   'Desert Dust',          11,  0xe8c87a, '🏜️'],
+  ['ele-dust',      'Polvo Elemental',      'Elemental Dust',       16,  0xddddff, '🌀'],
+  ['beast-dust',    'Polvo de Bestia',      'Beast Dust',           10,  0x9a6a3a, '🐾'],
+  ['ghoul-dust',    'Polvo de Necrópolis',  'Necropolis Dust',      14,  0xb8a878, '⚱️'],
+
+  // --- QUEST KEYS: distinctive, imaginative entry tokens. NOT a generic key —
+  // each is a themed object you barter or brandish to pass a guardian/gate. The
+  // quest that grants the key is the "puzzle"; the legendary quest needs it held.
+  ['demon-bone',       'Hueso de Demonio',      'Demon Bone',         0, 0xe8e0d0, '🦴'],
+  ['blood-signet',     'Sello de Sangre',       'Blood Signet',       0, 0x661122, '💍'],
+  ['dragon-seal',      'Sello del Dragón',      'Dragon Seal',        0, 0xcc3322, '🐉'],
+  ['grave-lantern',    'Linterna de Tumba',     'Grave Lantern',      0, 0x88ffaa, '🏮'],
+  ['abyssal-sigil',    'Sigilo Abisal',         'Abyssal Sigil',      0, 0x4a0030, '🔯'],
+  ['frost-heart',      'Corazón de Escarcha',   'Frost Heart',        0, 0xbfe8ff, '💠'],
+  ['warden-acorn',     'Bellota del Guardián',  "Warden's Acorn",     0, 0x6ab04c, '🌰'],
+  ['orc-queen-token',  'Pendiente de la Reina Orca', "Orc Queen's Pendant", 0, 0xd9b34a, '📿'],
+  ['phoenix-feather',  'Pluma de Fénix',        'Phoenix Feather',    0, 0xff9933, '🪶'],
+  ['tide-pearl',       'Perla de la Marea',     'Tide Pearl',         0, 0x4fe6e0, '🫧'],
+  ['storm-totem',      'Tótem de Tormenta',     'Storm Totem',        0, 0x88ccff, '🗿'],
+  ['sun-scarab',       'Escarabajo Solar',      'Sun Scarab',         0, 0xffd24a, '🪲'],
+  ['cursed-coin',      'Moneda Maldita',        'Cursed Coin',        0, 0x9a6cff, '🪙'],
+  ['ancient-cog',      'Engranaje Ancestral',   'Ancient Cog',        0, 0x888888, '⚙️'],
+  ['giant-relic',      'Reliquia del Gigante',  "Giant's Relic",      0, 0x8a7a5a, '🗿'],
 ];
 
 // Loot ids that some variants list but that map to gear/handled items elsewhere.
