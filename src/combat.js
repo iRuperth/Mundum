@@ -465,7 +465,7 @@ class Creature {
           }
         } else {
           let dmg = this.def.attack * (isNight ? 1.3 : 1);
-          dmg = Math.max(1, Math.round(dmg - player.defense * 0.5));
+          dmg = Math.max(1, Math.round(dmg - player.defense * 0.35));
           // Ranged shows a flying projectile; melee/caster hit directly.
           if (ranged) this.combatHooks.spawnEnemyShot(this.pos, player.pos, dmg, this);
           else onPlayerHit(dmg, this);
@@ -1013,22 +1013,23 @@ export class CombatSystem {
     const dlen = Math.hypot(camDir.x, camDir.y, camDir.z) || 1;
     const rx = camDir.x / dlen, ry = camDir.y / dlen, rz = camDir.z / dlen;
 
-    let best = null, bestScore = -Infinity;
-    const MIN_DOT = 0.86;       // aim cone (~30°), forgiving of height differences
+    // Precise: the crosshair locks onto a creature only when the camera ray
+    // actually passes through its body capsule (feet→head), so a creature higher
+    // up a slope, in a pit, or flying overhead is marked exactly when the cross
+    // is on it — not merely "roughly ahead". Pick the NEAREST such creature.
+    // A tiny tolerance beyond the radius gives gentle aim-assist without locking
+    // things the cross clearly isn't on.
+    let best = null, bestT = Infinity;
     for (const c of this.creatures) {
       if (c.dead || c.dying) continue;
       const pdx = c.pos.x - player.pos.x, pdz = c.pos.z - player.pos.z;
       if (Math.hypot(pdx, pdz) > reach) continue;          // horizontal reach only
-      // Direction from the eye to the creature's torso.
-      const cy = c.pos.y + 0.9 * (c.def.variantScale || 1);
-      let tx = c.pos.x - ox, ty = cy - oy, tz = c.pos.z - oz;
-      const tl = Math.hypot(tx, ty, tz) || 1;
-      tx /= tl; ty /= tl; tz /= tl;
-      const dot = tx * rx + ty * ry + tz * rz;             // 1 = dead center
-      if (dot < MIN_DOT) continue;                          // outside the aim cone
-      // Prefer better-aligned, then nearer creatures.
-      const score = dot * 100 - tl * 0.1;
-      if (score > bestScore) { bestScore = score; best = c; }
+      const b = creatureBody(c);
+      const hit = rayVsVertSeg(ox, oy, oz, rx, ry, rz, b.bx, b.y0, b.y1, b.bz);
+      if (hit.t <= 0) continue;                             // behind the camera
+      const tol = b.r + 0.12;                               // small aim-assist pad
+      if (hit.d2 > tol * tol) continue;                     // ray misses the body
+      if (hit.t < bestT) { bestT = hit.t; best = c; }       // nearest along the ray
     }
     this.setTarget(best);
     return best;
@@ -1069,25 +1070,21 @@ export class CombatSystem {
     const dlen = Math.hypot(camDir.x, camDir.y, camDir.z) || 1;
     const rx = camDir.x / dlen, ry = camDir.y / dlen, rz = camDir.z / dlen;
 
+    // Hit exactly what the crosshair is on: test the camera ray against each
+    // creature's body CAPSULE (feet→head) — the same geometry the red-cross lock
+    // uses — and take the nearest one the ray actually passes through. Accurate
+    // regardless of the creature's height relative to the player.
     let best = null, bestT = Infinity;
     for (const c of this.creatures) {
       if (c.dead || c.dying) continue;
       // Horizontal reach is measured from the player, not the camera.
       const pdx = c.pos.x - player.pos.x, pdz = c.pos.z - player.pos.z;
       if (Math.hypot(pdx, pdz) > reach) continue;
-
-      // Sphere centered on the creature's torso, radius scaled to its size.
-      const r = 0.7 * (c.def.variantScale || 1) + 0.35;
-      const cx = c.pos.x, cy = c.pos.y + 0.9 * (c.def.variantScale || 1), cz = c.pos.z;
-      const mx = ox - cx, my = oy - cy, mz = oz - cz;
-      const b = mx * rx + my * ry + mz * rz;
-      const cc = mx * mx + my * my + mz * mz - r * r;
-      if (cc > 0 && b > 0) continue;          // ray points away from the sphere
-      const disc = b * b - cc;
-      if (disc < 0) continue;                 // ray misses the sphere
-      const tHit = -b - Math.sqrt(disc);      // nearest intersection distance
-      const t = tHit < 0 ? 0 : tHit;
-      if (t < bestT) { bestT = t; best = c; }
+      const bd = creatureBody(c);
+      const hit = rayVsVertSeg(ox, oy, oz, rx, ry, rz, bd.bx, bd.y0, bd.y1, bd.bz);
+      if (hit.t <= 0) continue;               // behind the camera
+      if (hit.d2 > bd.r * bd.r) continue;     // ray misses the body capsule
+      if (hit.t < bestT) { bestT = hit.t; best = c; }
     }
     if (!best) return null;
     return this._resolveHit(player, best);
@@ -1129,12 +1126,16 @@ export class CombatSystem {
       return { creature: best, dmg: 0, killed: false, mult, miss: true };
     }
 
-    // Tibia damage shape: maxHit = K · skill · weaponAtk + level/5, rolled, then
-    // armor is subtracted. player.damageMul folds in vocation + passive skills.
-    const weaponAtk = (w ? w.atk : 7);
-    const maxHit = (0.085 * skill * weaponAtk + (player.level || 1) / 5) * (player.damageMul || 1);
+    // Tibia damage shape: maxHit = K · skill · weaponAtk + level/LVL_DIV, rolled,
+    // then armor is subtracted. player.damageMul folds in vocation + passive
+    // skills. Constants tuned for the compressed weaponAtk<=53 scale (see plan):
+    // a bow also adds its equipped quiver's flat arrowAtk to weaponAtk.
+    const K = 0.055, LVL_DIV = 8, DEF_SUB = 0.25;
+    let weaponAtk = (w ? w.atk : 7);
+    if (w && w.type === 'bow') weaponAtk += (player.arrowAtk || 0);
+    const maxHit = (K * skill * weaponAtk + (player.level || 1) / LVL_DIV) * (player.damageMul || 1);
     const rolled = maxHit * (0.5 + this.rng() * 0.5);  // 50-100% of max
-    let dmg = Math.max(0, Math.round((rolled - best.def.defense * 0.3) * mult));
+    let dmg = Math.max(0, Math.round((rolled - best.def.defense * DEF_SUB) * mult));
     if (mult === 0) dmg = 0;
     // The level penalty normally lives in the MISS roll, but a guaranteed
     // (red-cross) hit never misses — so for it we carry the penalty over into a
