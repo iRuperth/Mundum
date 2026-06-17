@@ -1879,15 +1879,30 @@ function castSkill(skill) {
     return;
   }
 
-  // Effect strength comes from the SKILL level; Magic Level (use-skill) and any
-  // active damage buff scale it further — so a mage's spells clearly out-hit a
-  // knight's, matching the user's "magic level raises power" intent.
-  // Ring/amulet magic-level bonus boosts spell power at the same 1.5%/level rate.
+  // Spell DAMAGE follows the Tibia formula F = level*2 + magicLevel*3 (+ the skill
+  // points you put in the spell), scaled by a per-class multiplier — so a mage's
+  // ultimate climbs past 2000 with no cap while a knight's strongest strike stays
+  // a few hundred. Magic level (the 'magic' use-skill, plus any ring bonus) feeds
+  // F directly. Heals/buffs/summons keep their literal value (no damage scaling).
+  // TAUNT (knight Challenge): force every nearby creature to aggro the player.
+  // No damage — pure threat control. Still plays its fx (a roar) so it reads.
+  if (def.taunt) {
+    combat.tauntArea(player.pos, def.radius || 6);
+    skillSystem.cast(def, player.pos, player.yaw, skillLv, {});
+    gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+    return;
+  }
+
   const mlRing = inv.equipBonus ? inv.equipBonus('magicLevelBonus') : 0;
-  const statMul = (charStats.spellPowerMul() + mlRing * 0.015) * buffMods().damageMul;
+  const magicLevel = charStats.useSkill('magic') + mlRing;
+  const dmgMul = spellDamageMul(player.level, magicLevel, skillLv, player.profession) * buffMods().damageMul;
+  const statMul = isDamageSkill(def) ? dmgMul : 1;   // non-damage skills: raw value
+  // The status a damage spell leaves behind (sorcerer fire → burn; druid ice/
+  // poison → slow / poison / both). Read straight off the skill definition.
+  const inflict = def.inflicts || null;
   skillSystem.cast(def, player.pos, player.yaw, skillLv, {
     damageArea: (center, radius, amount) => {
-      const hits = combat.damageArea(center, radius, Math.round(amount * statMul));
+      const hits = combat.damageArea(center, radius, Math.round(amount * statMul), inflict);
       if (hits) shakeAmount = Math.min(0.5, shakeAmount + 0.12);
     },
     healPlayer: (amount) => {
@@ -3292,6 +3307,7 @@ function tick() {
       }
 
       if (place === 'surface') { checkDungeon(); maybeDescend(); }
+      else if (place === 'house') maybeLeaveHouse();
       else maybeAscend();
       regenVitals(dt);
       // Burn/poison drain + ice slow. The slow factor feeds player movement.
