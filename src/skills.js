@@ -67,6 +67,7 @@ const FX = {
   meteor: '_fxMeteor',
   frozen_orb: '_fxFrozenOrb',
   holy_nova: '_fxHolyNova',
+  wave: '_fxWave',                 // directional cone (vis/frigo/flam hur style)
   // Knight melee
   slash_arc: '_fxSlashArc',
   double_slash: '_fxDoubleSlash',
@@ -335,6 +336,31 @@ export class SkillSystem {
     this._spawnPillar(strike, radius * 0.5, radius * 3.0, mixHex(p.color, 0xffffff, 0.6), 0.3);
     this._spawnNova(strike, radius * 1.4, 0xffffff, 0.22, true); // strike flash
     this._spawnBurst(strike, radius, mixHex(p.color, 0xffffff, 0.4), 8, 0.4);
+    return true;
+  }
+
+  // A directional WAVE (Tibia vis/frigo/flam hur): a cone of elemental energy
+  // that sweeps forward from the caster. Damage is applied at several points
+  // marching out along the aim direction, each in a small radius, so everything
+  // in the cone is hit. Visually: a row of expanding discs widening with range.
+  _fxWave(p) {
+    const range = p.skill.range || 9;
+    const steps = 4;                       // damage sample points along the cone
+    const start = p.casterPos.clone();
+    // Split the spell's power across the cone samples so a creature caught in two
+    // overlapping circles isn't hit for the full amount twice (a wave should equal
+    // one nuke spread over a line, not 2-4× it). Status (burn/poison/slow) is
+    // applied via combat.applyStatus on each hit but max()-merges, so it's fine.
+    const per = p.amount * 0.55;
+    for (let i = 1; i <= steps; i++) {
+      const d = (range / steps) * i;
+      const w = 1.4 + (d / range) * (p.radius || 3.2);   // cone widens with distance
+      const c = start.clone().addScaledVector(p.dir, d);
+      c.y = this._groundY(c.x, c.z) + 0.05;
+      this._damage(p.ctx, c, w, per);
+      this._spawnDisc(c, w, p.color, 0.4 + (steps - i) * 0.06);   // outer discs linger less
+      this._spawnNova(c, w * 0.8, mixHex(p.color, 0xffffff, 0.4), 0.22, true);
+    }
     return true;
   }
 
