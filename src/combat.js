@@ -2,15 +2,18 @@ import * as THREE from 'three';
 import { buildCreatureModel } from './creatureModels.js';
 import './creatureDesigns.js';        // side effect: registers the authored creature designs
 import './creatureDesignsExtra.js';   // side effect: hand-authored vermin + dragon designs
+import './mountDesigns.js';           // side effect: mount + tiger + ice-dragon designs
 import { buildLootBagMesh } from './itemMeshes.js';
+import { buildCreatureLairDecor, disposeLairDecor } from './creatureDecor.js';
 import { creaturesForLevel, CREATURES, getCreature } from './data/creatures.js';
 import { zonePoolAt, wildernessLevelAt } from './zones.js';
 import { elementMultiplier } from './data/items.js';
 import { resolveItem } from './inventory.js';
 import { getLang } from './i18n.js';
-import { cityAt } from './cities.js';
+import { cityAt, capitalSafeLevelCap } from './cities.js';
 
 const MAX_ALIVE = 22;
+const MAX_PETS = 2;          // a druid keeps at most two loyal summons at once
 const SPAWN_RADIUS = 42;
 const DESPAWN_RADIUS = 70;
 const ATTACK_RANGE = 2.4;
@@ -80,7 +83,7 @@ class Creature {
     this.dungeon = opts.dungeon || null;            // in a cave: don't leash to cities
     this.rngFn = opts.rng || Math.random;           // shared deterministic rng
     this.combatHooks = opts.combatHooks || { spawnEnemyArea() {}, spawnEnemyShot() {} };
-    this.model = buildCreatureModel(def.family, { color: def.color, scale: def.variantScale });
+    this.model = buildCreatureModel(def.family, { color: def.color, scale: def.variantScale, design: def.design, boss: !!(def.boss || def.supreme) });
     scene.add(this.model.group);
 
     this.bar = makeHealthBar();
@@ -98,6 +101,7 @@ class Creature {
     this.dying = false;
     this.deathT = 0;
     this.flashT = 0;
+    this.targeted = false;       // true while it's the player's aimed-at target
     this._mats = [];
     this.model.group.traverse((o) => { if (o.material && o.material.emissive) this._mats.push(o.material); });
 
@@ -112,9 +116,33 @@ class Creature {
 
   flash() { this.flashT = 0.12; }
 
+  // Mark/unmark this creature as the player's current target. While targeted it
+  // glows a steady red so the player can see exactly who their next hit/shot
+  // lands on, even when the creature is above or below them. Restores the normal
+  // (unlit) look when cleared.
+  setTargeted(on) {
+    if (this.targeted === on) return;
+    this.targeted = on;
+    if (this.flashT <= 0) this._applyEmissive();   // don't fight an active hit-flash
+  }
+
+  // Write the current emissive tint: a hit-flash (white) wins while it lasts,
+  // else the target glow (red) if targeted, else nothing.
+  _applyEmissive() {
+    if (this.targeted) { for (const m of this._mats) m.emissive.setRGB(0.55, 0.04, 0.04); }
+    else { for (const m of this._mats) m.emissive.setRGB(0, 0, 0); }
+  }
+
+  // Put the visible model at the creature's logical position, lifted by the
+  // model's footOffset so its lowest point (feet) rests ON the terrain instead of
+  // sinking through it. pos.y stays the ground height for AI / line-of-sight.
+  _placeModel() {
+    this.model.group.position.set(this.pos.x, this.pos.y + (this.model.footOffset || 0), this.pos.z);
+  }
+
   placeAt(x, z) {
     this.pos.set(x, this.world.heightAt(x, z), z);
-    this.model.group.position.copy(this.pos);
+    this._placeModel();
     this.homeX = x; this.homeZ = z;
     // Seed this creature's RNG from its spawn point so its roaming is varied but
     // stable, then pick an initial roam target right away (always in motion).
@@ -158,7 +186,9 @@ class Creature {
     if (this.flashT > 0) {
       this.flashT -= dt;
       const k = Math.max(0, this.flashT / 0.12);
-      for (const m of this._mats) m.emissive.setRGB(k, k, k);
+      // White hit-flash; when it fades, fall back to the target glow (or nothing).
+      if (this.flashT <= 0) this._applyEmissive();
+      else for (const m of this._mats) m.emissive.setRGB(Math.max(k, this.targeted ? 0.5 : 0), k * 0.5, k * 0.5);
     }
     if (this.dying) {
       this.nameTag.visible = false;
@@ -176,7 +206,10 @@ class Creature {
     if (this.dead) return;
     const dx = player.pos.x - this.pos.x;
     const dz = player.pos.z - this.pos.z;
-    const dist = Math.hypot(dx, dz);
+    // Floor the distance to a tiny epsilon so the `dx / dist` movement steps
+    // below never divide by zero (player standing exactly on the creature would
+    // otherwise NaN its position, freezing it and making it un-despawnable).
+    const dist = Math.max(1e-4, Math.hypot(dx, dz));
     const distHome = Math.hypot(this.pos.x - this.homeX, this.pos.z - this.homeZ);
 
     // RANGED attackers (archers, spearmen) keep their distance and shoot;
@@ -206,7 +239,7 @@ class Creature {
         this.yaw = Math.atan2(hx, hz);
       }
       this.pos.y = this.world.heightAt(this.pos.x, this.pos.z);
-      this.model.group.position.copy(this.pos);
+      this._placeModel();
       this.model.group.rotation.y = this.yaw;
       this.model.update(dt, true);
       this._updateLabels(player, eye);
@@ -231,7 +264,7 @@ class Creature {
       this.yaw = Math.atan2(-dx, -dz);   // face away
       this._applyFlight(dt, true);
       this.pos.y = this.world.heightAt(this.pos.x, this.pos.z) + (this._flyY || 0);
-      this.model.group.position.copy(this.pos);
+      this._placeModel();
       this.model.group.rotation.y = this.yaw;
       this.model.update(dt, true);
       this._updateLabels(player, eye);
@@ -309,7 +342,7 @@ class Creature {
     const inAtkRange = ranged ? (dist <= engageRange) : (dist <= ATTACK_RANGE);
     this._applyFlight(dt, false, wantsPlayer && !inAtkRange);
     this.pos.y = this.world.heightAt(this.pos.x, this.pos.z) + (this._flyY || 0);
-    this.model.group.position.copy(this.pos);
+    this._placeModel();
     this.model.group.rotation.y = this.yaw;
     this.model.update(dt, moving);
     this._updateLabels(player, eye);
@@ -379,6 +412,11 @@ class Creature {
       if (this.nameTag.material.map) this.nameTag.material.map.dispose();
       this.nameTag.material.dispose();
     }
+    // Tear down the lair scenery built at spawn (open-world creatures only).
+    // disposeLairDecor removes the group from the scene and drops child
+    // references; it deliberately keeps the shared module-level geometries/
+    // materials alive for the next lair (see creatureDecor.js disposal contract).
+    if (this._lairDecor) { disposeLairDecor(this._lairDecor); this._lairDecor = null; }
     this.scene.remove(this.model.group);
     this.model.dispose();
   }
@@ -411,7 +449,7 @@ function threatColor(diff) {
   return '#7bed6f';                   // green: weaker than you
 }
 
-function makeNameTag(text, aggressive, color) {
+function makeNameTag(text, aggressive, color, scale = 0.55) {
   const label = aggressive ? `⚔ ${text}` : text;
   const pad = 12, fontPx = 44;
   const c = document.createElement('canvas');
@@ -434,7 +472,6 @@ function makeNameTag(text, aggressive, color) {
   tex.minFilter = THREE.LinearFilter;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
   sprite.renderOrder = 1000;
-  const scale = 0.55;
   sprite.scale.set((w / h) * scale, scale, 1);
   return sprite;
 }
@@ -448,6 +485,7 @@ export class CombatSystem {
     this.drops = [];
     this.spawnTimer = 0;
     this.dungeon = null;
+    this.currentTarget = null;     // the creature the crosshair is locked onto
     this.rng = mulberry(987654321);
   }
 
@@ -534,6 +572,18 @@ export class CombatSystem {
           (c) => (c.spawnBiome === biome || c.spawnBiome === 'anywhere') && !c.supreme);
         list = pool.length ? pool : creaturesForLevel(lv).filter((c) => !c.supreme);
       }
+
+      // STARTER-RING SAFETY: brand-new level-1 players gather just outside the
+      // capital, so no strong creature may spawn there — cap the pool to weak
+      // foes within the capital's protected ring (even if a tougher zone disc
+      // happens to reach this close). Outside the ring the cap is null = no limit.
+      const cap = capitalSafeLevelCap(x, z);
+      if (cap != null) {
+        const safe = list.filter((c) => (c.level || 1) <= cap);
+        // Fall back to the gentlest creatures in the world if nothing in the
+        // current pool is weak enough, so the ring is never empty.
+        list = safe.length ? safe : CREATURES.filter((c) => !c.supreme && (c.level || 1) <= cap);
+      }
     }
     if (!list.length) return;
     const def = list[Math.floor(this.rng() * list.length)];
@@ -546,6 +596,14 @@ export class CombatSystem {
       },
     });
     c.placeAt(x, z);
+    // Thematic GROUND scenery around this lair (hydra eggs, scorch marks, bones,
+    // poison pools, cobwebs, camp gear). Surface/zone spawns only: inside a cave
+    // buildEntranceDecor already themes the floor, so skip it there to avoid
+    // double decoration. Pure decoration — not added to any pickup/loot/collision.
+    if (!this.dungeon) {
+      const decor = buildCreatureLairDecor(def, x, z, this.world);
+      if (decor) { this.scene.add(decor); c._lairDecor = decor; }
+    }
     this.creatures.push(c);
   }
 
@@ -620,7 +678,7 @@ export class CombatSystem {
       }
     }
 
-    this._updateAllies(dt);
+    this._updateAllies(dt, player);
     this._updateEnemyFx(dt, player);
     for (const d of this.drops) d.spin(dt);
   }
@@ -665,35 +723,192 @@ export class CombatSystem {
     }
   }
 
-  _updateAllies(dt) {
+  // Loyal SUMMONS (druid pets). Unlike the old expiring orbs, these are real
+  // little creatures that follow their owner, chase the foe the owner is fighting,
+  // bite it, and stay alive until killed (the owner's death / disconnect tears
+  // them down via clear()). Owner is the player object; targets come from
+  // focusPetsOn() (the owner attacking a creature) or the nearest aggressor.
+  _updateAllies(dt, player) {
     if (!this.allies || !this.allies.length) return;
     for (let i = this.allies.length - 1; i >= 0; i--) {
       const a = this.allies[i];
-      a.life -= dt;
-      a.model.update(dt, false);
-      a.model.group.rotation.y += dt;
-      a.hitTimer -= dt;
-      if (a.hitTimer <= 0) {
-        a.hitTimer = 1;
+
+      // Dying: play the topple/dissolve then remove (same feel as a creature).
+      if (a.dying) {
+        a.deathT += dt;
+        const e = a.deathT / DEATH_DUR;
+        a.model.update(dt, false, Math.min(1, e));
+        a.model.group.scale.setScalar(a.baseScale * Math.max(0.01, 1 - e * e));
+        if (e >= 1) { this._removeAlly(i); }
+        continue;
+      }
+
+      // Pick a target: the owner's focus (what they're attacking) if it's alive
+      // and not too far; else the nearest live creature within a leash of the pet.
+      let tgt = a.focus && !a.focus.dead && !a.focus.dying ? a.focus : null;
+      if (tgt && Math.hypot(tgt.pos.x - (player ? player.pos.x : a.pos.x), tgt.pos.z - (player ? player.pos.z : a.pos.z)) > 26) tgt = null;
+      if (!tgt) {
+        let best = null, bestD = 12;
         for (const c of this.creatures) {
           if (c.dead || c.dying) continue;
-          if (Math.hypot(c.pos.x - a.pos.x, c.pos.z - a.pos.z) < 5) {
-            c.takeDamage(Math.max(1, Math.round(a.power)));
-            this.hooks.onCreatureHit(c, Math.round(a.power), 1);
-            break;
+          const d = Math.hypot(c.pos.x - a.pos.x, c.pos.z - a.pos.z);
+          if (d < bestD) { bestD = d; best = c; }
+        }
+        tgt = best;
+      }
+      a.focus = tgt;
+
+      let moving = false;
+      if (tgt) {
+        // Charge the target; bite when in melee range on a cooldown.
+        const dx = tgt.pos.x - a.pos.x, dz = tgt.pos.z - a.pos.z;
+        const d = Math.max(1e-4, Math.hypot(dx, dz));
+        if (d > 1.8) {
+          const sp = a.speed * dt;
+          a.pos.x += (dx / d) * sp; a.pos.z += (dz / d) * sp;
+          a.yaw = Math.atan2(dx, dz);
+          moving = true;
+        } else {
+          a.yaw = Math.atan2(dx, dz);
+          a.hitTimer -= dt;
+          if (a.hitTimer <= 0) {
+            a.hitTimer = 0.9;
+            if (a.model.attack) a.model.attack();
+            const dmg = Math.max(1, Math.round(a.power - tgt.def.defense * 0.3));
+            const killed = tgt.takeDamage(dmg);
+            this.hooks.onCreatureHit(tgt, dmg, 1);
+            if (killed) a.focus = null;
           }
         }
+      } else if (player) {
+        // No foe: heel to the owner, lagging a couple of metres behind.
+        const dx = player.pos.x - a.pos.x, dz = player.pos.z - a.pos.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 2.6) {
+          const sp = a.speed * 0.9 * dt;
+          a.pos.x += (dx / d) * sp; a.pos.z += (dz / d) * sp;
+          a.yaw = Math.atan2(dx, dz);
+          moving = true;
+        }
       }
-      if (a.life <= 0) {
-        this.scene.remove(a.model.group);
-        a.model.dispose();
-        this.allies.splice(i, 1);
+
+      // A pet can be hurt: aggressive creatures in melee range chip its HP, so it
+      // can actually die (and then the druid must resummon).
+      a.dmgTimer -= dt;
+      if (a.dmgTimer <= 0) {
+        a.dmgTimer = 1;
+        for (const c of this.creatures) {
+          if (c.dead || c.dying || !(c.def.aggressive || c.provoked)) continue;
+          if (Math.hypot(c.pos.x - a.pos.x, c.pos.z - a.pos.z) < 2.0) {
+            a.hp -= Math.max(1, Math.round(c.def.attack * 0.6));
+            a.flashT = 0.12;
+          }
+        }
+        if (a.hp <= 0) { this._killAlly(a); continue; }
       }
+
+      a.pos.y = this.world.heightAt(a.pos.x, a.pos.z);
+      a.model.group.position.copy(a.pos);
+      a.model.group.rotation.y = a.yaw;
+      a.model.update(dt, moving);
+
+      // Hit flash + health bar (only when hurt).
+      if (a.flashT > 0) { a.flashT -= dt; for (const m of a._mats) m.emissive.setRGB(a.flashT > 0 ? 0.6 : 0, 0, 0); }
+      const frac = a.hp / a.maxHp;
+      a.bar.fill.scale.x = Math.max(0.001, frac);
+      a.bar.fill.position.x = -(1 - frac) * 0.5;
+      a.bar.group.visible = frac < 1;
+      a.bar.group.lookAt(a.pos.x, a.bar.group.getWorldPosition(_losHead).y, (player ? player.pos.z : a.pos.z + 1));
     }
+  }
+
+  // Begin a pet's death animation (it stays in the list one beat to topple).
+  _killAlly(a) {
+    if (a.dying) return;
+    a.dying = true; a.deathT = 0;
+    a.bar.group.visible = false;
+  }
+
+  // Remove a pet from the scene + list by index.
+  _removeAlly(i) {
+    const a = this.allies[i];
+    if (a.bar && a.bar.group && a.bar.group.parent) a.bar.group.parent.remove(a.bar.group);
+    this.scene.remove(a.model.group);
+    a.model.dispose();
+    this.allies.splice(i, 1);
+  }
+
+  // Point every live pet at the creature the owner just attacked, so they pile
+  // onto the same foe ("si el druida ataca a una criatura, su criatura va a
+  // atacarla enseguida"). Called from main.js when the player lands an attack.
+  focusPetsOn(creature) {
+    if (!creature || creature.dead || creature.dying || !this.allies) return;
+    for (const a of this.allies) if (!a.dying) a.focus = creature;
+  }
+
+  // How many live (non-dying) pets exist right now.
+  petCount() {
+    return this.allies ? this.allies.filter((a) => !a.dying).length : 0;
+  }
+
+  // Each frame: pick the creature the player is aiming at and glow it red, so the
+  // player always knows who their next hit/shot lands on — including creatures
+  // well above or below them. We score by how closely the camera ray points at
+  // the creature's torso (a generous cone), not by an exact sphere hit, so a foe
+  // up a slope or down in a pit still locks on. Ties break toward the nearer one.
+  acquireTarget(player, camDir, rayOrigin) {
+    const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
+    const reach = ranged ? (player.attackRange || 14) : 4.5;
+    const ox = rayOrigin ? rayOrigin.x : player.pos.x;
+    const oy = rayOrigin ? rayOrigin.y : player.pos.y + 1.4;
+    const oz = rayOrigin ? rayOrigin.z : player.pos.z;
+    const dlen = Math.hypot(camDir.x, camDir.y, camDir.z) || 1;
+    const rx = camDir.x / dlen, ry = camDir.y / dlen, rz = camDir.z / dlen;
+
+    let best = null, bestScore = -Infinity;
+    const MIN_DOT = 0.86;       // aim cone (~30°), forgiving of height differences
+    for (const c of this.creatures) {
+      if (c.dead || c.dying) continue;
+      const pdx = c.pos.x - player.pos.x, pdz = c.pos.z - player.pos.z;
+      if (Math.hypot(pdx, pdz) > reach) continue;          // horizontal reach only
+      // Direction from the eye to the creature's torso.
+      const cy = c.pos.y + 0.9 * (c.def.variantScale || 1);
+      let tx = c.pos.x - ox, ty = cy - oy, tz = c.pos.z - oz;
+      const tl = Math.hypot(tx, ty, tz) || 1;
+      tx /= tl; ty /= tl; tz /= tl;
+      const dot = tx * rx + ty * ry + tz * rz;             // 1 = dead center
+      if (dot < MIN_DOT) continue;                          // outside the aim cone
+      // Prefer better-aligned, then nearer creatures.
+      const score = dot * 100 - tl * 0.1;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    this.setTarget(best);
+    return best;
+  }
+
+  // Swap the highlighted target, clearing the old glow and lighting the new.
+  setTarget(c) {
+    if (this.currentTarget === c) return;
+    if (this.currentTarget && !this.currentTarget.dead) this.currentTarget.setTargeted(false);
+    this.currentTarget = c || null;
+    if (this.currentTarget) this.currentTarget.setTargeted(true);
   }
 
   // Find the creature the player is aiming at, within melee/aim range.
   attack(player, camDir, rayOrigin) {
+    // Prefer the locked-on target (the red one) so you hit exactly what's marked,
+    // as long as it's still alive and within reach. Falls back to a fresh raycast.
+    const lockReach = (player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand'))
+      ? (player.attackRange || 14) : 4.5;
+    const locked = this.currentTarget;
+    if (locked && !locked.dead && !locked.dying
+        && Math.hypot(locked.pos.x - player.pos.x, locked.pos.z - player.pos.z) <= lockReach) {
+      // The crosshair is RED on this creature: the promise to the player is that
+      // the hit lands no matter what, so resolve it as GUARANTEED (skip the miss
+      // roll). Damage is still scaled by the level gap — a far-higher mob just
+      // takes less, it doesn't dodge.
+      return this._resolveHit(player, locked, true);
+    }
     const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
     const reach = ranged ? (player.attackRange || 14) : 4;
 
@@ -727,7 +942,16 @@ export class CombatSystem {
       if (t < bestT) { bestT = t; best = c; }
     }
     if (!best) return null;
+    return this._resolveHit(player, best);
+  }
 
+  // Roll the hit/miss and damage against a chosen creature (shared by the locked
+  // target path and the raycast fallback). When `guaranteed` (the crosshair was
+  // RED on this creature), the miss roll is skipped entirely — the hit always
+  // lands; only the level-gap DAMAGE penalty remains.
+  _resolveHit(player, best, guaranteed = false) {
+    const ranged = player.weapon && (player.weapon.type === 'bow' || player.weapon.type === 'wand');
+    const reach = ranged ? (player.attackRange || 14) : 4;
     const w = player.weapon;
     const elem = w ? w.element : 'none';
     const mult = elementMultiplier(elem, best.def.element);
@@ -735,10 +959,12 @@ export class CombatSystem {
     // MISS by level gap (Tibia-style). A creature more than 10 levels above you
     // is uncatchable (always miss / 0 damage); up to +10 you miss with rising
     // odds, which your weapon SKILL (precision) mitigates. Distance attacks also
-    // miss more the farther the target is.
+    // miss more the farther the target is. A GUARANTEED (red-cross) hit never
+    // misses.
     const diff = (best.def.level || 1) - (player.level || 1);
     let missChance = 0;
-    if (diff >= 11) missChance = 1;
+    if (guaranteed) missChance = 0;
+    else if (diff >= 11) missChance = 1;
     else if (diff > 0) missChance = Math.pow(diff / 11, 1.5);
     const skill = player.weaponSkill || 10;
     if (missChance > 0 && missChance < 1) {
@@ -762,23 +988,60 @@ export class CombatSystem {
     const rolled = maxHit * (0.5 + this.rng() * 0.5);  // 50-100% of max
     let dmg = Math.max(0, Math.round((rolled - best.def.defense * 0.3) * mult));
     if (mult === 0) dmg = 0;
+    // The level penalty normally lives in the MISS roll, but a guaranteed
+    // (red-cross) hit never misses — so for it we carry the penalty over into a
+    // DAMAGE scale instead, keeping the "daño normal, penalización por nivel"
+    // balance the user asked for: an over-levelled mob still takes far less.
+    if (guaranteed && diff > 0 && dmg > 0) {
+      const pen = Math.max(0.1, 1 - Math.min(1, Math.pow(diff / 11, 1.5)) * 0.9);
+      dmg = Math.max(1, Math.round(dmg * pen));
+    }
     const killed = best.takeDamage(dmg);
     this.hooks.onCreatureHit(best, dmg, mult);
     return { creature: best, dmg, killed, mult };
   }
 
-  // A summoned ally: a friendly creature model that periodically damages nearby
-  // enemies and expires after a while. Kept simple (no pathing).
-  spawnAlly(family, pos, level) {
-    const ally = {
-      pos: pos.clone ? pos.clone() : { x: pos.x, y: pos.y, z: pos.z },
-      model: buildCreatureModel(family || 'imp', { color: 0x66ccaa, scale: 0.8 }),
-      life: 18, hitTimer: 0, power: 6 + level * 0.8,
-    };
-    ally.model.group.position.copy(this.scene.position).set(ally.pos.x, this.world.heightAt(ally.pos.x, ally.pos.z), ally.pos.z);
-    this.scene.add(ally.model.group);
+  // Summon a LOYAL PET: a real little creature that follows the druid, charges
+  // the foe they're fighting and stays until killed. Capped at MAX_PETS; when
+  // already full, the pet with the MOST remaining HP vanishes to make room for
+  // the new one (so a fresh summon always sticks, replacing the sturdiest old
+  // one — the user's rule). `opts.maxPets` overrides the cap. Returns the pet.
+  spawnAlly(family, pos, level, opts = {}) {
     if (!this.allies) this.allies = [];
+    const cap = opts.maxPets || MAX_PETS;
+    // Enforce the cap on the LIVE (non-dying) pets: remove the highest-HP one.
+    const live = this.allies.filter((a) => !a.dying);
+    if (live.length >= cap) {
+      let strongest = live[0];
+      for (const a of live) if (a.hp > strongest.hp) strongest = a;
+      this._removeAlly(this.allies.indexOf(strongest));
+    }
+
+    const scale = 0.8;
+    const model = buildCreatureModel(family || 'imp', { color: 0x66ccaa, scale });
+    const hp = Math.round(40 + level * 14);          // tougher with the druid's level
+    const ally = {
+      pos: (pos.clone ? pos.clone() : new THREE.Vector3(pos.x, pos.y, pos.z)),
+      model, family,
+      hp, maxHp: hp,
+      power: Math.round(8 + level * 1.4),            // bite damage scales with level
+      speed: 5.5,                                    // a touch faster than the druid so it can catch up
+      yaw: 0, hitTimer: 0, dmgTimer: 1, flashT: 0,
+      focus: null, dying: false, deathT: 0,
+      baseScale: model.group.scale.x,
+      _mats: [],
+    };
+    ally.pos.y = this.world.heightAt(ally.pos.x, ally.pos.z);
+    model.group.position.copy(ally.pos);
+    model.group.traverse((o) => { if (o.material && o.material.emissive) ally._mats.push(o.material); });
+    // A green-tinted health bar so the player can read the pet's life.
+    ally.bar = makeHealthBar();
+    ally.bar.fill.material.color.setHex(0x4fd06a);
+    ally.bar.group.position.y = 1.5 * scale + 0.4;
+    model.group.add(ally.bar.group);
+    this.scene.add(model.group);
     this.allies.push(ally);
+    return ally;
   }
 
   // Apply skill damage to every creature within `radius` of a world point.
@@ -838,8 +1101,35 @@ export class CombatSystem {
     mesh.position.set(pos.x, startY, pos.z);
     this.scene.add(mesh);
 
+    // MU-Online style ground loot: every drop sits on a soft glowing disc and
+    // wears a floating name label, so you can spot it and read what it is, then
+    // grab it just by walking over it. Rarer items glow brighter/coloured.
+    const rarity = item.rarity || 'normal';
+    const tierCol = rarity === 'legendary' ? 0xffd166 : rarity === 'elite' ? 0x7fe0ff
+      : item.kind === 'material' ? 0xd8c69a : item.kind === 'trophy' ? 0xc8b89a
+      : item.kind === 'potion' ? 0xff7a7a : 0xfff0c0;
+    // Glow halo on the ground (a flat additive disc that gently pulses).
+    const halo = new THREE.Mesh(
+      new THREE.CircleGeometry(0.6, 20),
+      new THREE.MeshBasicMaterial({ color: tierCol, transparent: true, opacity: 0.5,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.y = -0.28;            // sits just under the bag, on the ground
+    halo.renderOrder = 2;
+    mesh.add(halo);
+    mesh.userData.halo = halo;
+    // Floating name label above the drop, coloured by tier.
+    const labelText = typeof item.name === 'string' ? item.name
+      : (item.name && (item.name.es || item.name.en)) || '';
+    const nameTag = makeNameTag(labelText, false, '#' + tierCol.toString(16).padStart(6, '0'), 0.42);
+    nameTag.position.y = 0.85;
+    mesh.add(nameTag);
+
     // Rare drops already carry an emissive point light from buildLootBagMesh;
-    // grab it (if any) so the per-frame logic can keep it with the bag.
+    // grab it (if any) so the per-frame logic can keep it with the bag. Common
+    // drops rely on the additive ground halo for their shine (no extra dynamic
+    // light each — that would blow past the renderer's light budget in a big
+    // fight), so the world never floods with point lights.
     let glow = null;
     mesh.traverse((o) => { if (o.isPointLight) glow = o; });
 
@@ -874,6 +1164,13 @@ export class CombatSystem {
         } else {
           mesh.position.y = this.baseY + Math.sin(performance.now() * 0.003 + this.phase) * 0.1;
         }
+        // Pulse the ground halo so the loot shimmers and is easy to spot.
+        const halo = mesh.userData.halo;
+        if (halo) {
+          const k = 0.4 + Math.sin(performance.now() * 0.004 + this.phase) * 0.18;
+          halo.material.opacity = k;
+          halo.rotation.z += dt * 0.6; // counter-spin a touch for a twinkle
+        }
       },
     };
     this.drops.push(drop);
@@ -898,25 +1195,48 @@ export class CombatSystem {
   // instead of being grabbed and re-dropped at the player's feet every frame.
   tryPickup(player, canAccept) {
     const now = performance.now();
+    let veto = null;
     for (let i = 0; i < this.drops.length; i++) {
       const d = this.drops[i];
       if (d.pickupAt && now < d.pickupAt) continue;
       if (Math.hypot(d.pos.x - player.pos.x, d.pos.z - player.pos.z) >= 1.5) continue;
       const reason = canAccept ? canAccept(d.item) : 'ok';
-      if (reason !== 'ok') return { item: null, reason, pos: d.pos };
+      // Can't take THIS one (full/too heavy): remember the reason but keep
+      // scanning, so a pickable item under an un-acceptable one isn't blocked.
+      if (reason !== 'ok') { if (!veto) veto = { item: null, reason, pos: d.pos }; continue; }
       this.scene.remove(d.mesh);
       disposeMesh(d.mesh);
       this.drops.splice(i, 1);
       return { item: d.item, reason: 'ok' };
     }
-    return null;
+    return veto;
   }
 
   clear() {
+    this.currentTarget = null;   // drop the lock; creatures are about to vanish
     for (const c of this.creatures) c.dispose();
     this.creatures = [];
     for (const d of this.drops) { this.scene.remove(d.mesh); disposeMesh(d.mesh); }
     this.drops = [];
+    // Also tear down in-flight enemy projectiles, area rings and summoned allies
+    // so a zone transition (descend/ascend/teleport) can't deal "phantom" damage
+    // in the new context or leak their meshes into the scene.
+    if (this._enemyShots) {
+      for (const s of this._enemyShots) { this.scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
+      this._enemyShots = [];
+    }
+    if (this._fxRings) {
+      for (const r of this._fxRings) { this.scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); }
+      this._fxRings = [];
+    }
+    if (this.allies) {
+      for (const a of this.allies) {
+        this.scene.remove(a.model.group);
+        a.model.dispose();
+        if (a.bar && a.bar.fill) { a.bar.fill.material.dispose(); a.bar.fill.geometry.dispose(); }
+      }
+      this.allies = [];
+    }
   }
 }
 
@@ -925,7 +1245,10 @@ export class CombatSystem {
 function disposeMesh(mesh) {
   mesh.traverse((o) => {
     if (o.geometry) o.geometry.dispose();
-    if (o.material) o.material.dispose();
+    if (o.material) {
+      if (o.material.map) o.material.map.dispose();   // sprite/canvas labels
+      o.material.dispose();
+    }
   });
 }
 
