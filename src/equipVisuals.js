@@ -52,8 +52,12 @@ export class EquipVisuals {
     if (this.bagMesh) { this.char.parts.body.remove(this.bagMesh); disposeTree(this.bagMesh); this.bagMesh = null; }
     if (!item) return;
     const color = item.color || 0x8a5a2b;
-    const isBackpack = /backpack/.test(item.baseId || '') || (item.capacity || 0) > 8;
-    this.bagMesh = isBackpack ? buildBackpackMesh(color) : buildBagMesh(color);
+    const id = item.baseId || '';
+    const isBackpack = /backpack|pack_/.test(id) || (item.capacity || 0) > 8;
+    // A "star" bag (special/event container) gets a glowing star decal on the
+    // flap; detected by id or an explicit flag from the data layer.
+    const star = item.star || /star/.test(id);
+    this.bagMesh = isBackpack ? buildBackpackMesh(color, { star }) : buildBagMesh(color, { star });
     this.char.parts.body.add(this.bagMesh);
   }
 
@@ -69,7 +73,16 @@ export class EquipVisuals {
   setWeapon(item, level) {
     if (this.weaponMesh) { this.char.parts.armR.hand.remove(this.weaponMesh); disposeTree(this.weaponMesh); this.weaponMesh = null; }
     this.weaponType = item ? item.type : null;
-    if (!item) return;
+    if (!item) { if (this.char.setBowMesh) this.char.setBowMesh(null); return; }
+    // A SHIELD may be carried in the main (right) hand too — render it as a shield
+    // here instead of a weapon, mirrored so its face reads correctly on the right.
+    if (item.type === 'shield') {
+      this.weaponMesh = buildShieldMesh(item.color || 0x8a5a2b, item.baseId || '', { element: item.element, levelReq: item.levelReq || 1 });
+      this.weaponMesh.scale.x *= -1;
+      this.char.parts.armR.hand.add(this.weaponMesh);
+      if (this.char.setBowMesh) this.char.setBowMesh(null);
+      return;
+    }
     const color = item.type === 'wand' ? wandColorForLevel(level) : (item.color || 0xb0b0b0);
     this.weaponMesh = buildWeaponMesh(item.type, color, {
       id: item.baseId, element: item.element, levelReq: item.levelReq || 1, twoHanded: item.twoHanded,
@@ -77,6 +90,10 @@ export class EquipVisuals {
     // Seat the grip in the palm and tilt the weapon so it reads as held in the
     // fist (blade/head leading up-and-forward), not impaling the forearm.
     applyHoldTransform(this.weaponMesh, item.type, item.baseId || '');
+    // The MAIN (right) hand mirrors across X so a diagonal blade leads outward
+    // naturally; the OFF-hand (left) keeps the un-mirrored pose. A straight,
+    // X-symmetric weapon (wand/spear/bow) is unaffected by the flip.
+    this.weaponMesh.scale.x *= -1;
     this.char.parts.armR.hand.add(this.weaponMesh);
     // Hand the bow's string/arrow control to the character so the draw animation
     // can tension the string and slide the loaded arrow in third person.
@@ -92,14 +109,14 @@ export class EquipVisuals {
     if (item.arrows) {
       this.shieldMesh = buildArrowsMesh();
     } else if (isWeapon) {
-      // A weapon held in the LEFT hand — same build + hold pose as the right
-      // hand, then mirrored across X so it reads as gripped in the other hand.
+      // A weapon held in the LEFT (off) hand — same build + hold pose as the main
+      // hand but NOT mirrored, so the blade leads outward to the left. The mirror
+      // lives on the main hand now (see setWeapon), so off-hand stays un-flipped.
       const color = item.type === 'wand' ? wandColorForLevel(level) : (item.color || 0xb0b0b0);
       this.shieldMesh = buildWeaponMesh(item.type, color, {
         id: item.baseId, element: item.element, levelReq: item.levelReq || 1, twoHanded: item.twoHanded,
       });
       applyHoldTransform(this.shieldMesh, item.type, item.baseId || '');
-      this.shieldMesh.scale.x *= -1;   // mirror to the left hand
     } else {
       this.shieldMesh = buildShieldMesh(item.color || 0x8a5a2b, item.baseId || '', { element: item.element, levelReq: item.levelReq || 1 });
     }
@@ -137,11 +154,18 @@ export class EquipVisuals {
     // Prefer the detailed per-item breastplate; fall back to the generic plate
     // overlay for plate-tier items, and nothing (tint only) for soft cloth.
     const detail = ARMOR_BUILDERS[item.baseId];
+    const female = !!this.char.parts.isFemale;
     if (detail) {
       this.armorMesh = detail(color);
+      // The detailed builders are authored for the male torso/shoulder width.
+      // The female trunk is narrower (body scale ~0.95x, shoulders pulled in),
+      // so squeeze the whole overlay slightly in X/Z and drop it a touch so the
+      // breastplate hugs the chest and the pauldrons sit on the shoulders rather
+      // than floating off them. Y is left alone so collars/halos stay placed.
+      if (female) { this.armorMesh.scale.set(0.9, 0.97, 0.94); this.armorMesh.position.y = -0.01; }
       this.char.parts.chestArmor.add(this.armorMesh);
     } else if (isPlateArmor(item)) {
-      this.armorMesh = buildArmorMesh(color, !!this.char.parts.isFemale);
+      this.armorMesh = buildArmorMesh(color, female);
       this.char.parts.chestArmor.add(this.armorMesh);
     }
   }
@@ -675,9 +699,23 @@ export function buildWeaponMesh(type, color, opts = {}) {
   return buildSwordMesh(id, color, style, tier);
 }
 
-// A MACE / war hammer: a wooden haft with a heavy flanged metal head. Fire/
-// legendary trim comes from the shared helpers so flame maces glow.
+// baseId → mace profile. Hammers get a BLOCKY anvil head; flails a chained ball;
+// morningstars a spiked ball; default is a flanged mace. Keeps the haft/grip the
+// same so applyHoldTransform('mace') stays correct.
+const MACE_PROFILES = {
+  club: 'club', spiked_club: 'morningstar', mace: 'flanged', iron_mace: 'flanged',
+  war_hammer: 'hammer', warhammer: 'hammer', battle_hammer: 'hammer',
+  great_hammer: 'hammer', maul: 'hammer', sledgehammer: 'hammer',
+  morningstar: 'morningstar', morning_star: 'morningstar', flail: 'flail',
+  meteor_hammer: 'flail', heavy_mace: 'flanged', thunder_hammer: 'hammer',
+};
+
+// A MACE / war hammer: a wooden haft with a heavy metal head. The head shape
+// varies by profile — a BLOCKY anvil-faced hammer, a flanged mace, a spiked
+// morningstar ball, a chained flail, or a knotted wooden club. Fire/legendary
+// trim comes from the shared helpers so flame maces glow.
 function buildMaceMesh(id, color, style, tier) {
+  const profile = MACE_PROFILES[id] || (/hammer|maul/.test(id) ? 'hammer' : 'flanged');
   const g = new THREE.Group();
   const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.026, 0.62, 8), mat(0x5a3a22));
   haft.position.y = 0.18;
@@ -688,17 +726,89 @@ function buildMaceMesh(id, color, style, tier) {
   const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.026, 8, 6), metalMat(style.accent || 0xb8980f));
   pommel.position.y = -0.1;
   g.add(pommel);
-  // Heavy head: a chunky icosahedron with four flanges around it.
   const headY = 0.5;
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.085, 0), metalMat(color));
-  head.position.y = headY;
-  g.add(head);
-  for (let i = 0; i < 4; i++) {
-    const flange = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.018), metalMat(color));
-    flange.position.y = headY;
-    flange.rotation.y = (i / 4) * Math.PI * 2;
-    flange.translateZ(0.07);
-    g.add(flange);
+  const steel = metalMat(color);
+  const dark = metalMat(shade(color, 0.78));
+
+  if (profile === 'hammer') {
+    // BLOCKY war-hammer head: a heavy rectangular block across the haft with a
+    // broad striking face on one side and a back spike on the other — distinctly
+    // a hammer, not a ball. Reinforcing collar where it meets the haft.
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.06, 10), dark);
+    collar.position.y = headY - 0.04; g.add(collar);
+    const block = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.14, 0.14), steel);
+    block.position.y = headY; g.add(block);
+    // Bevelled striking face on the +X end.
+    const face = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.16), dark);
+    face.position.set(0.13, headY, 0); g.add(face);
+    // Back spike/pein on the −X end.
+    const pein = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.12, 4), dark);
+    pein.rotation.z = Math.PI / 2; pein.position.set(-0.15, headY, 0); g.add(pein);
+    // Corner rivets so the block reads as forged.
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const rv = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 5), dark);
+      rv.position.set(sx * 0.09, headY, sz * 0.06); g.add(rv);
+    }
+  } else if (profile === 'morningstar') {
+    // A spiked ball: a metal sphere bristling with cone spikes in all directions.
+    const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(0.075, 0), steel);
+    ball.position.y = headY; g.add(ball);
+    const dirs = [[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0.7,0.7,0],[-0.7,0.7,0],[0.7,-0.7,0],[-0.7,-0.7,0]];
+    for (const [dx, dy, dz] of dirs) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.07, 5), dark);
+      spike.position.set(dx * 0.1, headY + dy * 0.1, dz * 0.1);
+      // Point the cone (+Y) outward along the spike direction.
+      spike.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx, dy, dz).normalize());
+      g.add(spike);
+    }
+  } else if (profile === 'flail') {
+    // A flail: a short chain from the haft top to a spiked ball that hangs out
+    // front so it reads as articulated, not rigid.
+    const top = headY - 0.12;
+    for (let i = 0; i < 3; i++) {
+      const link = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.006, 5, 10), dark);
+      link.position.set(0, top + i * 0.03, 0.02 + i * 0.03);
+      link.rotation.x = i % 2 ? Math.PI / 2 : 0;
+      g.add(link);
+    }
+    const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(0.07, 0), steel);
+    ball.position.set(0, top + 0.02, 0.14); g.add(ball);
+    for (const [dx, dy, dz] of [[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.016, 0.06, 5), dark);
+      spike.position.set(dx * 0.09, top + 0.02 + dy * 0.09, 0.14 + dz * 0.09);
+      spike.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx, dy, dz).normalize());
+      g.add(spike);
+    }
+  } else if (profile === 'club') {
+    // A knotty wooden club: a fat tapered head with a couple of knot bumps.
+    const headMat = mat(shade(color, 0.9));
+    const club = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.045, 0.26, 10), headMat);
+    club.position.y = headY - 0.04; g.add(club);
+    for (let i = 0; i < 3; i++) {
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), mat(shade(color, 0.75)));
+      const a = (i / 3) * Math.PI * 2;
+      knot.position.set(Math.cos(a) * 0.05, headY - 0.04 + (i - 1) * 0.06, Math.sin(a) * 0.05);
+      g.add(knot);
+    }
+  } else {
+    // DEFAULT 'flanged' mace: a chunky core with four blade-like flanges and a
+    // crowning stud — the classic flanged mace head, beefier than the old ball.
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.13, 10), steel);
+    core.position.y = headY; g.add(core);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), steel);
+    cap.position.y = headY + 0.08; g.add(cap);
+    const stud = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.05, 6), dark);
+    stud.position.y = headY + 0.12; g.add(stud);
+    for (let i = 0; i < 6; i++) {
+      // Tapered triangular flanges fanning out around the core.
+      const flange = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.11, 0.06), dark);
+      flange.position.y = headY;
+      flange.rotation.y = (i / 6) * Math.PI * 2;
+      flange.translateZ(0.06);
+      g.add(flange);
+    }
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.04, 10), dark);
+    collar.position.y = headY - 0.08; g.add(collar);
   }
   applyElementAccent(g, style, headY);
   addTierTrim(g, tier, style, { pommelY: -0.1, guardY: headY });
@@ -1746,6 +1856,7 @@ function headgearStyle(item) {
   if (id === 'straw_hat') return 'straw';
   if (id === 'cloth_hood') return 'hood';
   if (id.includes('horned')) return 'horned';
+  if (id.includes('crown')) return 'crown';
   if ((item.coverage || 'open') === 'closed') return 'closed';
   if (NOSE_GUARD_IDS.has(id)) return 'half';
   return 'open';
@@ -1792,13 +1903,41 @@ function buildHelmetMesh(color, style = 'open') {
     return g;
   }
   if (style === 'closed') {
-    // Closed great helm: a full dome over the head with a vision slit.
+    // Closed great helm: a full dome over the head with a raised comb ridge, a
+    // cruciform vision/breath sight and a riveted brow band so it reads as a
+    // proper enclosed knight's helm, not a plain ball.
+    const steelM = mat(shade(color, 0.85));
     const helm = new THREE.Mesh(new THREE.SphereGeometry(0.305, 16, 14), mat(color));
     helm.scale.set(1, 1.05, 1.02);
     helm.position.y = 0.0;
-    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.03, 0.05), mat(0x222222));
-    slit.position.set(0, -0.02, 0.27);
-    g.add(helm, slit);
+    g.add(helm);
+    // raised comb running front-to-back over the crown
+    const comb = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.07, 0.5), steelM);
+    comb.position.set(0, 0.22, 0); g.add(comb);
+    // horizontal vision slit + vertical breath slot (cruciform sight)
+    const hslit = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.03, 0.05), mat(0x1a1a1a));
+    hslit.position.set(0, 0.02, 0.27); g.add(hslit);
+    const vslit = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.18, 0.05), mat(0x1a1a1a));
+    vslit.position.set(0, -0.08, 0.27); g.add(vslit);
+    // riveted brow band
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.022, 6, 20), steelM);
+    band.rotation.x = Math.PI / 2; band.position.y = 0.08; g.add(band);
+    return g;
+  }
+  if (style === 'crown') {
+    // An open cap crowned with a golden circlet of points + gems.
+    buildOpenDome(g, color, steel);
+    const gold = metalMat(0xf1c40f);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.292, 0.302, 0.06, 18, 1, true), gold);
+    band.position.y = 0.13; g.add(band);
+    const gemMat = new THREE.MeshStandardMaterial({ color: 0xe23b6b, emissive: 0xe23b6b, emissiveIntensity: 0.4, roughness: 0.3 });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const pt = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.1, 5), gold);
+      pt.position.set(Math.sin(a) * 0.29, 0.21, Math.cos(a) * 0.29); g.add(pt);
+      const gem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.02, 0), gemMat);
+      gem.position.set(Math.sin(a) * 0.29, 0.16, Math.cos(a) * 0.29); g.add(gem);
+    }
     return g;
   }
   if (style === 'horned') {
@@ -1834,6 +1973,13 @@ function buildOpenDome(g, color, steel) {
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 0.12;
   g.add(dome, rim);
+  // A low comb ridge over the crown so the open cap has a bit of profile, plus a
+  // small finial knob at the peak.
+  const comb = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.05, 0.36), steel);
+  comb.position.set(0, 0.25, 0);
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 8), steel);
+  knob.position.set(0, 0.3, -0.1);
+  g.add(comb, knob);
 }
 
 // Plate-tier armor reads as metal/scale/dragon plate, not soft cloth. Those get
@@ -1851,25 +1997,49 @@ function buildArmorMesh(color, female) {
   const g = new THREE.Group();
   const plate = metalMat(color);
   const trim = metalMat(shade(color, 0.78));
-  // Breastplate: a slightly flattened dome hugging the front of the torso.
+  const gold = metalMat(0xc8a24a);
+  // Breastplate: a slightly flattened dome hugging the front of the (tapered)
+  // torso. The female chest is narrower, so it's pulled in a touch in X/Z.
   const chest = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.235 : 0.255, 16, 14), plate);
-  chest.scale.set(female ? 0.96 : 1, 0.62, 0.78);
+  chest.scale.set(female ? 0.96 : 1, 0.64, 0.78);
   chest.position.set(0, 0.06, 0.04);
   g.add(chest);
-  // A central ridge for definition.
+  // Defined pectoral swells so the plate reads as fitted, not a smooth shell.
+  for (const s of [-1, 1]) {
+    const pec = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), plate);
+    pec.scale.set(0.9, 0.7, 0.5);
+    pec.position.set((female ? 0.06 : 0.08) * s, 0.13, 0.18);
+    g.add(pec);
+  }
+  // A central ridge with a small gem boss for definition.
   const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.03), trim);
   ridge.position.set(0, 0.04, 0.2);
   g.add(ridge);
-  // Pauldrons capping each shoulder.
-  const shoulderX = female ? 0.275 : 0.315;
+  const boss = new THREE.Mesh(new THREE.IcosahedronGeometry(0.025, 0), gold);
+  boss.position.set(0, 0.13, 0.22);
+  g.add(boss);
+  // Fauld plates (skirt of the cuirass) sweeping under the waist.
+  for (let i = 0; i < 2; i++) {
+    const f = new THREE.Mesh(new THREE.CylinderGeometry((female ? 0.18 : 0.2) - i * 0.02, (female ? 0.16 : 0.18) - i * 0.02, 0.06, 16, 1, true, -0.6, 1.2), plate);
+    f.position.set(0, -0.13 - i * 0.06, 0.05);
+    g.add(f);
+  }
+  // Pauldrons capping each shoulder, with a rounded rim cap. The shoulder pivots
+  // were pulled inward in the reshape (char.js: male 0.3, female 0.265), so the
+  // pads track those (plus a hair outboard so the cap sits over the deltoid, not
+  // inside it) instead of the old wider 0.315/0.275 that now floats off the arm.
+  const shoulderX = female ? 0.27 : 0.305;
   for (const s of [-1, 1]) {
     const pad = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), plate);
     pad.scale.set(1, 0.7, 1);
     pad.position.set(shoulderX * s, 0.22, 0);
     g.add(pad);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), trim);
+    cap.position.set(shoulderX * s, 0.28, 0);
+    g.add(cap);
   }
   // Belt line at the waist.
-  const belt = new THREE.Mesh(new THREE.TorusGeometry(female ? 0.225 : 0.235, 0.03, 6, 18), trim);
+  const belt = new THREE.Mesh(new THREE.TorusGeometry(female ? 0.225 : 0.235, 0.03, 6, 18), gold);
   belt.rotation.x = Math.PI / 2;
   belt.position.y = -0.26;
   belt.scale.set(1, 1, 0.85);
@@ -1878,23 +2048,54 @@ function buildArmorMesh(color, female) {
 }
 
 // A small soft pouch worn on the back (the "bag" container). Smaller and
-// rounder than the framed backpack so the two read differently.
-function buildBagMesh(color) {
+// rounder than the framed backpack so the two read differently. Tinted by the
+// container's colour; a star bag gets a glowing star decal on the flap.
+function buildBagMesh(color, opts = {}) {
   const g = new THREE.Group();
   // Raised so the pouch rides high on the upper back, not the lower spine.
-  const pouch = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), mat(color));
-  pouch.scale.set(1, 1.05, 0.7);
-  pouch.position.set(0, 0.14, -0.24);
-  const flap = new THREE.Mesh(new THREE.SphereGeometry(0.155, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(shade(color, 0.82)));
-  flap.scale.set(1, 0.7, 0.72);
-  flap.position.set(0, 0.24, -0.24);
+  const pouch = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 12), mat(color));
+  pouch.scale.set(1.05, 1.1, 0.72);
+  pouch.position.set(0, 0.13, -0.25);
+  g.add(pouch);
+  // A cinched neck + drawstring at the top so it reads as a soft sack, not a ball.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.06, 12), mat(shade(color, 0.88)));
+  neck.position.set(0, 0.27, -0.25); neck.scale.z = 0.72; g.add(neck);
+  const cinch = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.012, 6, 16), mat(shade(color, 0.6)));
+  cinch.rotation.x = Math.PI / 2; cinch.position.set(0, 0.28, -0.25); cinch.scale.z = 0.72; g.add(cinch);
+  const flap = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(shade(color, 0.82)));
+  flap.scale.set(1.06, 0.72, 0.74);
+  flap.position.set(0, 0.22, -0.25);
+  g.add(flap);
   // Shoulder straps run up over the top of the back toward the shoulders.
-  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.04), mat(shade(color, 0.7)));
+  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.36, 0.04), mat(shade(color, 0.7)));
   strap.position.set(0.1, 0.18, -0.12);
   const strap2 = strap.clone();
   strap2.position.x = -0.1;
-  g.add(pouch, flap, strap, strap2);
+  g.add(strap, strap2);
+  if (opts.star) addBagStar(g, 0.13, -0.18);
   return g;
+}
+
+// A small glowing five-point star decal sitting just proud of the bag's back
+// face (−Z is the outward/back direction). Used to mark a "star bag".
+function addBagStar(g, y, z) {
+  const starMat = new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffcc33, emissiveIntensity: 0.85, roughness: 0.25 });
+  const star = new THREE.Group();
+  // Five tapered rays fanned around the center make a clean star shape.
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    const ray = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.075, 4), starMat);
+    ray.position.set(Math.cos(a) * 0.035, Math.sin(a) * 0.035, 0);
+    // Point each ray outward from the centre (the cone's +Y becomes the radial dir).
+    ray.rotation.z = a - Math.PI / 2;
+    star.add(ray);
+  }
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.012, 5), starMat);
+  core.rotation.x = Math.PI / 2;
+  star.add(core);
+  star.position.set(0, y, z);
+  star.rotation.y = Math.PI;       // face the star out the back of the pack (−Z)
+  g.add(star);
 }
 
 // A pendant: a short chain loop and a gem hanging at the base of the neck.
@@ -1972,20 +2173,66 @@ function buildBootOverlay(id, color, side) {
   return null;   // plain boots: tint only
 }
 
-function buildBackpackMesh(color) {
+// The worn BACKPACK: a full, framed travel pack that occupies most of the back
+// (shoulder blades down to the waist) so it reads as a real rucksack, not a
+// little box. Tinted to the container colour; a star bag gets a glowing star on
+// the flap. The body is built from a couple of stacked rounded slabs so the
+// silhouette bulges with packed gear instead of being a flat board.
+function buildBackpackMesh(color, opts = {}) {
   const g = new THREE.Group();
-  // Raised onto the upper back so the pack sits between the shoulder blades.
-  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.36, 0.16), mat(color));
-  pack.position.set(0, 0.16, -0.26);
-  const flap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.04), mat(shade(color, 0.8)));
-  flap.position.set(0, 0.3, -0.34);
-  const buckle = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.01, 6, 12), metalMat(0xc8a24a));
-  buckle.position.set(0, 0.12, -0.35); buckle.rotation.x = Math.PI / 2;
-  const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.36, 0.04), mat(shade(color, 0.7)));
-  strapL.position.set(-0.12, 0.2, -0.1);
-  const strapR = strapL.clone();
-  strapR.position.x = 0.12;
-  g.add(pack, flap, buckle, strapL, strapR);
+  const cloth = mat(color);
+  const dark = mat(shade(color, 0.78));
+  const darker = mat(shade(color, 0.62));
+  // MAIN BODY — taller, wider and a touch deeper than before, so it spans the
+  // back. Centered a little lower so the bulk sits between the shoulder blades
+  // and the small of the back. The faces are rounded (a fat capsule-ish slab).
+  const main = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.46, 0.2), cloth);
+  main.position.set(0, 0.1, -0.3);
+  g.add(main);
+  // A bulging packed-gear roll on top, swelling above the body.
+  const bulge = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), cloth);
+  bulge.scale.set(0.95, 0.62, 0.62); bulge.position.set(0, 0.32, -0.3);
+  g.add(bulge);
+  // Rounded bottom so the base isn't a hard edge.
+  const base = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), dark);
+  base.scale.set(0.95, 0.5, 0.6); base.position.set(0, -0.12, -0.3);
+  g.add(base);
+  // TOP FLAP folding over the roll, hanging down the back face (−Z).
+  const flap = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.22, 0.05), dark);
+  flap.position.set(0, 0.28, -0.41); flap.rotation.x = -0.12;
+  g.add(flap);
+  // Buckled strap + buckle holding the flap down.
+  const flapStrap = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.2, 0.02), darker);
+  flapStrap.position.set(0, 0.22, -0.42);
+  const buckle = new THREE.Mesh(new THREE.TorusGeometry(0.032, 0.011, 6, 14), metalMat(0xc8a24a));
+  buckle.position.set(0, 0.14, -0.42); buckle.rotation.x = Math.PI / 2;
+  g.add(flapStrap, buckle);
+  // SIDE POCKETS bulging off each flank.
+  for (const s of [-1, 1]) {
+    const pkt = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.13), dark);
+    pkt.position.set(s * 0.2, 0.04, -0.3);
+    g.add(pkt);
+    const pflap = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.07, 0.14), darker);
+    pflap.position.set(s * 0.2, 0.16, -0.3);
+    g.add(pflap);
+  }
+  // A rolled bedroll lashed across the bottom of the pack.
+  const bedroll = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.34, 12), mat(shade(color, 1.15)));
+  bedroll.rotation.z = Math.PI / 2; bedroll.position.set(0, -0.16, -0.42);
+  g.add(bedroll);
+  // SHOULDER STRAPS running up over the back toward the shoulders.
+  for (const s of [-1, 1]) {
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.04), darker);
+    strap.position.set(s * 0.13, 0.18, -0.1);
+    g.add(strap);
+  }
+  // Stitched seam line down the centre of the body.
+  for (let i = 0; i < 6; i++) {
+    const st = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.018, 0.01), mat(shade(color, 1.35)));
+    st.position.set(0, -0.02 + i * 0.05, -0.41);
+    g.add(st);
+  }
+  if (opts.star) addBagStar(g, 0.06, -0.43);
   return g;
 }
 
