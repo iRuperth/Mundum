@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { wandColorForLevel } from './data/items.js';
 import { HELMET_BUILDERS, ARMOR_BUILDERS, LEGS_BUILDERS, AMULET_BUILDERS, setEquipHelpers } from './equipDetail.js';
 
+// Weapon types that, when placed in the OFF-HAND (shield) slot, render as a
+// weapon held in the left hand (mirrored) instead of a shield.
+const OFFHAND_WEAPON_TYPES = new Set(['sword', 'axe', 'mace', 'lance', 'bow', 'wand']);
+
 // Builds and attaches visible weapons, shield and worn armor onto a character.
 // Anchors come from character.parts (armR.hand, helmet, chestArmor, body...).
 export class EquipVisuals {
@@ -29,7 +33,7 @@ export class EquipVisuals {
     // Off-hand: an archer holds a quiver of arrows (no shield); everyone else
     // shows the equipped shield, if any.
     const isBow = equip.weapon && equip.weapon.type === 'bow';
-    this.setOffhand(isBow ? { arrows: true } : equip.shield);
+    this.setOffhand(isBow ? { arrows: true } : equip.shield, level);
     this.setHelmet(equip.helmet);
     this.setArmor(equip.armor);
     this.setLegs(equip.legs);
@@ -79,12 +83,26 @@ export class EquipVisuals {
     if (this.char.setBowMesh) this.char.setBowMesh(item.type === 'bow' ? this.weaponMesh : null);
   }
 
-  // The left hand: a shield, a bunch of arrows (for archers), or nothing.
-  setOffhand(item) {
+  // The left hand: a shield, a held WEAPON (off-hand blade/wand/etc.), a bunch of
+  // arrows (for archers), or nothing.
+  setOffhand(item, level) {
     if (this.shieldMesh) { this.char.parts.armL.hand.remove(this.shieldMesh); disposeTree(this.shieldMesh); this.shieldMesh = null; }
     if (!item) return;
-    this.shieldMesh = item.arrows ? buildArrowsMesh()
-      : buildShieldMesh(item.color || 0x8a5a2b, item.baseId || '', { element: item.element, levelReq: item.levelReq || 1 });
+    const isWeapon = item.type === 'weapon' || OFFHAND_WEAPON_TYPES.has(item.type);
+    if (item.arrows) {
+      this.shieldMesh = buildArrowsMesh();
+    } else if (isWeapon) {
+      // A weapon held in the LEFT hand — same build + hold pose as the right
+      // hand, then mirrored across X so it reads as gripped in the other hand.
+      const color = item.type === 'wand' ? wandColorForLevel(level) : (item.color || 0xb0b0b0);
+      this.shieldMesh = buildWeaponMesh(item.type, color, {
+        id: item.baseId, element: item.element, levelReq: item.levelReq || 1, twoHanded: item.twoHanded,
+      });
+      applyHoldTransform(this.shieldMesh, item.type, item.baseId || '');
+      this.shieldMesh.scale.x *= -1;   // mirror to the left hand
+    } else {
+      this.shieldMesh = buildShieldMesh(item.color || 0x8a5a2b, item.baseId || '', { element: item.element, levelReq: item.levelReq || 1 });
+    }
     this.char.parts.armL.hand.add(this.shieldMesh);
   }
 

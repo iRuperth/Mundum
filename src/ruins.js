@@ -59,9 +59,45 @@ function materials() {
     sandDark: new THREE.MeshLambertMaterial({ color: 0xa1854f, flatShading: true }),
     dark: new THREE.MeshLambertMaterial({ color: 0x14110f }),
     rubble: new THREE.MeshLambertMaterial({ color: 0x756f64, flatShading: true }),
+    mortar: new THREE.MeshLambertMaterial({ color: 0x4f4a43, flatShading: true }),  // dark seam tone for cracks/string-courses
     glass: new THREE.MeshBasicMaterial({ color: 0x222a2e }),     // broken/empty windows
   };
   return mats;
+}
+
+// Deterministic hash → -1..1 from two ints, so jittered ruins are stable across
+// frames/reloads (the project avoids Math.random for determinism). Bit-mixes the
+// inputs and folds them into a fractional value.
+function hash11(a, b) {
+  let h = (a | 0) * 374761393 + (b | 0) * 668265263;
+  h = (h ^ (h >> 13)) * 1274126177;
+  h ^= h >> 16;
+  return ((h & 0xffff) / 0x8000) - 1;   // -1 .. 1
+}
+
+// Push a geometry's vertices around by a position-seeded hash so a clean box or
+// dodecahedron reads as weathered, eroded stone. `amp` is the max offset; when
+// `topOnly` is set only verts above the local mid-height are eroded (and biased
+// downward), giving walls a crumbled crown while the base stays square for
+// collision. Recomputes normals so the new facets shade as relief.
+function jitterGeo(geo, amp, topOnly = false) {
+  const pos = geo.attributes.position;
+  if (topOnly) geo.computeBoundingBox();
+  const midY = topOnly ? (geo.boundingBox.min.y + geo.boundingBox.max.y) * 0.5 : 0;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    if (topOnly && y <= midY + 1e-4) continue;   // keep the footprint clean
+    const hx = hash11((x * 53) | 0, (z * 31) | 0);
+    const hz = hash11((z * 53) | 0, (x * 31) | 0);
+    const hy = hash11((x * 17) | 0, (y * 29) | 0);
+    pos.setX(i, x + hx * amp);
+    pos.setZ(i, z + hz * amp);
+    // top edges erode downward; loose lumps wobble both ways
+    pos.setY(i, y + (topOnly ? -Math.abs(hy) : hy) * amp);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
 }
 
 // A broken wall segment: a box with a jagged (lower at one end) top, registered
@@ -69,15 +105,30 @@ function materials() {
 function brokenWall(group, world, x, z, w, h, d, rot, mat, crumble = 0) {
   const y0 = world.heightAt(x, z);
   const hh = h * (1 - crumble * 0.6);
-  const wall = new THREE.Mesh(new THREE.BoxGeometry(w, hh, d), mat);
+  // Extra width segments give the top edge more vertices to erode into a jagged,
+  // crumbled masonry crown. jitterGeo only moves the upper verts so the base
+  // footprint (used for collision below) stays square.
+  const geo = new THREE.BoxGeometry(w, hh, d, Math.max(2, Math.round(w)), 1, 1);
+  jitterGeo(geo, Math.min(0.25, 0.1 + crumble * 0.2), true);
+  const wall = new THREE.Mesh(geo, mat);
   wall.position.set(x, y0 + hh / 2, z);
   wall.rotation.y = rot;
   wall.rotation.z = crumble * 0.12 * (((x + z) & 1) ? 1 : -1);
   group.add(wall);
+  // One or two fallen stones tumbled off the base, cheap (no extra collision).
+  const fx = Math.cos(rot), fz = -Math.sin(rot);
+  const fallen = 1 + ((Math.round(x + z) & 1));
+  for (let i = 0; i < fallen; i++) {
+    const t = hash11(Math.round(x) + i, Math.round(z) - i);
+    const s = 0.4 + Math.abs(hash11(Math.round(z) + i, Math.round(x))) * 0.4;
+    const stone = new THREE.Mesh(jitterGeo(new THREE.BoxGeometry(s, s * 0.7, s), 0.12), materials().stoneDark);
+    stone.position.set(x + fx * w * 0.4 * t, y0 + s * 0.35, z + fz * w * 0.4 * t + (d * 0.6 + 0.3) * (i ? 1 : -1));
+    stone.rotation.set(t, t * 2, -t);
+    group.add(stone);
+  }
   // Collision: a couple of circles along the wall so the whole span blocks.
   if (world.addSolid) {
     const half = w / 2;
-    const fx = Math.cos(rot), fz = -Math.sin(rot);
     for (let t = -1; t <= 1; t++) {
       world.addSolid(x + fx * half * t * 0.7, z + fz * half * t * 0.7, Math.max(d, 0.6) * 0.6 + 0.2);
     }
@@ -88,10 +139,20 @@ function brokenWall(group, world, x, z, w, h, d, rot, mat, crumble = 0) {
 // A pile of rubble (collidable lump) for crumbled corners.
 function rubblePile(group, world, x, z, s, mat) {
   const y0 = world.heightAt(x, z);
-  const pile = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), mat);
+  // Jitter the dodecahedron so each pile is a unique craggy lump, not a clean solid.
+  const pile = new THREE.Mesh(jitterGeo(new THREE.DodecahedronGeometry(s, 0), s * 0.3), mat);
   pile.position.set(x, y0 + s * 0.35, z);
   pile.rotation.set(x, z, x + z);
   group.add(pile);
+  // A couple of tiny shards scattered beside the main lump (no extra collision).
+  for (let i = 0; i < 2; i++) {
+    const t = hash11(Math.round(x) + i * 7, Math.round(z) - i * 3);
+    const ss = s * (0.22 + Math.abs(t) * 0.18);
+    const shard = new THREE.Mesh(jitterGeo(new THREE.DodecahedronGeometry(ss, 0), ss * 0.4), mat);
+    shard.position.set(x + t * s * 1.3, y0 + ss * 0.3, z - t * s * (i ? 1.1 : 0.6));
+    shard.rotation.set(t * 3, t * 5, t);
+    group.add(shard);
+  }
   if (world.addSolid) world.addSolid(x, z, s * 0.6);
 }
 
@@ -101,6 +162,11 @@ function rubblePile(group, world, x, z, s, mat) {
 function ruinedHouse(group, world, cx, cz, mat, matDark, floors = 2) {
   const w = 8, d = 7, fh = 3.2;
   const y0 = world.heightAt(cx, cz);
+  // Stone plinth: a low slab a touch wider than the walls, so the house sits on a
+  // weathered footing edge instead of floating on the terrain.
+  const plinth = new THREE.Mesh(jitterGeo(new THREE.BoxGeometry(w + 1.2, 0.5, d + 1.2), 0.08, true), matDark);
+  plinth.position.set(cx, y0 + 0.2, cz);
+  group.add(plinth);
   // Floor slabs (ground is terrain; upper floors are stone slabs you stand on).
   for (let f = 1; f < floors; f++) {
     const slab = new THREE.Mesh(new THREE.BoxGeometry(w - 0.6, 0.4, d - 0.6), matDark);
@@ -132,12 +198,22 @@ function ruinedHouse(group, world, cx, cz, mat, matDark, floors = 2) {
       group.add(step);
     }
   }
-  // A few broken roof beams across the top.
+  // A few broken roof beams across the top (run along x), with slight thickness
+  // variation so they read as separate weathered timbers.
   for (let i = -1; i <= 1; i++) {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(w + 1, 0.25, 0.25), matDark);
+    const th = 0.22 + Math.abs(hash11(Math.round(cx) + i, Math.round(cz))) * 0.12;
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(w + 1, th, th), matDark);
     beam.position.set(cx, y0 + totalH + 0.3, cz + i * (d / 3));
     beam.rotation.z = 0.05 * i;
     group.add(beam);
+  }
+  // A couple of cross-purlins (run along z) lying over the beams, some snapped short.
+  for (let i = -1; i <= 1; i += 2) {
+    const len = (d + 1) * (0.6 + Math.abs(hash11(Math.round(cz) + i, Math.round(cx))) * 0.4);
+    const purlin = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, len), matDark);
+    purlin.position.set(cx + i * (w / 4), y0 + totalH + 0.42, cz);
+    purlin.rotation.x = 0.04 * i;
+    group.add(purlin);
   }
 }
 
@@ -145,18 +221,30 @@ function ruinedHouse(group, world, cx, cz, mat, matDark, floors = 2) {
 function ruinedTower(group, world, cx, cz, mat, matDark, h = 11) {
   const y0 = world.heightAt(cx, cz);
   const r = 2.6;
-  const tower = new THREE.Mesh(new THREE.CylinderGeometry(r, r + 0.5, h, 12, 1, true), mat);
+  // Lightly jitter the shell (more height segments to weather) so the surface
+  // reads as pitted stone rather than a smooth pipe.
+  const tgeo = new THREE.CylinderGeometry(r, r + 0.5, h, 12, 4, true);
+  jitterGeo(tgeo, 0.12);
+  const tower = new THREE.Mesh(tgeo, mat);
   tower.position.set(cx, y0 + h / 2, cz);
   tower.rotation.x = 0.03; tower.rotation.z = 0.04;   // a slight lean
   group.add(tower);
   if (world.addSolid) world.addSolid(cx, cz, r + 0.4);
-  // jagged broken crown: a ring of blocks of varying height
+  // A horizontal string-course band partway up, a classic masonry course line.
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.25, r + 0.3, 0.5, 12, 1, true), matDark);
+  band.position.set(cx, y0 + h * 0.55, cz);
+  band.rotation.x = 0.03; band.rotation.z = 0.04;
+  group.add(band);
+  // jagged broken crown: a ring of blocks of ragged height, radius and tilt
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2;
-    const bh = 0.6 + (i % 3) * 0.6;
+    const j = hash11(Math.round(cx) + i, Math.round(cz) - i);
+    const bh = 0.4 + (i % 3) * 0.6 + Math.abs(j) * 0.7;
+    const rr = r + j * 0.18;
     const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.9, bh, 0.6), matDark);
-    merlon.position.set(cx + Math.cos(a) * r, y0 + h + bh / 2 - 0.2, cz + Math.sin(a) * r);
+    merlon.position.set(cx + Math.cos(a) * rr, y0 + h + bh / 2 - 0.2 - Math.abs(j) * 0.4, cz + Math.sin(a) * rr);
     merlon.rotation.y = -a;
+    merlon.rotation.z = j * 0.18;
     group.add(merlon);
   }
   // a doorway-dark disc at the base
@@ -169,15 +257,27 @@ function ruinedTower(group, world, cx, cz, mat, matDark, h = 11) {
 function column(group, world, cx, cz, mat, toppled = false) {
   const y0 = world.heightAt(cx, cz);
   if (toppled) {
-    const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 5, 10), mat);
+    // More radial segments hint at fluting even on the fallen drum.
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 5, 16), mat);
     seg.rotation.z = Math.PI / 2;
     seg.position.set(cx, y0 + 0.5, cz);
     group.add(seg);
+    // A square base block left standing where the column snapped off.
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 1.5), mat);
+    base.position.set(cx + 2.2, y0 + 0.25, cz);
+    group.add(base);
     if (world.addSolid) world.addSolid(cx, cz, 1.2);
   } else {
-    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 6, 12), mat);
+    // 16 radial segments suggest fluting; square base + capital blocks frame it.
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 6, 16), mat);
     col.position.set(cx, y0 + 3, cz);
     group.add(col);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 1.6), mat);
+    base.position.set(cx, y0 + 0.25, cz);
+    group.add(base);
+    const capital = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.4, 1.5), mat);
+    capital.position.set(cx, y0 + 6.1, cz);
+    group.add(capital);
     if (world.addSolid) world.addSolid(cx, cz, 0.8);
   }
 }
@@ -234,8 +334,12 @@ function buildRuin(group, world, r) {
       column(group, world, r.x - 10 + i * 4, r.z + 6, pal.wall, i % 4 === 0);
     }
     const dy = world.heightAt(r.x, r.z);
+    // A wider, lower step ringing the dais reads as a tiered temple platform.
+    const step = new THREE.Mesh(new THREE.BoxGeometry(9, 0.4, 7), pal.dark);
+    step.position.set(r.x, dy + 0.2, r.z);
+    group.add(step);
     const dais = new THREE.Mesh(new THREE.BoxGeometry(7, 0.8, 5), pal.dark);
-    dais.position.set(r.x, dy + 0.4, r.z);
+    dais.position.set(r.x, dy + 0.6, r.z);
     group.add(dais);
     const altar = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.2, 1.6), pal.wall);
     altar.position.set(r.x, dy + 1.4, r.z);

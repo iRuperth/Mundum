@@ -66,6 +66,9 @@ export class WorldNpcs {
   _build() {
     const cityById = {};
     for (const c of CITIES) cityById[c.id] = c;
+    // How many vendors already placed in each building, so a second/third vendor
+    // sharing a district stands BESIDE the first instead of on top of it.
+    const interiorCount = {};
     for (const npc of NPCS) {
       // LOOSE NPCs stand out in the wild at explicit world coords (no city) — e.g.
       // the renegade orc near the orc camp. They snap to terrain height.
@@ -81,8 +84,23 @@ export class WorldNpcs {
         // else uses their authored offset from the city center.
         const dKey = districtForNpc(npc);
         const interior = dKey ? this._interiorFor(npc.city, dKey) : null;
-        if (interior) { x = interior.x; z = interior.z; indoor = true; }
-        else { x = city.x + (npc.offset ? npc.offset.x : 0); z = city.z + (npc.offset ? npc.offset.z : 0); }
+        if (interior) {
+          // Fan multiple vendors of the same building out around its center so
+          // they don't overlap (e.g. the weaponsmith + armorer sharing the
+          // Armory). The first stands at center; the rest ring around it.
+          const ikey = npc.city + ':' + dKey;
+          const n = interiorCount[ikey] || 0;
+          interiorCount[ikey] = n + 1;
+          if (n === 0) { x = interior.x; z = interior.z; }
+          else {
+            const ang = (n - 1) * (Math.PI * 2 / 3) + 0.5;  // spread around the room
+            x = interior.x + Math.cos(ang) * 2.4;
+            z = interior.z + Math.sin(ang) * 2.4;
+          }
+          indoor = true;
+        } else {
+          x = city.x + (npc.offset ? npc.offset.x : 0); z = city.z + (npc.offset ? npc.offset.z : 0);
+        }
         // The whole city sits on one flat pad, so every NPC stands on city.groundY.
         y = city.groundY != null ? city.groundY : this.world.heightAt(x, z);
         // Dress NPCs for their city's climate.
