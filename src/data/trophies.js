@@ -26,6 +26,7 @@ const T = [
   ['boar',     'Colmillo de Jabalí',  'Boar Tusk',        12, 0x6a5040, '🐗'],
   ['wolf',     'Colmillo de Lobo',    'Wolf Fang',        14, 0x888888, '🐺'],
   ['bear',     'Garra de Oso',        'Bear Claw',        20, 0x7a5a3a, '🐻'],
+  ['tiger',    'Colmillo de Tigre',   'Tiger Fang',       28, 0xd98a2b, '🐯'],
   ['deer',     'Asta de Ciervo',      'Deer Antler',      10, 0xb07a4a, '🦌'],
   ['chicken',  'Pluma',               'Feather',          1,  0xeeddcc, '🪶'],
   ['sheep',    'Lana',                'Wool',             3,  0xf0f0e8, '🐑'],
@@ -59,6 +60,7 @@ const T = [
   ['fairy',    'Polvo de Hada',       'Fairy Dust',       26, 0xaaffcc, '✨'],
   // dragons & big beasts
   ['dragon',   'Garra de Dragón',     'Dragon Claw',      90, 0xcc3322, '🐉'],
+  ['crystal_dragon','Escama Cristalina','Crystal Dragon Scale',200,0xbfe8ff,'💎'],
   ['wyvern',   'Colmillo de Wyvern',  'Wyvern Fang',      80, 0x556644, '🦅'],
   ['hydra',    'Escama de Hidra',     'Hydra Scale',      100,0x447766, '🐲'],
   ['serpent',  'Escama de Leviatán',  'Leviathan Scale',  110,0x335577, '🌊'],
