@@ -16,6 +16,10 @@ import {
 } from './data/professions.js';
 import { CITIES, nearestCity } from './cities.js';
 import { DUNGEONS } from './dungeons.js';
+import { ZONES } from './zones.js';
+import { QUESTS } from './data/quests.js';
+import { getMaterial } from './data/materials.js';
+import { getTrophy } from './data/trophies.js';
 import { iconFor } from './itemIcons.js';
 import { creatureIcon } from './creatureIcons.js';
 import { renderCreatureViews } from './portrait.js';
@@ -38,12 +42,36 @@ function pct(p) { return (p * 100 < 1 ? (p * 100).toFixed(1) : Math.round(p * 10
 function lang() { return getLang(); }
 function loc(obj) { return obj ? (obj[lang()] || obj.es || obj.en) : ''; }
 
+// Wiki-local strings for the new item-sources panel. Kept here (not in i18n.js)
+// so this feature is self-contained; falls back to ES then the key.
+const WK_STRINGS = {
+  es: {
+    wikiClickItemHint: '👆 Toca cualquier objeto para ver de dónde sale (criaturas, %, zonas y misiones).',
+    wikiBackToItems: 'Volver al catálogo',
+    wikiSrcDroppedBy: '🎯 Lo sueltan',
+    wikiSrcNoDrop: 'No cae de criaturas.',
+    wikiSrcQuests: '📜 Recompensa de misión',
+    wikiSrcWhere: '🗺️ Se consigue en',
+    wikiSrcShop: '🏪 También se compra en tiendas.',
+  },
+  en: {
+    wikiClickItemHint: '👆 Tap any item to see where it comes from (creatures, %, zones and quests).',
+    wikiBackToItems: 'Back to catalog',
+    wikiSrcDroppedBy: '🎯 Dropped by',
+    wikiSrcNoDrop: 'Not dropped by creatures.',
+    wikiSrcQuests: '📜 Quest reward',
+    wikiSrcWhere: '🗺️ Where to find',
+    wikiSrcShop: '🏪 Also sold in shops.',
+  },
+};
+function tw(key) { const L = lang(); return (WK_STRINGS[L] && WK_STRINGS[L][key]) || WK_STRINGS.es[key] || key; }
+
 const ELEMENT_EMOJI = { none: '◽', fire: '🔥', water: '💧', plant: '🌿' };
 const BIOME_LABEL = {
   es: { grass: 'Praderas', beach: 'Playa', forest: 'Bosque', desert: 'Desierto',
-        mountain: 'Montaña', snow: 'Nieve', swamp: 'Pantano', water: 'Agua', anywhere: 'En todas partes' },
+        mountain: 'Montaña', snow: 'Nieve', swamp: 'Pantano', water: 'Agua', cave: 'Cueva', anywhere: 'En todas partes' },
   en: { grass: 'Grassland', beach: 'Beach', forest: 'Forest', desert: 'Desert',
-        mountain: 'Mountain', snow: 'Snow', swamp: 'Swamp', water: 'Water', anywhere: 'Everywhere' },
+        mountain: 'Mountain', snow: 'Snow', swamp: 'Swamp', water: 'Water', cave: 'Cave', anywhere: 'Everywhere' },
 };
 function biomeName(b) { return (BIOME_LABEL[lang()] && BIOME_LABEL[lang()][b]) || b || '—'; }
 
@@ -98,37 +126,99 @@ const FAMILY_TO_DUNGEON = (() => {
   return m;
 })();
 
-// Build a friendly name for any loot itemId, scanning every item table.
+// Loot/quest item ids are authored inconsistently (dashes AND underscores:
+// 'rat-tail', 'leather_armor', 'leather-armor'…). Normalise to ONE canonical
+// key so the same item always resolves the same way, no matter how it was typed.
+function canon(id) { return String(id || '').toLowerCase().replace(/-/g, '_'); }
+
+// Build ONE index of every real item definition (gear + consumables + crafting
+// materials), keyed by its canonical id. `kind` lets the detail panel show the
+// right stats; `slot` groups the catalog. Materials carry an emoji icon instead
+// of a procedural one.
 const ALL_ITEM_DEFS = (() => {
   const m = new Map();
-  for (const w of WEAPONS) m.set(w.id, w);
-  for (const a of ARMORS) m.set(a.id, a);
-  for (const c of CONTAINERS) m.set(c.id, c);
-  for (const p of POTIONS) m.set(p.id, p);
-  for (const l of LIGHTS) m.set(l.id, l);
-  for (const c of COINS) m.set(c.id, c);
+  const add = (def, kind, slot) => {
+    if (!def || !def.id) return;
+    const key = canon(def.id);
+    if (!m.has(key)) m.set(key, { ...def, _kind: kind, _slot: slot });
+  };
+  for (const w of WEAPONS) add(w, 'weapon', w.type);          // sword/axe/mace/lance/bow/wand/shield
+  for (const a of ARMORS) add(a, 'armor', a.slot);            // helmet/armor/legs/boots/amulet/bag
+  for (const c of CONTAINERS) add(c, 'container', 'bag');
+  for (const p of POTIONS) add(p, 'potion', 'potion');
+  for (const l of LIGHTS) add(l, 'light', 'light');
+  for (const c of COINS) add(c, 'coin', 'coin');
+  // Crafting materials (silk, hides, scales, fangs…) and trophies (one per family)
+  // are authored into loot tables but live in their own modules — materials.js /
+  // trophies.js own their {es,en} names + emoji icons. Pull them in so dropped
+  // loot resolves to a real name/icon instead of a raw id.
+  for (const c of CREATURES) {
+    for (const d of (c.loot || [])) {
+      if (!d || !d.itemId || d.itemId === 'gold') continue;
+      const key = canon(d.itemId);
+      if (m.has(key)) continue;
+      const mat = getMaterial(d.itemId);
+      if (mat) { m.set(key, { ...mat, _kind: 'material', _slot: 'material' }); continue; }
+      const tr = getTrophy(d.itemId);
+      if (tr) m.set(key, { ...tr, _kind: 'material', _slot: 'trophy' });
+    }
+  }
   return m;
 })();
+// Resolve any loot/quest id (in any dash/underscore form) to its definition.
+function itemDef(id) { return ALL_ITEM_DEFS.get(canon(id)) || null; }
 function lootName(id) {
   if (id === 'gold') return lang() === 'en' ? 'Gold' : 'Oro';
-  const def = ALL_ITEM_DEFS.get(id);
-  return def ? itemName(def) : id;
+  const def = itemDef(id);
+  if (def) return itemName(def);
+  // Unknown id (e.g. a placeholder legendary name not yet a real item): titleize.
+  return String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Reverse index: for each item id, which creatures drop it and at what chance.
+// Reverse index: canonical item id -> [{ creature, chance }], strongest first.
+// Built ONCE by scanning every creature's loot so clicking an item is instant.
 const DROPPED_BY = (() => {
   const m = new Map();
   for (const c of CREATURES) {
     for (const d of (c.loot || [])) {
       if (!d || !d.itemId || d.itemId === 'gold') continue;
-      if (!m.has(d.itemId)) m.set(d.itemId, []);
-      m.get(d.itemId).push({ creature: c, chance: d.chance });
+      const key = canon(d.itemId);
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push({ creature: c, chance: d.chance });
     }
   }
-  // strongest droppers first
   for (const arr of m.values()) arr.sort((a, b) => (b.chance || 0) - (a.chance || 0));
   return m;
 })();
+function droppedBy(id) { return DROPPED_BY.get(canon(id)) || []; }
+
+// Which themed ZONE(S) a creature lives in: its family is in zone.families OR
+// its id is listed in zone.ids. (zones.js builds pools the same way.)
+function zonesForCreature(c) {
+  return ZONES.filter((z) =>
+    (z.families || []).includes(c.family) || (z.ids || []).includes(c.id));
+}
+// A short zone label for a creature: its themed zone name(s) if any, else its
+// open-world biome. Used in the item "dropped by" rows.
+function zoneLabelForCreature(c) {
+  const zs = zonesForCreature(c);
+  if (zs.length) return zs.map((z) => loc(z.name)).join(', ');
+  return biomeName(c.spawnBiome);
+}
+
+// Reverse index: canonical item id -> [quest] that rewards it.
+const QUEST_REWARD = (() => {
+  const m = new Map();
+  for (const q of QUESTS) {
+    for (const id of (q.rewards && q.rewards.items) || []) {
+      const key = canon(id);
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(q);
+    }
+  }
+  return m;
+})();
+function questsRewarding(id) { return QUEST_REWARD.get(canon(id)) || []; }
 
 // ---- the panel ------------------------------------------------------------
 
@@ -148,6 +238,7 @@ export class Wiki {
     this.creatureSort = 'level';
     this.itemCategory = 'weapon';
     this.selectedCreature = null; // id of an expanded creature
+    this.selectedItem = null;     // canonical id of the item whose "sources" panel is open
     this.root = document.getElementById('wiki-panel');
     if (!this.root) {
       this.root = document.createElement('div');
@@ -480,8 +571,24 @@ export class Wiki {
     return d;
   }
 
+  // Open the item "sources" panel for a given item id (from any dash/underscore
+  // form). Switches to the items tab so the panel is visible from anywhere.
+  openItem(id) {
+    this.tab = 'items';
+    this.selectedItem = canon(id);
+    this.render();
+    setTimeout(() => { const n = this.root.querySelector('.wk-body'); if (n) n.scrollTop = 0; }, 0);
+  }
+
   // -- ITEMS ----------------------------------------------------------------
   _items() {
+    // When an item is selected, show its full "where does it come from" panel.
+    if (this.selectedItem) {
+      const def = ALL_ITEM_DEFS.get(this.selectedItem);
+      if (def) return this._itemDetail(def);
+      this.selectedItem = null; // unknown id — fall through to the catalog
+    }
+
     const box = el('div', { class: 'wk-section' });
     const cats = [
       ['weapon', '⚔️', t('wikiCatWeapons')],
@@ -501,7 +608,15 @@ export class Wiki {
     }
     box.appendChild(tabs);
 
+    box.appendChild(el('p', { class: 'wk-hint', text: tw('wikiClickItemHint') }));
+
     const list = el('div', { class: 'wk-item-list' });
+    // One delegated click handler opens the sources panel for any card that
+    // carries a data-item id (set by the table builders below).
+    list.addEventListener('click', (e) => {
+      const card = e.target.closest('.wk-item-click');
+      if (card && card.dataset.item) this.openItem(card.dataset.item);
+    });
     switch (this.itemCategory) {
       case 'armor': this._armorTable(list); break;
       case 'potion': this._potionTable(list); break;
@@ -514,6 +629,13 @@ export class Wiki {
     return box;
   }
 
+  // A catalog card shell that is clickable and opens the item's sources panel.
+  // Carries a canonical data-item id picked up by the delegated handler above.
+  _catCard(def) {
+    return el('div', { class: 'wk-item wk-item-click',
+      attrs: { 'data-item': canon(def.id) } });
+  }
+
   _tierBadge(tier) {
     const M = { es: { shop: 'Tienda', epic: 'Épico', 'legendary-tier': 'Legendario' },
                 en: { shop: 'Shop', epic: 'Epic', 'legendary-tier': 'Legendary' } };
@@ -524,13 +646,13 @@ export class Wiki {
   _weaponTable(box) {
     const byType = {};
     for (const w of WEAPONS) (byType[w.type] ||= []).push(w);
-    const TYPE_LABEL = { es: { sword: 'Espadas', axe: 'Hachas', bow: 'Arcos', wand: 'Varitas', shield: 'Escudos' },
-                         en: { sword: 'Swords', axe: 'Axes', bow: 'Bows', wand: 'Wands', shield: 'Shields' } };
-    for (const type of ['sword', 'axe', 'bow', 'wand', 'shield']) {
+    const TYPE_LABEL = { es: { sword: 'Espadas', axe: 'Hachas', mace: 'Mazas', lance: 'Lanzas', bow: 'Arcos', wand: 'Varitas', shield: 'Escudos' },
+                         en: { sword: 'Swords', axe: 'Axes', mace: 'Maces', lance: 'Lances', bow: 'Bows', wand: 'Wands', shield: 'Shields' } };
+    for (const type of ['sword', 'axe', 'mace', 'lance', 'bow', 'wand', 'shield']) {
       const arr = byType[type]; if (!arr) continue;
       box.appendChild(el('h4', { text: (TYPE_LABEL[lang()] && TYPE_LABEL[lang()][type]) || type }));
       for (const w of arr.sort((a, b) => a.levelReq - b.levelReq)) {
-        const card = el('div', { class: 'wk-item' });
+        const card = this._catCard(w);
         const top = el('div', { class: 'wk-item-top' });
         top.appendChild(el('span', { class: 'wk-item-name', html:
           `${itemIco(w)} ${itemName(w)}` }));
@@ -556,13 +678,29 @@ export class Wiki {
   _armorTable(box) {
     const bySlot = {};
     for (const a of ARMORS) (bySlot[a.slot] ||= []).push(a);
-    const SLOT_LABEL = { es: { amulet: 'Amuletos', helmet: 'Cascos', armor: 'Armaduras', legs: 'Pantalones', boots: 'Botas' },
-                         en: { amulet: 'Amulets', helmet: 'Helmets', armor: 'Body Armor', legs: 'Legs', boots: 'Boots' } };
-    for (const slot of ['amulet', 'helmet', 'armor', 'legs', 'boots']) {
+    for (const c of CONTAINERS) (bySlot.bag ||= []).push({ ...c, defense: 0, levelReq: 0 });
+    const SLOT_LABEL = { es: { amulet: 'Amuletos', helmet: 'Cascos', armor: 'Armaduras', legs: 'Pantalones', boots: 'Botas', bag: 'Bolsas / Mochilas' },
+                         en: { amulet: 'Amulets', helmet: 'Helmets', armor: 'Body Armor', legs: 'Legs', boots: 'Boots', bag: 'Bags / Backpacks' } };
+    for (const slot of ['amulet', 'helmet', 'armor', 'legs', 'boots', 'bag']) {
       const arr = bySlot[slot]; if (!arr) continue;
       box.appendChild(el('h4', { text: (SLOT_LABEL[lang()] && SLOT_LABEL[lang()][slot]) || slot }));
       for (const a of arr.sort((x, y) => x.levelReq - y.levelReq)) {
-        const card = el('div', { class: 'wk-item' });
+        const card = this._catCard(a);
+        if (slot === 'bag') {
+          const top = el('div', { class: 'wk-item-top' });
+          top.appendChild(el('span', { class: 'wk-item-name', html: `${itemIco(a)} ${itemName(a)}` }));
+          if (a.shopTier) top.appendChild(this._tierBadge(a.shopTier));
+          card.appendChild(top);
+          const tags = el('div', { class: 'wk-item-tags' });
+          tags.appendChild(tag(`🎒 ${a.capacity} ${lang() === 'en' ? 'slots' : 'huecos'}`));
+          tags.appendChild(tag(`⚖️ ${a.weight}`));
+          if (a.value > 0) tags.appendChild(tag(`💰 ${a.value}`));
+          card.appendChild(tags);
+          const drops = this._dropSource(a.id);
+          if (drops) card.appendChild(drops);
+          box.appendChild(card);
+          continue;
+        }
         const top = el('div', { class: 'wk-item-top' });
         top.appendChild(el('span', { class: 'wk-item-name', html: `${itemIco(a)} ${itemName(a)}` }));
         top.appendChild(this._tierBadge(a.shopTier));
@@ -590,7 +728,7 @@ export class Wiki {
       const arr = groups[g]; if (!arr || !arr.length) continue;
       box.appendChild(el('h4', { text: (LBL[lang()] && LBL[lang()][g]) || g }));
       for (const p of arr.sort((a, b) => a.levelReq - b.levelReq)) {
-        const card = el('div', { class: 'wk-item' });
+        const card = this._catCard(p);
         card.appendChild(el('div', { class: 'wk-item-top' }, [
           el('span', { class: 'wk-item-name', html: `${itemIco(p)} ${itemName(p)}` }),
         ]));
@@ -600,6 +738,8 @@ export class Wiki {
         tags.appendChild(tag(`🎚️ Lv ${p.levelReq}`));
         if (p.value > 0) tags.appendChild(tag(`💰 ${p.value}`));
         card.appendChild(tags);
+        const drops = this._dropSource(p.id);
+        if (drops) card.appendChild(drops);
         box.appendChild(card);
       }
     }
@@ -607,7 +747,7 @@ export class Wiki {
 
   _lightTable(box) {
     for (const l of LIGHTS.sort((a, b) => a.levelReq - b.levelReq)) {
-      const card = el('div', { class: 'wk-item' });
+      const card = this._catCard(l);
       card.appendChild(el('div', { class: 'wk-item-top' }, [
         el('span', { class: 'wk-item-name', html: `${itemIco(l)} ${itemName(l)}` }),
       ]));
@@ -663,17 +803,155 @@ export class Wiki {
     }
   }
 
-  // Build a "dropped by" line for an item id (creature drops only).
+  // Compact "dropped by" teaser on a catalog card (top droppers only). The whole
+  // card is clickable, so this is just a preview; the full list lives in the
+  // sources panel.
   _dropSource(itemId) {
-    const sources = DROPPED_BY.get(itemId);
-    if (!sources || !sources.length) return null;
+    const sources = droppedBy(itemId);
+    if (!sources.length) return null;
     const wrap = el('div', { class: 'wk-drops' });
     wrap.appendChild(el('span', { class: 'wk-drops-l', text: t('wikiDroppedBy') }));
-    for (const s of sources.slice(0, 5)) {
+    for (const s of sources.slice(0, 4)) {
       wrap.appendChild(el('span', { class: 'wk-chip wk-dim', text:
         `${s.creature.name} (${pct(s.chance || 0)})` }));
     }
+    if (sources.length > 4) wrap.appendChild(el('span', { class: 'wk-chip wk-dim',
+      text: `+${sources.length - 4}` }));
     return wrap;
+  }
+
+  // A chip that jumps to a creature's detail in the Creatures tab.
+  _creatureJumpChip(c, label) {
+    return el('button', { class: 'wk-chip wk-chip-btn', html:
+      `${swatch(c.color)} ${label || c.name} <span class="wk-dim">Lv ${c.level}</span>`,
+      on: { click: () => {
+        this.tab = 'creatures';
+        this.selectedItem = null;
+        this.selectedCreature = c.id;
+        this.creatureQuery = c.name;
+        this.render();
+        setTimeout(() => { const n = this.root.querySelector('.wk-cr.open'); if (n) n.scrollIntoView({ block: 'nearest' }); }, 0);
+      } } });
+  }
+
+  // -- ITEM SOURCES PANEL ---------------------------------------------------
+  // "Where does this item come from?" — icon + stats, every creature that drops
+  // it (chance + zone), quests that reward it, and the distinct zones to farm.
+  _itemDetail(def) {
+    const d = el('div', { class: 'wk-section wk-item-detail' });
+
+    // Back to catalog.
+    d.appendChild(el('button', { class: 'wk-back',
+      text: '← ' + tw('wikiBackToItems'),
+      on: { click: () => { this.selectedItem = null; this.render(); } } }));
+
+    // Header: icon + name + type/slot.
+    const head = el('div', { class: 'wk-id-head' });
+    head.appendChild(el('span', { class: 'wk-id-ico', html: itemIco(def, 56) }));
+    const hinfo = el('div', { class: 'wk-id-info' });
+    const titleRow = el('div', { class: 'wk-id-title' });
+    titleRow.appendChild(el('b', { text: itemName(def) }));
+    if (def.shopTier) titleRow.appendChild(this._tierBadge(def.shopTier));
+    hinfo.appendChild(titleRow);
+    hinfo.appendChild(el('div', { class: 'wk-id-sub', text: this._itemKindLabel(def) }));
+    head.appendChild(hinfo);
+    d.appendChild(head);
+
+    // Key stats line (only the relevant ones for this kind).
+    const tags = el('div', { class: 'wk-item-tags' });
+    if (def._kind === 'weapon') {
+      if (def.type !== 'shield' && def.atkMax != null) tags.appendChild(tag(`⚔️ ${def.atkMin}–${def.atkMax}`));
+      if (def.defense > 0) tags.appendChild(tag(`🛡️ ${def.defense} def`));
+      if (def.element && def.element !== 'none') tags.appendChild(tag(`${ELEMENT_EMOJI[def.element]} ${elementName(def.element)}`));
+      if (def.twoHanded) tags.appendChild(tag('✋✋ ' + t('wikiTwoHanded')));
+    } else if (def._kind === 'armor') {
+      if (def.defense > 0) tags.appendChild(tag(`🛡️ ${def.defense} def`));
+      if (def.speedBonus) tags.appendChild(tag(`👟 +${Math.round(def.speedBonus * 100)}% ${t('wikiSpeed')}`));
+    } else if (def._kind === 'container') {
+      if (def.capacity) tags.appendChild(tag(`🎒 ${def.capacity} ${lang() === 'en' ? 'slots' : 'huecos'}`));
+    } else if (def._kind === 'potion') {
+      const amt = def.restorePct != null ? `${Math.round(def.restorePct * 100)}%` : `+${def.restore}`;
+      tags.appendChild(tag(`${t('restores')} ${amt}`));
+    } else if (def._kind === 'light') {
+      if (def.radius) tags.appendChild(tag(`💡 ${def.radius}m`));
+    }
+    if (def.levelReq) tags.appendChild(tag(`🎚️ Lv ${def.levelReq}`));
+    if (def.weight) tags.appendChild(tag(`⚖️ ${def.weight}`));
+    if (def.value > 0) tags.appendChild(tag(`💰 ${def.value}`));
+    if (tags.childNodes.length) d.appendChild(tags);
+
+    // --- Dropped by --------------------------------------------------------
+    const sources = droppedBy(def.id);
+    d.appendChild(el('div', { class: 'wk-sub-t', text: tw('wikiSrcDroppedBy') }));
+    if (sources.length) {
+      const tbl = el('div', { class: 'wk-src-list' });
+      for (const s of sources) {
+        const row = el('div', { class: 'wk-src-row' });
+        const left = el('div', { class: 'wk-src-cr' });
+        left.appendChild(this._creatureJumpChip(s.creature));
+        const zone = el('span', { class: 'wk-src-zone',
+          text: '🗺️ ' + zoneLabelForCreature(s.creature) });
+        left.appendChild(zone);
+        row.appendChild(left);
+        row.appendChild(el('span', { class: 'wk-src-chance', text: pct(s.chance || 0) }));
+        tbl.appendChild(row);
+      }
+      d.appendChild(tbl);
+    } else {
+      d.appendChild(el('p', { class: 'wk-dim wk-src-empty', text: tw('wikiSrcNoDrop') }));
+    }
+
+    // --- Quest reward ------------------------------------------------------
+    const quests = questsRewarding(def.id);
+    if (quests.length) {
+      d.appendChild(el('div', { class: 'wk-sub-t', text: tw('wikiSrcQuests') }));
+      const ql = el('div', { class: 'wk-chip-row' });
+      for (const q of quests) {
+        const city = q.city ? (CITIES.find((c) => c.id === q.city) || null) : null;
+        const where = city ? ` · ${city.name}` : '';
+        ql.appendChild(el('span', { class: 'wk-chip',
+          html: `📜 ${loc(q.title)} <span class="wk-dim">Lv ${q.minLevel || 1}+${where}</span>` }));
+      }
+      d.appendChild(ql);
+    }
+
+    // --- Where to find (distinct zones) ------------------------------------
+    const zoneSet = new Map(); // name -> zone (dedupe)
+    for (const s of sources) for (const z of zonesForCreature(s.creature)) zoneSet.set(z.id, z);
+    // Quest dungeons/cities give a hint too, but creatures are the primary source.
+    if (zoneSet.size) {
+      d.appendChild(el('div', { class: 'wk-sub-t', text: tw('wikiSrcWhere') }));
+      const zl = el('div', { class: 'wk-chip-row' });
+      for (const z of zoneSet.values()) {
+        zl.appendChild(el('span', { class: 'wk-chip',
+          html: `🗺️ ${loc(z.name)} <span class="wk-dim">Lv ${z.levelMin}–${z.levelMax}</span>` }));
+      }
+      d.appendChild(zl);
+    }
+
+    // --- Shop note ---------------------------------------------------------
+    if (def.shopTier === 'shop' && def.value > 0) {
+      d.appendChild(el('p', { class: 'wk-dim wk-shop-note', text: tw('wikiSrcShop') }));
+    }
+
+    return d;
+  }
+
+  // Human label for an item's kind/slot ("Espada · Lv 60", "Material", …).
+  _itemKindLabel(def) {
+    const KIND = { es: { weapon: 'Arma', armor: 'Armadura', container: 'Contenedor',
+      potion: 'Poción', light: 'Luz', coin: 'Moneda', material: 'Material', trophy: 'Trofeo' },
+      en: { weapon: 'Weapon', armor: 'Armor', container: 'Container',
+      potion: 'Potion', light: 'Light', coin: 'Coin', material: 'Material', trophy: 'Trophy' } };
+    const WT = { es: { sword: 'Espada', axe: 'Hacha', mace: 'Maza', lance: 'Lanza', bow: 'Arco', wand: 'Varita', shield: 'Escudo' },
+      en: { sword: 'Sword', axe: 'Axe', mace: 'Mace', lance: 'Lance', bow: 'Bow', wand: 'Wand', shield: 'Shield' } };
+    const SLOT = { es: { amulet: 'Amuleto', helmet: 'Casco', armor: 'Armadura', legs: 'Pantalón', boots: 'Botas', bag: 'Bolsa' },
+      en: { amulet: 'Amulet', helmet: 'Helmet', armor: 'Body', legs: 'Legs', boots: 'Boots', bag: 'Bag' } };
+    const L = lang();
+    if (def._kind === 'weapon') return (WT[L] && WT[L][def.type]) || (KIND[L].weapon);
+    if (def._kind === 'armor') return (SLOT[L] && SLOT[L][def._slot]) || KIND[L].armor;
+    if (def._slot === 'trophy') return KIND[L].trophy;
+    return (KIND[L] && KIND[L][def._kind]) || def._kind || '';
   }
 
   // -- PROFESSIONS ----------------------------------------------------------
@@ -731,8 +1009,15 @@ function swatch(color, size = 14) {
 }
 // Real procedural pixel-art item icon at a wiki-list size. Accepts a raw item
 // definition (iconFor normalises id->baseId), so each weapon/armor/etc. shows
-// its distinct icon instead of a flat colour swatch.
+// its distinct icon instead of a flat colour swatch. Materials/trophies carry no
+// procedural painter — they ship an emoji `icon`, so render that instead.
 function itemIco(def, size = 26) {
+  if (def && def.kind === 'material' && def.icon) {
+    return `<span class="wk-ico" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.62)}px">${def.icon}</span>`;
+  }
+  if (def && def.kind === 'trophy' && def.icon) {
+    return `<span class="wk-ico" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.62)}px">${def.icon}</span>`;
+  }
   return `<span class="wk-ico" style="width:${size}px;height:${size}px">${iconFor(def)}</span>`;
 }
 function kv(ico, k, v) {
