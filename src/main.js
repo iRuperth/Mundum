@@ -2948,6 +2948,8 @@ function openNpcDialog(npc) {
     questsForNpc: (id) => questsForNpc(id),
     accept: (qid) => { if (questLog.accept(qid)) { audio.sfx.click(); onQuestProgress(); maybeFirstQuestHint(); } },
     complete: (qid) => completeQuest(qid),
+    // World gates for imaginative quests: night-only and "must hold this key/barter".
+    questCtx: { isNight: daynight.isNight(), hasItems: (id, n) => inv.hasItems(id, n) },
   });
   onQuestProgress();
 }
