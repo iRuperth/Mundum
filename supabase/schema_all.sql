@@ -136,12 +136,18 @@ create policy "friends_delete_own"
 drop policy if exists "bans_select_all_auth" on public.bans;
 create policy "bans_select_all_auth"
   on public.bans for select to authenticated using (true);
+-- Only the configured GM may ban or unban. Previously these were `(true)`, which
+-- let ANY authenticated player insert/delete ban rows (ban or unban anyone — the
+-- target's auth uid is discoverable from presence). The GM check pins writes to
+-- the account whose uid is stored in game_config['gm_user_id'].
 drop policy if exists "bans_insert_auth" on public.bans;
-create policy "bans_insert_auth"
-  on public.bans for insert to authenticated with check (true);
+create policy "bans_insert_gm"
+  on public.bans for insert to authenticated
+  with check (auth.uid()::text = (select v from public.game_config where k = 'gm_user_id'));
 drop policy if exists "bans_delete_auth" on public.bans;
-create policy "bans_delete_auth"
-  on public.bans for delete to authenticated using (true);
+create policy "bans_delete_gm"
+  on public.bans for delete to authenticated
+  using (auth.uid()::text = (select v from public.game_config where k = 'gm_user_id'));
 
 -- game_config: read-only for players (only the SQL editor / service role writes).
 drop policy if exists "game_config_select_all_auth" on public.game_config;
