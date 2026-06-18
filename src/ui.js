@@ -1,12 +1,34 @@
 import { t, elementName, getLang } from './i18n.js';
-import { RARITY, mmCoins } from './data/items.js';
+import { RARITY, mmCoins, getWeapon, getArmor, getContainer } from './data/items.js';
+import { getMaterial } from './data/materials.js';
+
+// HTML-escape any value bound for innerHTML. Used on EVERY network- or DB-sourced
+// string (player/house owner names, market seller names + item names, ban list
+// names) so a crafted name like "<img onerror=…>" can't run script in another
+// player's session (stored/DOM XSS). Static i18n strings don't need it.
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Friendly display name for any item id (gear, container or material), in the
+// given language, falling back to a title-cased id. Used by the quest "needs"
+// hints so a key id like 'demon-bone' reads "Demon Bone" / "Hueso de Demonio".
+function itemDisplayName(id, lang = 'es') {
+  const gear = getWeapon(id) || getArmor(id) || getContainer(id);
+  if (gear) return typeof gear.name === 'object' ? (gear.name[lang] || gear.name.es) : gear.name;
+  const mat = getMaterial(id);
+  if (mat) return (mat.name && (mat.name[lang] || mat.name.es)) || id;
+  return String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 import { EQUIP_SLOTS, itemWeight } from './inventory.js';
 import { shopStock, shopStockFor, vendorBuysItem, sellPrice, buyPrice, CITIES } from './cities.js';
 import { iconFor, slotPlaceholderIcon } from './itemIcons.js';
+import { housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, HOUSE_PALETTE, FACADE_SLOTS } from './house.js';
 
 const SLOT_ICON = {
   amulet: '📿', helmet: '⛑️', weapon: '⚔️', armor: '🛡️',
-  shield: '🔰', legs: '👖', boots: '🥾', bag: '🎒', extra: '🔥',
+  shield: '🔰', legs: '👖', boots: '🥾', bag: '🎒', extra: '🔥', quiver: '🎯',
 };
 const TYPE_ICON = {
   sword: '🗡️', axe: '🪓', bow: '🏹', wand: '🪄', shield: '🔰',
@@ -881,6 +903,45 @@ export class UI {
     return lines.join('<br>');
   }
 
+  // Plain Tibia-style INFO block for the left-click card: name + stats + weight,
+  // text only, NO icons/emoji. Used by openItemInfo.
+  infoDetails(item) {
+    const L = [];
+    const r = (a, b) => (a === b ? `${a}` : `${a}-${b}`);
+    const type = item.type === 'armor' ? (t(item.slot) || item.slot)
+      : item.type === 'quiver' ? t('quiver')
+      : item.type === 'weapon' || ['sword', 'axe', 'mace', 'lance', 'bow', 'wand'].includes(item.type) ? t('weapon')
+      : item.type === 'shield' ? t('shield')
+      : item.type === 'container' ? t('bag')
+      : item.kind === 'potion' ? t('potion')
+      : item.kind === 'coin' ? t('gold')
+      : item.kind === 'light' ? t('light')
+      : '';
+    if (type) L.push(type);
+    if (item.kind === 'coin') { L.push(`${item.count} × ${t('gold')}`); return L.join('<br>'); }
+    if (item.kind === 'potion') {
+      const tgt = item.restoreType === 'hp' ? t('hp') : item.restoreType === 'mana' ? t('mana') : `${t('hp')} + ${t('mana')}`;
+      L.push(`${t('restores')} ${item.restorePct ? Math.round(item.restorePct * 100) + '%' : item.restore} ${tgt}`);
+    }
+    if (item.atk != null) L.push(`${t('attack')}: ${item.atk}`);
+    if (item.atkMin != null || item.atkMax != null) L.push(`${t('attack')}: ${r(item.atkMin || 0, item.atkMax || item.atkMin || 0)}`);
+    if (item.arrowAtk) L.push(`${t('attack')}: +${item.arrowAtk}`);
+    if (item.defense) L.push(`${t('defense')}: ${item.defense}`);
+    if (item.element && item.element !== 'none') L.push(`${t('element')}: ${elementName(item.element)}`);
+    if (item.twoHanded) L.push(t('stTwoH'));
+    if (item.speedBonus) L.push(`+${Math.round(item.speedBonus * 100)}% ${t('speed') || ''}`.trim());
+    if (item.magicLevelBonus) L.push(`+${item.magicLevelBonus} ${t('magic') || 'magic'}`);
+    if (item.skillBonus) for (const k in item.skillBonus) L.push(`+${item.skillBonus[k]} ${t(k) || k}`);
+    if (item.hpRegenPerSec) L.push(`+${item.hpRegenPerSec} ${t('hp')}/s`);
+    if (item.manaRegenPerSec) L.push(`+${item.manaRegenPerSec} ${t('mana')}/s`);
+    if (item.capacity) L.push(`${item.capacity} ${t('stSlots')}`);
+    if (item.ability) L.push(esc(item.ability.name));   // ability.name from DB items — escape
+    if (item.levelReq > 1) L.push(`${t('levelReq')}: ${item.levelReq}`);
+    const full = itemWeight(item);
+    if (full) L.push(`${t('weight')}: ${full}`);
+    return L.join('<br>');
+  }
+
   showTooltip(item, anchor) {
     let tip = this.refs.tooltip;
     if (!tip) {
@@ -900,15 +961,18 @@ export class UI {
     if (this.refs.tooltip) this.refs.tooltip.classList.remove('show');
   }
 
-  openContext(item, actions) {
+  openContext(item, actions, opts = {}) {
     const card = this.refs.contextCard;
-    card.innerHTML = `<div class="ctx-head ${rarityClass(item)}">${item.name}</div>
-      <div class="ctx-body">${this.itemDetails(item)}</div>`;
+    const body = opts.info ? this.infoDetails(item) : this.itemDetails(item);
+    // item.name may have been crafted on a traded/bought item — escape it.
+    card.innerHTML = `<div class="ctx-head ${rarityClass(item)}">${esc(item.name)}</div>
+      <div class="ctx-body">${body}</div>`;
     const row = document.createElement('div');
     row.className = 'ctx-actions';
     for (const a of actions) {
       const b = document.createElement('button');
       b.textContent = a.label;
+      if (a.primary) b.className = 'ctx-primary';   // highlight the main Equip/Use/Open
       // An action that returns true is opening its OWN dialog in this same card
       // (e.g. "Drop" asking how many) — don't close it out from under itself.
       b.addEventListener('click', () => { if (a.fn() !== true) this.closeContext(); });
@@ -1235,6 +1299,479 @@ export class UI {
     card.classList.remove('hidden');
   }
 
+  // ===================== HOUSES =====================
+
+  // Buy dialog for an unowned lot: size, floors, basement, showcase capacity,
+  // price, and a Buy button (greyed if you can't afford or already own a house).
+  openHouseBuy(lot, gold, hooks) {
+    const card = this.refs.contextCard;
+    const price = housePrice(lot);
+    const sizeLabel = t(houseSizeKey(lot));
+    const floors = (lot.floors || 1) >= 2 ? t('houseFloors', lot.floors) : t('houseFloor1');
+    const basement = lot.basement ? ' · ' + t('houseBasement') : '';
+    const cap = showcaseCapacity(lot);
+    const free = price <= 0;
+    const afford = free || gold >= price;
+    // Free (testing) houses show a "Free" tag and a plain Buy; otherwise the price.
+    // When you can't afford a priced house: red price + an explicit "not enough
+    // gold" line and a disabled, greyed-out buy button (the standard look).
+    const noGoldLine = afford ? '' : `<div class="ctx-sub price-no">⛔ ${t('noGold')}</div>`;
+    const priceLine = free
+      ? `<div class="ctx-body"><b class="price">✅ ${t('houseFree')}</b></div>`
+      : `<div class="ctx-body"><b class="price${afford ? '' : ' price-no'}">${mmCoins(price)}</b></div>`;
+    card.innerHTML = `<div class="ctx-head">🏠 ${t('houseBuyTitle')}</div>
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${mmCoins(gold)}</b></div>
+      <div class="ctx-sub">${t('houseSize')}: <b>${sizeLabel}</b> · ${floors}${basement}</div>
+      <div class="ctx-body">🖼️ ${t('houseShowcaseSlots', cap)}</div>
+      ${priceLine}
+      ${noGoldLine}`;
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const buy = document.createElement('button');
+    buy.textContent = free ? t('houseBuyFree') : (afford ? t('houseBuyConfirm', mmCoins(price)) : t('noGold'));
+    buy.disabled = !afford;
+    buy.addEventListener('click', () => { if (afford) hooks.buy(); });
+    actions.appendChild(buy);
+    card.appendChild(actions);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // The owner's management menu: Enter, walls (showcase), colours, light, ban
+  // list, and Sell house. Opens a tabbed-ish single card.
+  openHouseManage(lot, store, hooks) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">🏠 ${t('houseYours')}</div>`;
+    // Enter button.
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const enter = document.createElement('button');
+    enter.textContent = '🚪 ' + t('houseEnter');
+    enter.addEventListener('click', () => { hooks.enter(); this.closeContext(); });
+    actions.appendChild(enter);
+    card.appendChild(actions);
+
+    // Colours (exterior + interior).
+    card.appendChild(this._houseColorSection(lot, store, hooks));
+
+    // Facade display (front-wall showcase, visible from outside).
+    card.appendChild(this._houseFacadeSection(lot, store, hooks));
+
+    // Light temperature.
+    const lightSec = document.createElement('div');
+    lightSec.className = 'house-sec';
+    lightSec.innerHTML = `<div class="ctx-sub">💡 ${t('houseLight')}</div>`;
+    const lrow = document.createElement('div');
+    lrow.className = 'house-lightrow';
+    for (const temp of ['warm', 'cold']) {
+      const b = document.createElement('button');
+      b.className = 'house-lightbtn' + (store.light === temp ? ' on' : '');
+      b.textContent = (temp === 'warm' ? '🔥 ' : '❄️ ') + t(temp === 'warm' ? 'houseLightWarm' : 'houseLightCold');
+      b.addEventListener('click', () => { hooks.setLight(temp); this.openHouseManage(lot, store, hooks); });
+      lrow.appendChild(b);
+    }
+    lightSec.appendChild(lrow);
+    card.appendChild(lightSec);
+
+    // Ban list / close-to-all.
+    card.appendChild(this._houseBanSection(lot, store, hooks));
+
+    // Sell house.
+    const sellSec = document.createElement('div');
+    sellSec.className = 'house-sec';
+    const sellBtn = document.createElement('button');
+    sellBtn.className = 'house-sellbtn';
+    sellBtn.textContent = '💰 ' + t('houseSell') + ' (+' + mmCoins(Math.floor(housePrice(lot) / 2)) + ')';
+    sellBtn.addEventListener('click', () => {
+      this._confirmInline(t('houseSellConfirm', mmCoins(Math.floor(housePrice(lot) / 2))), () => hooks.sellHouse());
+    });
+    sellSec.appendChild(sellBtn);
+    card.appendChild(sellSec);
+
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // Colour swatch grid for one target key.
+  _houseColorSection(lot, store, hooks) {
+    const sec = document.createElement('div');
+    sec.className = 'house-sec';
+    sec.innerHTML = `<div class="ctx-sub">🎨 ${t('houseColors')}</div>`;
+    const targets = [
+      { key: 'wall', label: t('houseColorWalls'), group: 'ext' },
+      { key: 'roof', label: t('houseColorRoof'), group: 'ext' },
+      { key: 'door', label: t('houseColorDoor'), group: 'ext' },
+      { key: 'trim', label: t('houseColorTrim'), group: 'ext' },
+      { key: 'inWall', label: t('houseColorWalls'), group: 'int' },
+      { key: 'inFloor', label: t('houseColorTrim'), group: 'int' },
+    ];
+    for (const grp of ['ext', 'int']) {
+      const head = document.createElement('div');
+      head.className = 'house-colhead';
+      head.textContent = grp === 'ext' ? t('houseColorExterior') : t('houseColorInterior');
+      sec.appendChild(head);
+      for (const tg of targets.filter((x) => x.group === grp)) {
+        const row = document.createElement('div');
+        row.className = 'house-colrow';
+        const lab = document.createElement('span');
+        lab.className = 'house-collabel';
+        lab.textContent = tg.label;
+        row.appendChild(lab);
+        const swatches = document.createElement('div');
+        swatches.className = 'house-swatches';
+        for (const hex of HOUSE_PALETTE) {
+          const sw = document.createElement('button');
+          sw.className = 'house-swatch' + (store.colors[tg.key] === hex ? ' on' : '');
+          sw.style.background = '#' + (hex >>> 0).toString(16).padStart(6, '0');
+          sw.title = '#' + (hex >>> 0).toString(16).padStart(6, '0');
+          sw.addEventListener('click', () => { hooks.setColor(tg.key, hex); this.openHouseManage(lot, store, hooks); });
+          swatches.appendChild(sw);
+        }
+        row.appendChild(swatches);
+        sec.appendChild(row);
+      }
+    }
+    return sec;
+  }
+
+  // Facade display: the two front-wall slots. Each shows the chosen item's icon
+  // (or an empty "＋" to pick one). Display-only — the item stays in the backpack.
+  _houseFacadeSection(lot, store, hooks) {
+    const sec = document.createElement('div');
+    sec.className = 'house-sec';
+    sec.innerHTML = `<div class="ctx-sub">🪟 ${t('houseFacade')}</div>
+      <div class="house-facadehint">${t('houseFacadeHint')}</div>`;
+    const row = document.createElement('div');
+    row.className = 'house-facaderow';
+    for (let i = 0; i < FACADE_SLOTS; i++) {
+      const item = store.facadeItem(i);
+      const cell = document.createElement('button');
+      cell.className = 'house-facadecell' + (item ? ' ' + rarityClass(item) : '');
+      if (item) {
+        cell.innerHTML = `<span class="ico">${iconFor(item)}</span>`;
+        cell.title = typeof item.name === 'string' ? item.name : (item.name[getLang()] || item.name.es);
+        // Click a filled slot to clear it.
+        cell.addEventListener('click', () => { hooks.clearFacade(i); this.openHouseManage(lot, store, hooks); });
+      } else {
+        cell.innerHTML = '<span class="ico">＋</span>';
+        cell.title = t('houseFacadePick');
+        cell.addEventListener('click', () => this._houseFacadePick(lot, store, hooks, i));
+      }
+      row.appendChild(cell);
+    }
+    sec.appendChild(row);
+    return sec;
+  }
+
+  // Pick a backpack item to show in facade slot `index`.
+  _houseFacadePick(lot, store, hooks, index) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">🪟 ${t('houseFacadePick')}</div>`;
+    const grid = document.createElement('div');
+    grid.className = 'house-pickgrid';
+    this.inv.backpack.forEach((it, i) => {
+      if (it.kind === 'coin') return;   // coins aren't display pieces
+      const cell = document.createElement('button');
+      cell.className = 'house-pickcell ' + rarityClass(it);
+      cell.innerHTML = `<span class="ico">${iconFor(it)}</span>`;
+      cell.title = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+      cell.addEventListener('click', () => { hooks.setFacade(index, i); this.openHouseManage(lot, store, hooks); });
+      grid.appendChild(cell);
+    });
+    if (!grid.children.length) grid.innerHTML = `<div class="house-empty">${t('empty')}</div>`;
+    card.appendChild(grid);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // Ban list: a "close to everyone" toggle plus an add-by-name field and the
+  // current blocked players (each removable).
+  _houseBanSection(lot, store, hooks) {
+    const sec = document.createElement('div');
+    sec.className = 'house-sec';
+    sec.innerHTML = `<div class="ctx-sub">🚫 ${t('houseBanList')}</div>`;
+    const closeRow = document.createElement('label');
+    closeRow.className = 'house-closerow';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!store.closed;
+    cb.addEventListener('change', () => hooks.toggleClosed(cb.checked));
+    closeRow.appendChild(cb);
+    closeRow.appendChild(document.createTextNode(' ' + t('houseBanNobody')));
+    sec.appendChild(closeRow);
+
+    const addRow = document.createElement('div');
+    addRow.className = 'house-banadd';
+    const input = document.createElement('input');
+    input.type = 'text'; input.placeholder = t('houseBanPlaceholder');
+    input.className = 'house-baninput';
+    const add = document.createElement('button');
+    add.textContent = t('houseBanAdd');
+    const doAdd = () => { const n = input.value.trim(); if (n) { hooks.ban(n); this.openHouseManage(lot, store, hooks); } };
+    add.addEventListener('click', doAdd);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
+    addRow.appendChild(input); addRow.appendChild(add);
+    sec.appendChild(addRow);
+
+    for (const name of store.bans) {
+      const r = document.createElement('div');
+      r.className = 'house-banrow';
+      r.innerHTML = `<span>${esc(name)}</span>`;   // ban names aren't charset-checked — escape
+      const rm = document.createElement('button');
+      rm.textContent = '✕';
+      rm.addEventListener('click', () => { hooks.unban(name); this.openHouseManage(lot, store, hooks); });
+      r.appendChild(rm);
+      sec.appendChild(r);
+    }
+    return sec;
+  }
+
+  // Owner clicked a showcase slot inside their house. Empty slot → pick a backpack
+  // item to hang; filled slot → take it back, or toggle for-sale + set a price.
+  // wallId/index identify the slot; reads live state from this.inv + the house hooks.
+  openHouseSlot(wallId, index) {
+    const card = this.refs.contextCard;
+    const store = this.hooks.houseStore ? this.hooks.houseStore() : null;
+    const slot = store ? store.slot(wallId, index) : null;
+    card.innerHTML = `<div class="ctx-head">🖼️ ${t('houseWall', Number(wallId) + 1)}</div>`;
+
+    if (!slot) {
+      // Empty: show a grid of backpack items to place here.
+      const sub = document.createElement('div');
+      sub.className = 'ctx-sub'; sub.textContent = t('housePlaceItem');
+      card.appendChild(sub);
+      const grid = document.createElement('div');
+      grid.className = 'house-pickgrid';
+      this.inv.backpack.forEach((it, i) => {
+        if (it.kind === 'coin') return;   // coins aren't display pieces
+        const cell = document.createElement('button');
+        cell.className = 'house-pickcell ' + rarityClass(it);
+        cell.innerHTML = `<span class="ico">${iconFor(it)}</span>`;
+        cell.title = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+        cell.addEventListener('click', () => {
+          this.hooks.houseHangItem(wallId, index, i);
+          this.closeContext();
+        });
+        grid.appendChild(cell);
+      });
+      if (!grid.children.length) grid.innerHTML = `<div class="house-empty">${t('empty')}</div>`;
+      card.appendChild(grid);
+    } else {
+      // Filled: show the item and let the owner take it back. Houses are
+      // display-only now — selling moved to the city free market.
+      const it = slot.item;
+      const label = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+      card.insertAdjacentHTML('beforeend',
+        `<div class="ctx-body ${rarityClass(it)}"><span class="row-ico">${iconFor(it)}</span> ${label}</div>`);
+      card.insertAdjacentHTML('beforeend', this.itemDetails(it));
+
+      const actions = document.createElement('div');
+      actions.className = 'ctx-actions';
+      const take = document.createElement('button');
+      take.textContent = '🎒 ' + t('houseItemTake');
+      take.addEventListener('click', () => { this.hooks.houseTakeItem(wallId, index); this.closeContext(); });
+      actions.appendChild(take);
+      card.appendChild(actions);
+    }
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // A visitor clicked a showcase slot. Houses are display-only, so this just
+  // shows the item's stats and a note that only the owner may touch it.
+  openHouseVisitorSlot(houseInterior, wallId, index) {
+    const card = this.refs.contextCard;
+    const snapshot = houseInterior.state;
+    const arr = (snapshot.walls && snapshot.walls[wallId]) || [];
+    const slot = arr[index];
+    if (!slot || !slot.item) { this.closeContext(); return; }
+    const it = slot.item;
+    const label = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+    card.innerHTML = `<div class="ctx-head ${rarityClass(it)}">${label}</div>
+      <div class="ctx-body"><span class="row-ico">${iconFor(it)}</span></div>`;
+    card.insertAdjacentHTML('beforeend', this.itemDetails(it));
+    card.insertAdjacentHTML('beforeend', `<div class="ctx-sub">${t('houseOnlyOwner')}</div>`);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // ---- Free market (city stalls) ------------------------------------------
+  //
+  // The DB is the source of truth (main.js fetches via auth.js, then calls these
+  // synchronously with the listings already in hand). `listings` is the array of
+  // rows for THIS stall; `isMine` is true when the player owns the stall (their
+  // own listings, or the stall is free so they may claim it). `ctx` carries the
+  // callbacks main.js wires up: { place, take, buy, refresh, free }.
+
+  openMarketStall(stall, listings, isMine, ctx) {
+    const card = this.refs.contextCard;
+    const rows = Array.isArray(listings) ? listings : [];
+    // seller_name + item.name are stored verbatim from the client placing the
+    // listing (RLS only checks seller_id), so treat them as untrusted: escape
+    // before innerHTML to stop stored XSS hitting everyone who browses the stall.
+    const sellerName = rows.length ? rows[0].seller_name : null;
+    const subtitle = ctx.free
+      ? t('marketStallFree')
+      : (isMine ? t('marketStallMine') : t('marketStallOwned', esc(sellerName || '')));
+    card.innerHTML = `<div class="ctx-head">🛒 ${t('marketTitle')} · ${t('marketStall', Number(stall.stallId) + 1)}</div>
+      <div class="ctx-sub">${subtitle}</div>
+      <div class="ctx-gold">💰 ${t('yourGold')}: <b>${mmCoins(this.inv.gold)}</b></div>`;
+
+    const lang = getLang();
+    const list = document.createElement('div');
+    list.className = 'shop-list';
+    for (const r of rows) {
+      const it = r.item || {};
+      const label = typeof it.name === 'string' ? it.name : ((it.name && (it.name[lang] || it.name.es)) || '');
+      const row = document.createElement('div');
+      row.className = 'shop-row';
+      row.innerHTML = `<span><span class="row-ico">${iconFor(it)}</span> ${esc(label)}</span>` +
+        `<span class="price">${mmCoins(r.price || 0)}</span>`;
+      const btn = document.createElement('button');
+      if (isMine) {
+        // Owner: pull the item back out of the market.
+        btn.textContent = '🎒 ' + t('marketTakeItem');
+        btn.addEventListener('click', () => { ctx.take(r.id); this.closeContext(); });
+      } else {
+        // Visitor: buy it (greyed when they can't afford it).
+        const afford = this.inv.gold >= (r.price || 0);
+        btn.textContent = t('marketBuy', mmCoins(r.price || 0));
+        btn.disabled = !afford;
+        btn.addEventListener('click', () => this.confirmBuy(
+          it, label, r.price || 0,
+          () => ctx.buy(r.id, it, r.price || 0),
+          () => ctx.refresh(stall)));
+      }
+      const cell = document.createElement('div');
+      cell.appendChild(row);
+      // Show each item's full stats (attack/defense/weight/level req…) so the
+      // buyer can decide before buying. Tibia-style text block, no icons.
+      cell.insertAdjacentHTML('beforeend', `<div class="market-item-stats">${this.infoDetails(it)}</div>`);
+      // Hovering the row also pops the standard item tooltip.
+      this.attachTooltip(row, it);
+      cell.appendChild(btn);
+      list.appendChild(cell);
+    }
+    if (!rows.length) list.innerHTML = `<div class="house-empty">${t('marketEmpty')}</div>`;
+    card.appendChild(list);
+
+    // Owner (or a free, claimable stall): a button to list a new item.
+    if (isMine) {
+      const actions = document.createElement('div');
+      actions.className = 'ctx-actions';
+      const place = document.createElement('button');
+      place.textContent = '➕ ' + t('marketPlaceItem');
+      place.addEventListener('click', () => this.openMarketPlace(stall, ctx));
+      actions.appendChild(place);
+      card.appendChild(actions);
+    }
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // Pick a backpack item to put up for sale, then ask for its price.
+  openMarketPlace(stall, ctx) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">➕ ${t('marketPlaceItem')}</div>`;
+    const grid = document.createElement('div');
+    grid.className = 'house-pickgrid';
+    this.inv.backpack.forEach((it, i) => {
+      if (it.kind === 'coin') return;   // can't sell raw coins
+      const cell = document.createElement('button');
+      cell.className = 'house-pickcell ' + rarityClass(it);
+      cell.innerHTML = `<span class="ico">${iconFor(it)}</span>`;
+      cell.title = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+      cell.addEventListener('click', () => this._marketSetPrice(stall, i, it, ctx));
+      grid.appendChild(cell);
+    });
+    if (!grid.children.length) grid.innerHTML = `<div class="house-empty">${t('empty')}</div>`;
+    card.appendChild(grid);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // Ask the seller for a price, then list the chosen backpack item.
+  _marketSetPrice(stall, bpIndex, item, ctx) {
+    const card = this.refs.contextCard;
+    const label = typeof item.name === 'string' ? item.name : (item.name[getLang()] || item.name.es);
+    card.innerHTML = `<div class="ctx-head">🏷️ ${t('marketSetPriceFor', label)}</div>
+      <div class="ctx-body"><span class="row-ico">${iconFor(item)}</span></div>`;
+    const input = document.createElement('input');
+    input.type = 'number'; input.min = '0'; input.value = String(Math.max(1, item.value || 100));
+    input.className = 'house-priceinput';
+    card.appendChild(input);
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const ok = document.createElement('button');
+    ok.textContent = t('confirm');
+    ok.addEventListener('click', () => {
+      const price = Math.max(0, parseInt(input.value, 10) || 0);
+      ctx.place(stall, bpIndex, price);
+      this.closeContext();
+    });
+    actions.appendChild(ok);
+    card.appendChild(actions);
+    this.addCloseX(card);
+    input.focus();
+  }
+
+  // "Do you want to enter X's house?" prompt for a visitor at someone's door.
+  // Generic yes/no confirm card (used for the house exit/enter prompts).
+  confirmPrompt(title, body, yesLabel, onYes, onNo) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">${title}</div>` + (body ? `<div class="ctx-body">${body}</div>` : '');
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const yes = document.createElement('button');
+    yes.textContent = yesLabel || t('confirm');
+    yes.addEventListener('click', () => { this.closeContext(); onYes && onYes(); });
+    const no = document.createElement('button');
+    no.textContent = t('cancel');
+    no.addEventListener('click', () => { this.closeContext(); onNo && onNo(); });
+    actions.appendChild(yes); actions.appendChild(no);
+    card.appendChild(actions);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  confirmVisitHouse(ownerName, onYes) {
+    const card = this.refs.contextCard;
+    // ownerName comes from a peer's house_sync broadcast — escape before innerHTML.
+    const safeOwner = esc(ownerName || '');
+    card.innerHTML = `<div class="ctx-head">🏠 ${t('houseVisitTitle', safeOwner)}</div>
+      <div class="ctx-body">${t('houseVisitPrompt', safeOwner)}</div>`;
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const yes = document.createElement('button');
+    yes.textContent = '🚪 ' + t('houseEnter');
+    yes.addEventListener('click', () => { onYes(); this.closeContext(); });
+    const no = document.createElement('button');
+    no.textContent = t('cancel');
+    no.addEventListener('click', () => this.closeContext());
+    actions.appendChild(yes); actions.appendChild(no);
+    card.appendChild(actions);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // A small inline yes/no confirm inside the context card (used by sell house).
+  _confirmInline(message, onYes) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">${t('confirm')}</div>
+      <div class="ctx-body">${message}</div>`;
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const yes = document.createElement('button');
+    yes.textContent = t('confirm');
+    yes.addEventListener('click', () => { onYes(); });
+    const no = document.createElement('button');
+    no.textContent = t('cancel');
+    no.addEventListener('click', () => this.closeContext());
+    actions.appendChild(yes); actions.appendChild(no);
+    card.appendChild(actions);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
   // NPC dialog: greeting, flavor lines, and quests to accept or hand in.
   openNpc(npc, questLog, level, hooks) {
     const lang = getLang();
@@ -1342,20 +1879,32 @@ export class UI {
   // friend toggle and a trade button.
   openPlayerInfo(info) {
     const card = this.refs.contextCard;
-    card.innerHTML = `<div class="ctx-head">👤 ${info.name}</div>
+    card.innerHTML = `<div class="ctx-head">👤 ${esc(info.name)}</div>
       <div class="ctx-sub">${t('playerInfo') || 'Jugador conectado'}</div>`;
+    // Buttons live in a .ctx-actions row so they get the same styled look as the
+    // shop / vendor / house dialog buttons (the plain .ctx-action class had no CSS
+    // and rendered as bare browser buttons).
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
     const friendBtn = document.createElement('button');
-    friendBtn.className = 'ctx-action';
     friendBtn.textContent = info.isFriend ? ('✓ ' + (t('removeFriend') || 'Quitar amigo')) : ('➕ ' + (t('addFriend') || 'Añadir amigo'));
     friendBtn.addEventListener('click', () => {
       if (info.isFriend) info.onRemoveFriend(); else info.onAddFriend();
       this.closeContext();
     });
     const tradeBtn = document.createElement('button');
-    tradeBtn.className = 'ctx-action';
     tradeBtn.textContent = '🤝 ' + (t('trade') || 'Intercambiar');
     tradeBtn.addEventListener('click', () => { info.onTrade(); });
-    card.append(friendBtn, tradeBtn);
+    // Follow: walk after the player wherever they go (toggles).
+    const followBtn = document.createElement('button');
+    followBtn.textContent = (info.isFollowing ? '✓ ' : '👣 ') + (t('follow') || 'Seguir');
+    followBtn.addEventListener('click', () => { info.onFollow(); this.closeContext(); });
+    // Block: hide this player's chat messages (toggles).
+    const blockBtn = document.createElement('button');
+    blockBtn.textContent = (info.isBlocked ? '✓ ' : '🚫 ') + (info.isBlocked ? (t('unblockChat') || 'Desbloquear chat') : (t('blockChat') || 'Bloquear chat'));
+    blockBtn.addEventListener('click', () => { info.onBlock(); this.closeContext(); });
+    actions.append(friendBtn, tradeBtn, followBtn, blockBtn);
+    card.appendChild(actions);
     this.addCloseX(card);
     card.classList.remove('hidden');
   }
@@ -1392,13 +1941,14 @@ export class UI {
       mine.appendChild(r);
     });
 
-    // Right: the partner's offer (read-only).
+    // Right: the partner's offer (read-only). partnerName + each it.name come
+    // straight from the peer's trade payload — untrusted, so escape before HTML.
     const theirs = document.createElement('div');
-    theirs.innerHTML = `<div class="col-h">${state.partnerName}: ${(t('theirOffer') || 'su oferta')} (${state.theirOffer.length}/${MAX})</div>`;
+    theirs.innerHTML = `<div class="col-h">${esc(state.partnerName)}: ${(t('theirOffer') || 'su oferta')} (${state.theirOffer.length}/${MAX})</div>`;
     state.theirOffer.forEach((it) => {
       const r = document.createElement('div');
       r.className = 'depot-item ' + rarityClass(it);
-      r.innerHTML = `<span class="row-ico">${itemIcon(it)}</span> ${it.name}`;
+      r.innerHTML = `<span class="row-ico">${itemIcon(it)}</span> ${esc(it.name)}`;
       theirs.appendChild(r);
     });
 
