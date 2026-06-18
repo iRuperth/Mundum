@@ -19,19 +19,21 @@ import { ZONES } from './zones.js';
 import { Net } from './net.js';
 import { buildGMPanel, showAnnounceBanner } from './gm.js';
 import { audio } from './audio.js';
-import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore, getLight, instanceFromLight } from './data/items.js';
-import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt } from './data/professions.js';
+import { makeStarterWand, getContainer, getWeapon, getArmor, getQuiver, rollWeaponInstance, instanceFromPotion, potionRestore, getLight, instanceFromLight } from './data/items.js';
+import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt, spellDamageMul, isDamageSkill } from './data/professions.js';
 import { SkillSystem } from './skills.js';
 import { skillIcon } from './skillIcons.js';
 import { Hotbar } from './hotbar.js';
 import { KeyboardPanel } from './keyboardPanel.js';
 import { CharacterStats, weaponTypeToSkill } from './characterStats.js';
 import { SkillPanel } from './skillPanel.js';
+import { QuestTracker } from './questTracker.js';
+import { currentWaypoint, questGiverInfo } from './questGuide.js';
 import { Wiki } from './wiki.js';
-import { xpProgress, eventMultipliers } from './progression.js';
+import { xpProgress, eventMultipliers, levelXpMultiplier } from './progression.js';
 import { QuestLog } from './questlog.js';
 import { WorldNpcs } from './worldNpcs.js';
-import { questsForNpc } from './data/quests.js';
+import { questsForNpc, getQuest } from './data/quests.js';
 import { MountSystem } from './mountSystem.js';
 import { getMount, shopMounts, MOUNTS, mountForQuest } from './data/mounts.js';
 import { buildDungeonEntrances, dungeonEntranceAt, dungeonDescendAt, dungeonOutsideAt, chestAt, openChestVisual, update as updateDungeons, DUNGEONS } from './dungeons.js';
@@ -553,6 +555,31 @@ let lastFullWarn = -99;    // game clock of the last "can't carry" toast (thrott
 
 let firstPerson = true;
 let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
+let _evClock = 0, _evCached = null;   // cached daily event multipliers (refreshed every 30s)
+const _crosshairEl = document.getElementById('crosshair');   // cached (looked up every frame otherwise)
+
+// Quest waypoint arrow on/off (persisted). Toggled from the Quests panel.
+const QUEST_ARROW_KEY = 'mundum.questArrow';
+let showQuestArrow = (() => { try { return localStorage.getItem(QUEST_ARROW_KEY) !== 'off'; } catch (_) { return true; } })();
+function toggleQuestArrow() {
+  showQuestArrow = !showQuestArrow;
+  try { localStorage.setItem(QUEST_ARROW_KEY, showQuestArrow ? 'on' : 'off'); } catch (_) {}
+  if (!showQuestArrow) { const a = document.getElementById('quest-arrow'); if (a) a.classList.add('hidden'); }
+  return showQuestArrow;
+}
+// Cached current waypoint (recomputed on quest progress, not every frame).
+let _waypoint = null;
+let _questPoi = null;   // the live minimap POI object for the quest destination
+function refreshWaypoint() {
+  _waypoint = currentWaypoint(questLog, questLog.activeList());
+  // Mirror it onto the minimap as a single quest POI. Remove the old one, add the
+  // new (minimap.pois is the array the minimap renders each frame).
+  if (typeof minimap !== 'undefined' && minimap && Array.isArray(minimap.pois)) {
+    if (_questPoi) { const i = minimap.pois.indexOf(_questPoi); if (i >= 0) minimap.pois.splice(i, 1); }
+    _questPoi = null;
+    if (_waypoint) { _questPoi = { x: _waypoint.x, z: _waypoint.z, icon: '📍' }; minimap.pois.push(_questPoi); }
+  }
+}
 let introHold = 0;  // seconds the front view is held before it can swing behind
 let state = 'create';
 let authCharacterId = null;  // the Supabase character row id for cloud saves
@@ -1078,10 +1105,23 @@ const skillPanel = new SkillPanel(() => charStats, {
   // Wire a Spells row up to drag onto the hotbar (mouse + touch).
   makeDraggable: (el, getSpell) => gameUI.makeSpellDraggable(el, getSpell),
 }, { panel: document.getElementById('windows'), wireWindow: (w, o) => gameUI.wireWindow(w, o) });
+// One button opens the skills panel; the player switches between its two tabs
+// (combat skills / spells) inside the window.
 const btnSkills = document.getElementById('btn-skills');
-if (btnSkills) btnSkills.addEventListener('click', (e) => { e.stopPropagation(); skillPanel.toggleTab('combat'); });
-const btnSpells = document.getElementById('btn-spells');
-if (btnSpells) btnSpells.addEventListener('click', (e) => { e.stopPropagation(); skillPanel.toggleTab('skills'); });
+if (btnSkills) btnSkills.addEventListener('click', (e) => { e.stopPropagation(); skillPanel.toggle(); });
+
+// Quest tracker: a side-panel window listing active quests, their stage/progress
+// and where to go. Opened by the 📜 button or the 'J' key; refreshed whenever
+// quest progress changes (see onQuestProgress).
+const questTracker = new QuestTracker(questLog, {
+  getLevel: () => player.level,
+  isNight: () => daynight.isNight(),
+  getArrowOn: () => showQuestArrow,
+  toggleArrow: () => toggleQuestArrow(),
+}, { panel: document.getElementById('windows'), wireWindow: (w, o) => gameUI.wireWindow(w, o) });
+const btnQuests = document.getElementById('btn-quests');
+if (btnQuests) btnQuests.addEventListener('click', (e) => { e.stopPropagation(); questTracker.toggle(); });
+addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyJ' && !controls.chatting) questTracker.toggle(); });
 
 // The Wiki: an in-game compendium built live from the data modules. It stays a
 // full-screen overlay (its creature/item tables need the width); the small 📚
@@ -2752,6 +2792,21 @@ function completeQuest(qid) {
   if (mountId) grantMount(mountId);
   audio.sfx.questComplete();
   gameUI.toast('🎉 ' + t('questDone'), 'levelup');
+  // CHAIN ADVANCE: complete() auto-accepted the `next` quest. Tell the player
+  // where to pick the trail back up ("Nueva misión: habla con X en Y") and flag
+  // the tracker to highlight it.
+  if (res.next) {
+    const nq = getQuest(res.next);
+    if (nq) {
+      const info = questGiverInfo(nq, getLang());
+      const title = (nq.title && (nq.title[getLang()] || nq.title.es)) || res.next;
+      let where = '';
+      if (info && info.npcName && info.cityName) where = ` — ${t('questTalkTo', info.npcName, info.cityName)}`;
+      else if (info && info.cityName) where = ` — ${info.cityName}`;
+      gameUI.toast('📜 ' + t('questNew', title) + where, 'levelup');
+      if (questTracker.highlight) questTracker.highlight(res.next);
+    }
+  }
   onQuestProgress();
   recompute();
 }
@@ -2809,6 +2864,10 @@ function openDungeonChest(chest) {
 
 function onQuestProgress() {
   gameUI.renderQuests(questLog);
+  // questTracker is constructed during init; every caller of onQuestProgress runs
+  // after that (combat hooks, UI handlers, post-init setup), so it's always set.
+  questTracker.refresh();
+  refreshWaypoint();
   worldNpcs.refreshMarkers((npc) => {
     const qs = questsForNpc(npc.id);
     return qs.some((q) => questLog.canAccept(q.id, player.level) || (questLog.isActive(q.id) && questLog.readyToComplete().includes(q.id)));
@@ -3252,6 +3311,10 @@ function tick() {
     sendNetState();
 
     updateCamera();
+    updateInteractHint();
+    updateQuestArrow();
+    updateMarketProximity();
+    updateTempleAuras();
     const mapBlips = place === 'surface' ? { ...peers.list(), ...bots.list() } : peers.list();
     minimap.draw(player, mapBlips, combat.creatures, caveMinimapContext());
     gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
