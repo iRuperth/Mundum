@@ -28,8 +28,8 @@ export const LEGENDARY_CHANCE = 0.0001;
 // canVocationUse() below for the exact rule.
 export const WEAPONS = [
   // --- Swords (1-handed) — 23 tiers, Tibia/MapleStory flavored — KNIGHT ---
-  { id: 'training_sword', name: 'Training Sword', type: 'sword', twoHanded: false, element: 'none', atkMin: 1, atkMax: 3, weight: 28, levelReq: 1, shopTier: 'shop', value: 5, color: 0x8a7a5a, defense: 0, vocation: 'any' },
-  { id: 'wooden_sword', name: 'Wooden Sword', type: 'sword', twoHanded: false, element: 'none', atkMin: 1, atkMax: 5, weight: 30, levelReq: 1, shopTier: 'shop', value: 10, color: 0x9b6a3b, defense: 0, vocation: 'any' },
+  { id: 'training_sword', name: 'Training Sword', type: 'sword', twoHanded: false, element: 'none', atkMin: 1, atkMax: 3, weight: 28, levelReq: 0, shopTier: 'shop', value: 5, color: 0x8a7a5a, defense: 0, vocation: 'any' },
+  { id: 'wooden_sword', name: 'Wooden Sword', type: 'sword', twoHanded: false, element: 'none', atkMin: 1, atkMax: 5, weight: 30, levelReq: 0, shopTier: 'shop', value: 10, color: 0x9b6a3b, defense: 0, vocation: 'any' },
   { id: 'short_sword', name: 'Short Sword', type: 'sword', twoHanded: false, element: 'none', atkMin: 2, atkMax: 7, weight: 31, levelReq: 2, shopTier: 'shop', value: 30, color: 0xb0a090, defense: 0, vocation: 'knight' },
   { id: 'copper_sword', name: 'Copper Sword', type: 'sword', twoHanded: false, element: 'none', atkMin: 4, atkMax: 9, weight: 33, levelReq: 3, shopTier: 'shop', value: 60, color: 0xb87333, defense: 0, vocation: 'knight' },
   { id: 'dagger', name: 'Dagger', type: 'sword', twoHanded: false, element: 'none', atkMin: 5, atkMax: 11, weight: 18, levelReq: 5, shopTier: 'shop', value: 110, color: 0xc8ccd2, defense: 0, vocation: 'knight' },
@@ -96,15 +96,15 @@ export const WEAPONS = [
   { id: 'thunder_hammer', name: 'Thunder Hammer', type: 'mace', twoHanded: false, element: 'fire', atkMin: 96, atkMax: 144, weight: 86, levelReq: 90, shopTier: 'legendary-tier', value: 0, color: 0xbfe9ff, defense: 0, vocation: 'knight' },
 
   // --- Lances (2H, KNIGHT) — long reach polearms ---
-  { id: 'training_lance', name: 'Training Lance', type: 'lance', twoHanded: true, element: 'none', atkMin: 2, atkMax: 6, weight: 50, levelReq: 1, shopTier: 'shop', value: 14, color: 0x9b6a3b, defense: 0, vocation: 'any' },
+  { id: 'training_lance', name: 'Training Lance', type: 'lance', twoHanded: true, element: 'none', atkMin: 2, atkMax: 6, weight: 50, levelReq: 0, shopTier: 'shop', value: 14, color: 0x9b6a3b, defense: 0, vocation: 'any' },
   { id: 'iron_lance', name: 'Iron Lance', type: 'lance', twoHanded: true, element: 'none', atkMin: 16, atkMax: 28, weight: 68, levelReq: 12, shopTier: 'shop', value: 640, color: 0xb0b4ba, defense: 0, vocation: 'knight' },
   { id: 'dragon_lance', name: 'Dragon Lance', type: 'lance', twoHanded: true, element: 'fire', atkMin: 40, atkMax: 64, weight: 82, levelReq: 40, shopTier: 'epic', value: 0, color: 0xcc2200, defense: 0, vocation: 'knight' },
   { id: 'royal_lance', name: 'Royal Lance', type: 'lance', twoHanded: true, element: 'none', atkMin: 64, atkMax: 98, weight: 88, levelReq: 60, shopTier: 'epic', value: 0, color: 0xeaf0f6, defense: 0, vocation: 'knight' },
   { id: 'jarvan_lance', name: 'Ceremonial War Lance', type: 'lance', twoHanded: true, element: 'fire', atkMin: 108, atkMax: 160, weight: 98, levelReq: 90, shopTier: 'legendary-tier', value: 0, color: 0xffe066, defense: 0, vocation: 'knight' },
 
   // --- Bows (two-handed, infinite arrows) — 20 tiers — ARCHER ---
-  { id: 'training_bow', name: 'Training Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 1, atkMax: 5, weight: 20, levelReq: 1, shopTier: 'shop', value: 12, color: 0x8a7a5a, defense: 0, vocation: 'any' },
-  { id: 'wooden_bow', name: 'Wooden Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 2, atkMax: 7, weight: 22, levelReq: 1, shopTier: 'shop', value: 30, color: 0x9b6a3b, defense: 0, vocation: 'any' },
+  { id: 'training_bow', name: 'Training Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 1, atkMax: 5, weight: 20, levelReq: 0, shopTier: 'shop', value: 12, color: 0x8a7a5a, defense: 0, vocation: 'any' },
+  { id: 'wooden_bow', name: 'Wooden Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 2, atkMax: 7, weight: 22, levelReq: 0, shopTier: 'shop', value: 30, color: 0x9b6a3b, defense: 0, vocation: 'any' },
   { id: 'short_bow', name: 'Short Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 4, atkMax: 10, weight: 22, levelReq: 4, shopTier: 'shop', value: 95, color: 0xa07a40, defense: 0, vocation: 'archer' },
   { id: 'long_bow', name: 'Long Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 6, atkMax: 13, weight: 24, levelReq: 7, shopTier: 'shop', value: 210, color: 0x8a5e30, defense: 0, vocation: 'archer' },
   { id: 'hunter_bow', name: 'Hunter Bow', type: 'bow', twoHanded: true, element: 'none', atkMin: 9, atkMax: 17, weight: 25, levelReq: 12, shopTier: 'shop', value: 400, color: 0x7a5230, defense: 0, vocation: 'archer' },
@@ -128,7 +128,7 @@ export const WEAPONS = [
 
   // --- Wands & rods (magic; color shifts by level) — MAGE (rods tagged DRUID) ---
   { id: 'twig_wand', name: 'Wand of Vortex', type: 'wand', twoHanded: false, element: 'none', atkMin: 1, atkMax: 5, weight: 10, levelReq: 1, shopTier: 'shop', value: 25, color: wandHue(1), defense: 0 },
-  { id: 'apprentice_wand', name: 'Apprentice Wand', type: 'wand', twoHanded: false, element: 'none', atkMin: 3, atkMax: 9, weight: 12, levelReq: 4, shopTier: 'shop', value: 90, color: wandHue(4), defense: 0 },
+  { id: 'apprentice_wand', name: 'Apprentice Wand', type: 'wand', twoHanded: false, element: 'none', atkMin: 3, atkMax: 9, weight: 12, levelReq: 0, shopTier: 'shop', value: 90, color: wandHue(4), defense: 0 },
   { id: 'snakebite_rod', name: 'Snakebite Rod', type: 'wand', twoHanded: false, element: 'plant', atkMin: 6, atkMax: 13, weight: 13, levelReq: 8, shopTier: 'shop', value: 260, color: 0x5fae4c, defense: 0 },
   { id: 'moonlight_rod', name: 'Moonlight Rod', type: 'wand', twoHanded: false, element: 'water', atkMin: 9, atkMax: 17, weight: 13, levelReq: 12, shopTier: 'shop', value: 480, color: 0x6fa8ff, defense: 0 },
   { id: 'fire_wand', name: 'Fire Wand', type: 'wand', twoHanded: false, element: 'fire', atkMin: 12, atkMax: 22, weight: 14, levelReq: 18, shopTier: 'shop', value: 850, color: 0xff5522, defense: 0 },
@@ -143,10 +143,14 @@ export const WEAPONS = [
   { id: 'staff_of_flames', name: 'Staff of Flames', type: 'wand', twoHanded: false, element: 'fire', atkMin: 55, atkMax: 86, weight: 18, levelReq: 78, shopTier: 'epic', value: 0, color: 0xff5a22, defense: 0 },
   { id: 'void_wand', name: 'Void Wand', type: 'wand', twoHanded: false, element: 'none', atkMin: 65, atkMax: 100, weight: 18, levelReq: 95, shopTier: 'legendary-tier', value: 0, color: wandHue(95), defense: 0 },
   { id: 'staff_of_chaos', name: 'Staff of Chaos', type: 'wand', twoHanded: false, element: 'none', atkMin: 82, atkMax: 124, weight: 19, levelReq: 110, shopTier: 'legendary-tier', value: 0, color: 0xb84cff, defense: 0 },
-  { id: 'cosmic_staff', name: 'Cosmic Staff', type: 'wand', twoHanded: false, element: 'none', atkMin: 105, atkMax: 156, weight: 20, levelReq: 130, shopTier: 'legendary-tier', value: 0, color: wandHue(130), defense: 0 },
+  { id: 'cosmic_staff', name: 'Cosmic Staff', type: 'wand', twoHanded: true, element: 'none', atkMin: 105, atkMax: 156, weight: 20, levelReq: 130, shopTier: 'legendary-tier', value: 0, color: wandHue(130), defense: 0 },
   { id: 'aqua_wand', name: 'Aqua Wand', type: 'wand', twoHanded: false, element: 'water', atkMin: 16, atkMax: 28, weight: 15, levelReq: 24, shopTier: 'shop', value: 1500, color: 0x2299ff, defense: 0 },
   { id: 'spellbinder_rod', name: 'Spellbinder Rod', type: 'wand', twoHanded: false, element: 'none', atkMin: 34, atkMax: 56, weight: 17, levelReq: 44, shopTier: 'epic', value: 0, color: wandHue(44), defense: 0 },
-  { id: 'genesis_staff', name: 'Genesis Staff', type: 'wand', twoHanded: false, element: 'none', atkMin: 130, atkMax: 190, weight: 21, levelReq: 145, shopTier: 'legendary-tier', value: 0, color: wandHue(145), defense: 0 },
+  { id: 'genesis_staff', name: 'Genesis Staff', type: 'wand', twoHanded: true, element: 'none', atkMin: 130, atkMax: 190, weight: 21, levelReq: 145, shopTier: 'legendary-tier', value: 0, color: wandHue(145), defense: 0 },
+
+  // --- Two-handed legendary mace (mirrors the 1H/2H pair the other melee classes
+  // have; gives knights a 2H blunt option that reaches the 53 ceiling) ---
+  { id: 'colossus_maul', name: 'Colossus Maul', type: 'mace', twoHanded: true, element: 'none', atkMin: 35, atkMax: 53, weight: 96, levelReq: 138, shopTier: 'legendary-tier', value: 0, color: 0xd8c068, defense: 0, vocation: 'knight' },
 
   // --- Shields (off-hand only; carry defense, atk acts as block strength) — 20 tiers ---
   { id: 'buckler', name: 'Buckler', type: 'shield', twoHanded: false, element: 'none', atkMin: 0, atkMax: 1, weight: 30, levelReq: 1, shopTier: 'shop', value: 8, color: 0x8a6a3b, defense: 3 },
@@ -171,6 +175,100 @@ export const WEAPONS = [
   { id: 'phoenix_shield', name: 'Phoenix Shield', type: 'shield', twoHanded: false, element: 'fire', atkMin: 0, atkMax: 13, weight: 66, levelReq: 105, shopTier: 'legendary-tier', value: 0, color: 0xff9933, defense: 102 },
 ];
 
+// --- Tibia-7.4 compression of weapon attack ---------------------------------
+// Historically these ladders climbed to ~210 attack. The game is rebalanced to
+// the classic Tibia scale: a global ceiling of 50 (one-handed) / 53 (two-handed)
+// reached only by the top legendaries, with every other tier compressed below.
+// We rewrite atkMin/atkMax in place at module load so the data, the shop and the
+// drop roller (rollWeaponInstance) all read the new values. The damage formula
+// (combat.js) is tuned in lockstep — see the design plan.
+const WEAPON_CLASS_CEIL = { sword: 50, mace: 50, wand: 50, axe: 53, lance: 53, bow: 53 };
+// The single highest-attack weapon of each family, pinned to the exact endpoint
+// (1H -> 33..50, 2H -> 35..53) so rounding never drifts off the target.
+const WEAPON_LEGENDARY_1H = new Set(['excalibur', 'stonecutter_axe', 'thunder_hammer', 'void_wand']);
+const WEAPON_LEGENDARY_2H = new Set(['warlord_sword', 'worldsplitter', 'jarvan_lance', 'genesis_bow', 'genesis_staff', 'colossus_maul']);
+
+function compressWeaponLadders() {
+  const byType = new Map();
+  for (const w of WEAPONS) {
+    if (w.type === 'shield') continue;            // shields compressed separately
+    if (!byType.has(w.type)) byType.set(w.type, []);
+    byType.get(w.type).push(w);
+  }
+  for (const [type, members] of byType) {
+    const ceil = WEAPON_CLASS_CEIL[type] || 50;
+    const maxs = members.map((w) => w.atkMax);
+    const lo = Math.min(...maxs), hi = Math.max(...maxs);
+    const span = hi - lo || 1;
+    for (const w of members) {
+      const t = (w.atkMax - lo) / span;           // 0..1 in the old ladder
+      const curved = Math.pow(t, 0.62);           // concave: stretch low, compress top
+      const newMax = Math.round(3 + curved * (ceil - 3));
+      const spread = w.atkMin / w.atkMax || 0.6;  // preserve each row's min/max ratio
+      const newMin = Math.max(1, Math.round(newMax * Math.max(0.55, spread)));
+      w.atkMin = newMin;
+      w.atkMax = newMax;
+    }
+  }
+  // Pin the legendaries to the exact endpoints regardless of rounding.
+  for (const w of WEAPONS) {
+    if (WEAPON_LEGENDARY_1H.has(w.id)) { w.atkMin = 33; w.atkMax = 50; }
+    else if (WEAPON_LEGENDARY_2H.has(w.id)) { w.atkMin = 35; w.atkMax = 53; }
+  }
+}
+
+// Shields live in WEAPONS but carry the real stat in `defense` (atk is a small
+// "block strength"). Compress defense onto 3..39 (normal) / 41 (legendary) and
+// clamp the cosmetic block-strength to <= 9.
+function compressShields() {
+  const shields = WEAPONS.filter((w) => w.type === 'shield');
+  if (!shields.length) return;
+  const defs = shields.map((s) => s.defense || 0);
+  const lo = Math.min(...defs), hi = Math.max(...defs);
+  const span = hi - lo || 1;
+  let top = shields[0];
+  for (const s of shields) if ((s.defense || 0) > (top.defense || 0)) top = s;
+  for (const s of shields) {
+    const t = ((s.defense || 0) - lo) / span;
+    s.defense = Math.max(1, Math.round(1 + Math.pow(t, 0.7) * (39 - 1)));
+    if (s.atkMax > 9) s.atkMax = 9;
+    if (s.atkMin > s.atkMax) s.atkMin = s.atkMax;
+  }
+  top.defense = 41;                                // celestial shield (legendary)
+}
+
+compressWeaponLadders();
+compressShields();
+
+// --- SECRET (GM-only) items --------------------------------------------------
+// The single most powerful legendary of each weapon class and each armor slot is
+// SECRET: it cannot be bought, dropped or quested — only the Game Master may hand
+// it out. The wiki shows "Solo lo otorga el Game Master" for these. Marked here by
+// id so the loot/quest systems can exclude them and the wiki can label them.
+export const SECRET_ITEM_IDS = new Set([
+  // top weapon of each class (highest levelReq legendary)
+  'excalibur',       // sword  (lv140)
+  'worldsplitter',   // axe    (lv138)
+  'thunder_hammer',  // mace   (lv90, class top)
+  'colossus_maul',   // 2H mace(lv138)
+  'jarvan_lance',    // lance  (lv90, class top)
+  'genesis_bow',     // bow    (lv138)
+  'genesis_staff',   // wand   (lv145)
+  // top armor of each slot (the Celestial set + shield)
+  'celestial_shield',
+  'celestial_helmet',
+  'celestial_armor',
+  'celestial_legs',
+  'celestial_boots',
+  'celestial_amulet',
+  'celestial_quiver',
+]);
+export function isSecretItem(id) {
+  return SECRET_ITEM_IDS.has(String(id || '').toLowerCase());
+}
+// WEAPONS exist already; ARMORS/QUIVERS are marked later (after they're declared).
+for (const w of WEAPONS) if (SECRET_ITEM_IDS.has(w.id)) w.secret = true;
+
 // Equipment slots: amulet, helmet, armor, legs, boots.
 export const ARMORS = [
   // --- Amulets (20 tiers; some give a touch of run speed) ---
@@ -194,6 +292,44 @@ export const ARMORS = [
   { id: 'garnet_amulet', name: 'Garnet Amulet', slot: 'amulet', defense: 11, weight: 6, levelReq: 29, shopTier: 'shop', value: 2800, color: 0xb03050, speedBonus: 0 },
   { id: 'frost_amulet', name: 'Glacial Amulet', slot: 'amulet', defense: 18, weight: 6, levelReq: 70, shopTier: 'epic', value: 0, color: 0x9fe8ff, speedBonus: 0 },
   { id: 'amulet_of_haste', name: 'Amulet of Haste', slot: 'amulet', defense: 8, weight: 4, levelReq: 55, shopTier: 'epic', value: 0, color: 0xffd24d, speedBonus: 0.25 },
+
+  // --- RINGS (slot 'ring'). 8 families × 3 tiers. Tier-1 of each is buyable
+  // (shopTier 'shop', value 500); tiers 2-3 are quest/drop only. Skill rings are
+  // class-gated by `vocation`; the regen rings are usable by anyone ('any').
+  // skillBonus adds to that weapon's Tibia use-skill; magicLevelBonus adds magic
+  // level; hp/manaRegenPerSec add flat HP/mana per second.
+  // Knight melee: SWORD fighting
+  { id: 'sword_ring',   name: 'Sword Ring',    slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0xd0d6dd, vocation: 'knight', skillBonus: { sword: 2 } },
+  { id: 'sword_ring2',  name: 'Knight Sword Ring', slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0xe6eef5, vocation: 'knight', skillBonus: { sword: 4 } },
+  { id: 'sword_ring3',  name: 'Master Sword Ring', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'knight', skillBonus: { sword: 7 } },
+  // Knight melee: AXE fighting
+  { id: 'axe_ring',     name: 'Axe Ring',      slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0xc0c4ca, vocation: 'knight', skillBonus: { axe: 2 } },
+  { id: 'axe_ring2',    name: 'Knight Axe Ring', slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0xd8dde4, vocation: 'knight', skillBonus: { axe: 4 } },
+  { id: 'axe_ring3',    name: 'Master Axe Ring', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'knight', skillBonus: { axe: 7 } },
+  // Knight melee: CLUB fighting
+  { id: 'club_ring',    name: 'Club Ring',     slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0xb08a5a, vocation: 'knight', skillBonus: { club: 2 } },
+  { id: 'club_ring2',   name: 'Knight Club Ring', slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0xc8a24a, vocation: 'knight', skillBonus: { club: 4 } },
+  { id: 'club_ring3',   name: 'Master Club Ring', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'knight', skillBonus: { club: 7 } },
+  // Knight melee: LANCE/spear fighting (trains the sword skill, per the engine)
+  { id: 'lance_ring',   name: 'Lance Ring',    slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0xa9b7c4, vocation: 'knight', skillBonus: { sword: 2 } },
+  { id: 'lance_ring2',  name: 'Knight Lance Ring', slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0xc4d0da, vocation: 'knight', skillBonus: { sword: 4 } },
+  { id: 'lance_ring3',  name: 'Dragoon Lance Ring', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'knight', skillBonus: { sword: 7 } },
+  // Paladin: DISTANCE fighting
+  { id: 'distance_ring',  name: 'Distance Ring',  slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0x6fae54, vocation: 'archer', skillBonus: { distance: 2 } },
+  { id: 'distance_ring2', name: 'Hunter Ring',    slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0x4caf50, vocation: 'archer', skillBonus: { distance: 4 } },
+  { id: 'distance_ring3', name: 'Sharpshooter Ring', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'archer', skillBonus: { distance: 7 } },
+  // Mage/Druid: MAGIC LEVEL
+  { id: 'mage_ring',    name: 'Mage Ring',     slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0x6a6bff, vocation: 'mage', magicLevelBonus: 1 },
+  { id: 'mage_ring2',   name: 'Master Ring',   slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0x9b30ff, vocation: 'mage', magicLevelBonus: 2 },
+  { id: 'mage_ring3',   name: 'Archmage Ring', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xc78cff, vocation: 'mage', magicLevelBonus: 4 },
+  // VITALITY: +HP per second (anyone)
+  { id: 'life_ring',    name: 'Life Ring',     slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0xff6a6a, vocation: 'any', hpRegenPerSec: 1 },
+  { id: 'life_ring2',   name: 'Vital Ring',    slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0xff3a55, vocation: 'any', hpRegenPerSec: 2 },
+  { id: 'life_ring3',   name: 'Ring of Vigor', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0xff2a44, vocation: 'any', hpRegenPerSec: 4 },
+  // SPIRIT: +Mana per second (anyone)
+  { id: 'mana_ring',    name: 'Mana Ring',     slot: 'ring', defense: 0, weight: 2, levelReq: 8,  shopTier: 'shop', value: 500, color: 0x4d8aff, vocation: 'any', manaRegenPerSec: 1 },
+  { id: 'mana_ring2',   name: 'Spirit Ring',   slot: 'ring', defense: 1, weight: 2, levelReq: 25, shopTier: 'epic', value: 0, color: 0x3a6bff, vocation: 'any', manaRegenPerSec: 2 },
+  { id: 'mana_ring3',   name: 'Ring of the Sage', slot: 'ring', defense: 2, weight: 2, levelReq: 50, shopTier: 'legendary-tier', value: 0, color: 0x6ad0ff, vocation: 'any', manaRegenPerSec: 4 },
 
   // --- Helmets (20 tiers) ---
   { id: 'cloth_hood', name: 'Cloth Hood', slot: 'helmet', defense: 1, weight: 8, levelReq: 1, shopTier: 'shop', value: 12, color: 0x8a7a5a, speedBonus: 0, coverage: 'open' },
@@ -284,6 +420,52 @@ export const ARMORS = [
   { id: 'celestial_boots', name: 'Celestial Boots', slot: 'boots', defense: 40, weight: 26, levelReq: 125, shopTier: 'legendary-tier', value: 0, color: 0xfff0a0, speedBonus: 0.35 },
 ];
 
+// --- Tibia-7.4 compression of armor defense ---------------------------------
+// Each slot's defense ladder is compressed onto small Tibia-like caps. The top
+// (Celestial X) piece of each slot is pinned to the legendary cap. Speed/coverage
+// and ring stats are untouched. Rings (defense 0..2) are intentionally excluded.
+const ARMOR_NORMAL_CAP = { helmet: 11, armor: 18, legs: 9, boots: 6, amulet: 7 };
+const ARMOR_LEGENDARY_CAP = { helmet: 12, armor: 20, legs: 11, boots: 7, amulet: 8 };
+
+function compressArmorLadders() {
+  for (const slot of Object.keys(ARMOR_NORMAL_CAP)) {
+    const pieces = ARMORS.filter((a) => a.slot === slot);
+    if (!pieces.length) continue;
+    const defs = pieces.map((p) => p.defense || 0);
+    const lo = Math.min(...defs), hi = Math.max(...defs);
+    const span = hi - lo || 1;
+    const cap = ARMOR_NORMAL_CAP[slot];
+    let top = pieces[0];
+    for (const p of pieces) if ((p.defense || 0) > (top.defense || 0)) top = p;
+    for (const p of pieces) {
+      const t = ((p.defense || 0) - lo) / span;
+      p.defense = Math.max(1, Math.round(1 + Math.pow(t, 0.7) * (cap - 1)));
+    }
+    top.defense = ARMOR_LEGENDARY_CAP[slot];       // celestial piece (legendary)
+  }
+}
+
+compressArmorLadders();
+
+// --- Quivers (archer off-hand) ----------------------------------------------
+// The archer holds a quiver in the off-hand (the bow is two-handed). Each tier
+// adds a flat bonus to the bow's effective attack via `arrowAtk` — small,
+// Tibia-style increments (+1..+5). They occupy the 'quiver' equip slot, are
+// archer-only, and give no defense. The visual (equipVisuals) shows the quiver
+// and a held arrow while walking.
+export const QUIVERS = [
+  { id: 'quiver_worn',      name: 'Worn Quiver',      slot: 'quiver', arrowAtk: 1, defense: 0, weight: 8,  levelReq: 1,   shopTier: 'shop', value: 60,    color: 0x8a6a3a, vocation: 'archer' },
+  { id: 'quiver_leather',   name: 'Leather Quiver',   slot: 'quiver', arrowAtk: 2, defense: 0, weight: 9,  levelReq: 10,  shopTier: 'shop', value: 320,   color: 0x7a5230, vocation: 'archer' },
+  { id: 'quiver_hunter',    name: 'Hunter Quiver',    slot: 'quiver', arrowAtk: 3, defense: 0, weight: 9,  levelReq: 25,  shopTier: 'shop', value: 1400,  color: 0x6e4a2c, vocation: 'archer' },
+  { id: 'quiver_ranger',    name: 'Ranger Quiver',    slot: 'quiver', arrowAtk: 4, defense: 0, weight: 8,  levelReq: 50,  shopTier: 'epic', value: 0,     color: 0x9bbf3b, vocation: 'archer' },
+  { id: 'quiver_royal',     name: 'Royal Quiver',     slot: 'quiver', arrowAtk: 5, defense: 0, weight: 8,  levelReq: 90,  shopTier: 'legendary-tier', value: 0, color: 0xf0d878, vocation: 'archer' },
+  { id: 'quiver_celestial', name: 'Celestial Quiver', slot: 'quiver', arrowAtk: 5, defense: 0, weight: 7,  levelReq: 125, shopTier: 'legendary-tier', value: 0, color: 0xfff0a0, vocation: 'archer' },
+];
+
+// Now that ARMORS and QUIVERS exist, mark their SECRET (GM-only) members too.
+for (const a of ARMORS) if (SECRET_ITEM_IDS.has(a.id)) a.secret = true;
+for (const q of QUIVERS) if (SECRET_ITEM_IDS.has(q.id)) q.secret = true;
+
 // Color table for collectible/buyable bags and backpacks (Tibia-style).
 const CONTAINER_COLORS = [
   { key: 'red', name: 'Red', color: 0xc0392b },
@@ -294,6 +476,12 @@ const CONTAINER_COLORS = [
   { key: 'orange', name: 'Orange', color: 0xe67e22 },
   { key: 'pink', name: 'Pink', color: 0xff6fa5 },
   { key: 'grey', name: 'Grey', color: 0xecf0f1 },
+  { key: 'teal', name: 'Teal', color: 0x16a085 },
+  { key: 'crimson', name: 'Crimson', color: 0x922b21 },
+  { key: 'azure', name: 'Azure', color: 0x5dade2 },
+  { key: 'lime', name: 'Lime', color: 0x7dcea0 },
+  { key: 'violet', name: 'Violet', color: 0xa569bd },
+  { key: 'black', name: 'Black', color: 0x34495e },
 ];
 
 // Build colored variants: a small bag (cap 8) and a backpack (cap 20) per color.
@@ -306,12 +494,18 @@ export const CONTAINERS = [
   { id: 'bag', name: 'Bag', slot: 'bag', capacity: 8, weight: 18, value: 50, color: 0x8a6a3b },
   { id: 'backpack', name: 'Backpack', slot: 'bag', capacity: 20, weight: 30, value: 250, color: 0x6a4a2b },
   ...COLORED_CONTAINERS,
+  // Star bags/backpacks — a glittery star crest on the flap (kid bling).
+  { id: 'star_bag', name: 'Star Bag', slot: 'bag', capacity: 10, weight: 16, value: 600, color: 0x3b6ea5, shopTier: 'shop' },
+  { id: 'star_backpack', name: 'Star Backpack', slot: 'bag', capacity: 22, weight: 28, value: 1800, color: 0x2c3e87, shopTier: 'epic' },
   // Themed special bags (kid bling — looted, big capacity). The demon backpack
   // gets a demon face in the icon (see itemIcons paintContainer).
   { id: 'fur_bag', name: 'Fur Bag', slot: 'bag', capacity: 12, weight: 16, value: 800, color: 0x8a6a3a, shopTier: 'epic' },
   { id: 'golden_backpack', name: 'Golden Backpack', slot: 'bag', capacity: 24, weight: 30, value: 12000, color: 0xddbb33, shopTier: 'legendary-tier' },
   { id: 'dragon_backpack', name: 'Dragon Backpack', slot: 'bag', capacity: 22, weight: 30, value: 9000, color: 0xcc3322, shopTier: 'legendary-tier' },
   { id: 'demon_backpack', name: 'Demon Backpack', slot: 'bag', capacity: 24, weight: 30, value: 15000, color: 0x7a0022, shopTier: 'legendary-tier' },
+  // The demon BAG is the trivial near-guaranteed demon drop (the user's "demon
+  // bag 1": almost every demon carries one). Small, but a demon-faced trophy bag.
+  { id: 'demon_bag', name: 'Demon Bag', slot: 'bag', capacity: 8, weight: 14, value: 2000, color: 0x7a0022, shopTier: 'epic' },
 ];
 
 // --- Potions & consumables -------------------------------------------------
@@ -370,18 +564,31 @@ export function getPotion(id) { return POTION_MAP.get(String(id || '').toLowerCa
 //   radius — how far the light reaches (meters)
 //   intensity — point-light intensity
 //   passive — true = always on while in the backpack; false = right-click toggle
+// Lights tint the player's aura by their glowColor AND escalate BOTH the reach
+// (radius) and brightness (intensity) up the ladder. Only THREE are sold in
+// shops (shopTier 'shop'): the Torch (40g), Glowing Pebble (800g) and Ruby
+// (2000g). Everything else is a QUEST reward (shopTier 'quest'), each a distinct
+// colour, climbing range+intensity up to the Diamond (radius 15, very bright).
 export const LIGHTS = [
-  // Starter torch: handed out on a new character, toggled with right click.
-  { id: 'torch',        name: { es: 'Antorcha', en: 'Torch' },               kind: 'light', passive: false, glowColor: 0xffb24d, radius: 9,  intensity: 7,  levelReq: 1,  value: 15,   weight: 8, color: 0x8a5a2b, icon: '🔥' },
-  { id: 'bright_torch', name: { es: 'Antorcha Brillante', en: 'Bright Torch' }, kind: 'light', passive: false, glowColor: 0xffd27a, radius: 13, intensity: 10, levelReq: 8,  value: 120,  weight: 9, color: 0xb8742f, icon: '🔥' },
-  // Gem stones: passive auras. Each colour tints the aura; rubies are the first
-  // the player finds. Higher tiers reach farther.
-  { id: 'glow_pebble',  name: { es: 'Guijarro Luminoso', en: 'Glowing Pebble' }, kind: 'light', passive: true, glowColor: 0xfff0c0, radius: 7,  intensity: 4,  levelReq: 1,  value: 60,   weight: 1, color: 0xfff0c0, icon: '🪨' },
-  { id: 'ruby',         name: { es: 'Rubí', en: 'Ruby' },                    kind: 'light', passive: true, glowColor: 0xff5a55, radius: 9,  intensity: 6,  levelReq: 1,  value: 400,  weight: 1, color: 0xff5a55, icon: '🔴' },
-  { id: 'emerald',      name: { es: 'Esmeralda', en: 'Emerald' },            kind: 'light', passive: true, glowColor: 0x5ade7a, radius: 10, intensity: 6,  levelReq: 10, value: 700,  weight: 1, color: 0x5ade7a, icon: '🟢' },
-  { id: 'sapphire',     name: { es: 'Zafiro', en: 'Sapphire' },              kind: 'light', passive: true, glowColor: 0x5aa6ff, radius: 11, intensity: 7,  levelReq: 18, value: 1100, weight: 1, color: 0x5aa6ff, icon: '🔵' },
-  { id: 'amethyst',     name: { es: 'Amatista', en: 'Amethyst' },            kind: 'light', passive: true, glowColor: 0xb06bff, radius: 12, intensity: 7,  levelReq: 26, value: 1600, weight: 1, color: 0xb06bff, icon: '🟣' },
-  { id: 'diamond_gem',  name: { es: 'Diamante', en: 'Diamond' },             kind: 'light', passive: true, glowColor: 0xdff2ff, radius: 15, intensity: 9,  levelReq: 40, value: 4000, weight: 1, color: 0xdff2ff, icon: '💎' },
+  // Starter / shop torches.
+  { id: 'torch',        name: { es: 'Antorcha', en: 'Torch' },               kind: 'light', passive: false, glowColor: 0xffb24d, radius: 9,  intensity: 7,  levelReq: 1,  value: 40,   weight: 8, color: 0x8a5a2b, icon: '🔥', shopTier: 'shop' },
+  { id: 'bright_torch', name: { es: 'Antorcha Brillante', en: 'Bright Torch' }, kind: 'light', passive: false, glowColor: 0xffd27a, radius: 12, intensity: 11, levelReq: 8,  value: 300,  weight: 9, color: 0xb8742f, icon: '🔥', shopTier: 'quest' },
+  // Passive glow gems — each a different colour; radius +1 per tier, intensity climbs.
+  { id: 'glow_pebble',  name: { es: 'Guijarro Luminoso', en: 'Glowing Pebble' }, kind: 'light', passive: true, glowColor: 0xfff0c0, radius: 10, intensity: 5,  levelReq: 1,  value: 800,  weight: 1, color: 0xfff0c0, icon: '🪨', shopTier: 'shop' },
+  { id: 'ruby',         name: { es: 'Rubí', en: 'Ruby' },                    kind: 'light', passive: true, glowColor: 0xff5a55, radius: 11, intensity: 7,  levelReq: 5,  value: 2000, weight: 1, color: 0xff5a55, icon: '🔴', shopTier: 'shop' },
+  // --- QUEST-ONLY coloured lights (no two the same colour) ---
+  { id: 'amber_stone',  name: { es: 'Piedra de Ámbar', en: 'Amber Stone' },    kind: 'light', passive: true, glowColor: 0xffb02a, radius: 11, intensity: 8,  levelReq: 8,  value: 2400, weight: 1, color: 0xffb02a, icon: '🟠', shopTier: 'quest' },
+  { id: 'emerald',      name: { es: 'Esmeralda', en: 'Emerald' },            kind: 'light', passive: true, glowColor: 0x5ade7a, radius: 12, intensity: 9,  levelReq: 12, value: 3000, weight: 1, color: 0x5ade7a, icon: '🟢', shopTier: 'quest' },
+  { id: 'topaz',        name: { es: 'Topacio', en: 'Topaz' },                kind: 'light', passive: true, glowColor: 0xffe24a, radius: 12, intensity: 10, levelReq: 16, value: 3600, weight: 1, color: 0xffe24a, icon: '🟡', shopTier: 'quest' },
+  { id: 'sapphire',     name: { es: 'Zafiro', en: 'Sapphire' },              kind: 'light', passive: true, glowColor: 0x5aa6ff, radius: 13, intensity: 11, levelReq: 20, value: 4200, weight: 1, color: 0x5aa6ff, icon: '🔵', shopTier: 'quest' },
+  { id: 'amethyst',     name: { es: 'Amatista', en: 'Amethyst' },            kind: 'light', passive: true, glowColor: 0xb06bff, radius: 13, intensity: 12, levelReq: 24, value: 4800, weight: 1, color: 0xb06bff, icon: '🟣', shopTier: 'quest' },
+  { id: 'rose_crystal', name: { es: 'Cristal Rosa', en: 'Rose Crystal' },     kind: 'light', passive: true, glowColor: 0xff7ad0, radius: 13, intensity: 12, levelReq: 28, value: 5200, weight: 1, color: 0xff7ad0, icon: '🩷', shopTier: 'quest' },
+  { id: 'aquamarine',   name: { es: 'Aguamarina', en: 'Aquamarine' },        kind: 'light', passive: true, glowColor: 0x4fe6e0, radius: 14, intensity: 13, levelReq: 32, value: 6000, weight: 1, color: 0x4fe6e0, icon: '🩵', shopTier: 'quest' },
+  { id: 'onyx',         name: { es: 'Ónice', en: 'Onyx' },                   kind: 'light', passive: true, glowColor: 0x8a6bff, radius: 14, intensity: 13, levelReq: 36, value: 6600, weight: 1, color: 0x6a4ad0, icon: '⚫', shopTier: 'quest' },
+  { id: 'verdant_opal', name: { es: 'Ópalo Verde', en: 'Verdant Opal' },      kind: 'light', passive: true, glowColor: 0x9affc0, radius: 14, intensity: 14, levelReq: 40, value: 7400, weight: 1, color: 0x9affc0, icon: '🟩', shopTier: 'quest' },
+  { id: 'solar_garnet', name: { es: 'Granate Solar', en: 'Solar Garnet' },    kind: 'light', passive: true, glowColor: 0xff8a3a, radius: 15, intensity: 15, levelReq: 46, value: 8800, weight: 1, color: 0xff6a2a, icon: '🔶', shopTier: 'quest' },
+  { id: 'star_sapphire', name: { es: 'Zafiro Estelar', en: 'Star Sapphire' }, kind: 'light', passive: true, glowColor: 0x6ab0ff, radius: 15, intensity: 16, levelReq: 54, value: 11000, weight: 1, color: 0x4d8aff, icon: '✨', shopTier: 'quest' },
+  { id: 'diamond_gem',  name: { es: 'Diamante', en: 'Diamond' },             kind: 'light', passive: true, glowColor: 0xeaffff, radius: 15, intensity: 20, levelReq: 64, value: 16000, weight: 1, color: 0xdff2ff, icon: '💎', shopTier: 'quest' },
 ];
 
 const LIGHT_MAP = new Map(LIGHTS.map((l) => [l.id, l]));
@@ -459,6 +666,22 @@ export function coinsFromValue(total) {
   return out;
 }
 
+// The game's single money unit shown to players: "mm coins" (Mundum coins). All
+// denominations roll up into ONE total — e.g. 100 bronze + 100 silver = 100 +
+// 100×100 = 10,100 mm coins. Formats with thousands separators and the unit.
+//   mmCoins(10100) -> "10,100 mm coins"  ·  mmCoins(1) -> "1 mm coin"
+export function mmCoins(total) {
+  const v = Math.max(0, Math.floor(total || 0));
+  const num = v.toLocaleString('en-US');   // grouped thousands, e.g. 10,100
+  return `${num} mm coin${v === 1 ? '' : 's'}`;
+}
+
+// Loot label for a bronze TOTAL just earned — shown as a single mm-coins amount
+// ("+10,100 mm coins"), not a per-denomination breakdown.
+export function coinLootLabel(total) {
+  return mmCoins(total);
+}
+
 export const LEGENDARY_ABILITIES = [
   { id: 'ember', name: 'Ember', desc: 'Adds a burst of fire damage on hit.', element: 'fire' },
   { id: 'tide', name: 'Tide', desc: 'Adds a burst of water damage on hit.', element: 'water' },
@@ -469,10 +692,12 @@ export const LEGENDARY_ABILITIES = [
 const WEAPON_MAP = new Map(WEAPONS.map((w) => [w.id, w]));
 const ARMOR_MAP = new Map(ARMORS.map((a) => [a.id, a]));
 const CONTAINER_MAP = new Map(CONTAINERS.map((c) => [c.id, c]));
+const QUIVER_MAP = new Map(QUIVERS.map((q) => [q.id, q]));
 
 export function getWeapon(id) { return WEAPON_MAP.get(id); }
 export function getArmor(id) { return ARMOR_MAP.get(id); }
 export function getContainer(id) { return CONTAINER_MAP.get(id); }
+export function getQuiver(id) { return QUIVER_MAP.get(id); }
 
 // Hue progression for wands: shifts from blue/purple toward warm gold as level rises.
 function wandHue(level) {

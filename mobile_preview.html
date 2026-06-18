@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vista móvil — Mundum</title>
+<!-- Reuse the real game stylesheet so the chrome (joystick, buttons, hotbar,
+     panels, hint) looks EXACTLY like in-game. This is a static mock to review
+     the button layout for a phone browser — no game logic runs. -->
+<link rel="stylesheet" href="./style.css">
+<style>
+  body { margin: 0; min-height: 100%; background: #11151f; color: #e7ecf2;
+         font: 14px system-ui, sans-serif; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 800; letter-spacing: .04em; margin: 0 0 4px; }
+  p.lead { color: #9fb0c2; margin: 0 0 22px; max-width: 760px; line-height: 1.5; }
+  .frames { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { color: #9fb0c2; font-size: 13px; margin-top: 10px; text-align: center; max-width: 320px; }
+  /* A device bezel that clips the game UI to a phone viewport. The inner .vp is
+     a positioning context so the game's position:fixed chrome lands inside it. */
+  .phone { position: relative; border: 10px solid #05070d; border-radius: 34px;
+           box-shadow: 0 18px 50px rgba(0,0,0,.6); overflow: hidden; background: #6fae54; }
+  .phone.portrait { width: 320px; height: 640px; }
+  .phone.landscape { width: 640px; height: 320px; }
+  .vp { position: absolute; inset: 0; overflow: hidden; }
+  /* Force the game chrome to anchor to the .vp box instead of the real window. */
+  .vp .side-panel, .vp #controls-ui, .vp .round-btn, .vp #hud, .vp #hud-top,
+  .vp #hotbar-wrap, .vp #hint, .vp #stick-base, .vp #crosshair { position: absolute; }
+  .vp #controls-ui { inset: 0; }
+  /* A faux 3D scene behind the chrome: a sky + ground + a couple of trees so the
+     overlay reads against something game-like. */
+  .scene { position: absolute; inset: 0;
+           background: linear-gradient(#8ed0ff 0%, #8ed0ff 38%, #6fae54 38%, #5a9e48 100%); }
+  .scene .hill { position: absolute; left: -10%; right: -10%; top: 30%; height: 90px;
+                 background: #7a7166; border-radius: 50%; opacity: .5; }
+  .scene .tree { position: absolute; width: 0; height: 0; }
+  .hero { position: absolute; left: 50%; bottom: 34%; width: 54px; height: 96px;
+          transform: translateX(-50%); }
+  .hero .head { position: absolute; left: 50%; top: 0; width: 28px; height: 28px; transform: translateX(-50%);
+                background: #e7b58a; border-radius: 9px; }
+  .hero .body { position: absolute; left: 50%; top: 24px; width: 40px; height: 44px; transform: translateX(-50%);
+                background: #2f86c9; border-radius: 12px; }
+  .hero .legs { position: absolute; left: 50%; top: 64px; width: 30px; height: 30px; transform: translateX(-50%);
+                background: #214a73; border-radius: 8px; }
+  /* Annotated callouts overlaying each control region. */
+  .tag { position: absolute; z-index: 50; font-size: 10px; font-weight: 700; color: #fff;
+         background: rgba(20,120,60,.92); padding: 2px 6px; border-radius: 6px; white-space: nowrap;
+         box-shadow: 0 2px 6px rgba(0,0,0,.5); pointer-events: none; }
+  .legend { margin-top: 26px; max-width: 760px; line-height: 1.7; color: #c7d2e0; font-size: 13.5px; }
+  .legend b { color: #fff; }
+  code { background: #1d2533; padding: 1px 6px; border-radius: 5px; color: #9fe0ff; }
+</style>
+</head>
+<body class="touch">
+<h1>Vista móvil — Mundum</h1>
+<p class="lead">Mock estático de cómo se ve el juego en el navegador de un teléfono.
+Usa el mismo <code>style.css</code> del juego, así que los botones, el joystick, la barra
+de habilidades y los paneles son idénticos a los reales. Sirve para revisar la
+distribución de los botones; no ejecuta el juego.</p>
+
+<div class="frames">
+  <!-- ====================== PORTRAIT, panels collapsed ====================== -->
+  <figure>
+    <div class="phone portrait">
+      <div class="vp" id="vp-portrait">
+        <div class="scene"><div class="hill"></div><div class="hero"><div class="head"></div><div class="body"></div><div class="legs"></div></div></div>
+      </div>
+    </div>
+    <figcaption>Vertical · paneles plegados (pestañas a los lados para abrirlos)</figcaption>
+  </figure>
+
+  <!-- ====================== PORTRAIT, right panel open ====================== -->
+  <figure>
+    <div class="phone portrait">
+      <div class="vp" id="vp-portrait-open">
+        <div class="scene"><div class="hill"></div><div class="hero"><div class="head"></div><div class="body"></div><div class="legs"></div></div></div>
+      </div>
+    </div>
+    <figcaption>Vertical · panel derecho (Mapa + Equipo) abierto</figcaption>
+  </figure>
+
+  <!-- ====================== LANDSCAPE ====================== -->
+  <figure>
+    <div class="phone landscape">
+      <div class="vp" id="vp-landscape">
+        <div class="scene"><div class="hill"></div><div class="hero"><div class="head"></div><div class="body"></div><div class="legs"></div></div></div>
+      </div>
+    </div>
+    <figcaption>Horizontal · panel derecho abierto</figcaption>
+  </figure>
+</div>
+
+<div class="legend">
+  <b>Controles en pantalla:</b><br>
+  • <b>Joystick</b> — aparece donde toques la mitad izquierda; empújalo al borde para correr.<br>
+  • <b>Mitad derecha</b> — arrastra para mover la cámara.<br>
+  • <b>Botón atacar</b> (espadas), <b>saltar</b> (flecha) y <b>mochila</b> — abajo a la derecha.<br>
+  • <b>Barra de habilidades</b> (1–0) — abajo al centro; arrastra un hechizo desde la ventana
+    de Hechizos a un hueco, y arrástralo fuera para quitarlo.<br>
+  • <b>Pestañas laterales</b> — abren/cierran los paneles de Mapa/Equipo (ya no se pierden al plegarlos).<br>
+  • <b>Botón “Modo móvil”</b> (icono de teléfono en la fila de botones del panel) — fuerza estos
+    controles también en un navegador de escritorio.
+</div>
+
+<script type="module">
+// Build the game's HUD/controls markup inside each phone frame. We import the
+// real CSS classes and ids so the layout matches the game pixel-for-pixel.
+
+// Minimal SVG glyphs, identical to index.html (monochrome, never emoji).
+const SWORDS = `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 14.5 21 21M19 3l-9 9M3 19l9-9M5 3l9 9M9.5 14.5 3 21"/></svg>`;
+const UP = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>`;
+const BAG = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V7a6 6 0 0 1 12 0v2"/><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M9.5 13h5"/></svg>`;
+const PHONE = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18.5" x2="13" y2="18.5" stroke-linecap="round"/></svg>`;
+
+function hud() {
+  return `
+    <div id="hud">
+      <div id="hud-top">
+        <div id="hud-clock">21:28</div>
+      </div>
+      <div id="hint">WASD moverse · Espacio saltar · 1-0 habilidades · Tab liberar ratón</div>
+      <div id="hotbar-wrap">
+        <div id="hotbar">${Array.from({length:10},(_,i)=>`<div class="hb-slot ${i<2?'':'empty'}"><span class="hb-ico"></span><span class="hb-key">${i===9?0:i+1}</span></div>`).join('')}</div>
+        <div class="bar xp" id="hotbar-xp"><div class="fill" style="width:42%"></div><span class="bar-text">Exp 42.22%</span></div>
+      </div>
+    </div>`;
+}
+
+function controls() {
+  return `
+    <div id="controls-ui">
+      <button id="btn-attack" class="round-btn touch-only" title="Atacar">${SWORDS}</button>
+      <button id="btn-jump" class="round-btn touch-only" title="Saltar">${UP}</button>
+      <button id="btn-bag" class="round-btn touch-only" title="Mochila">${BAG}</button>
+    </div>`;
+}
+
+function rightPanel(collapsed) {
+  return `
+    <div class="side-panel side-right ${collapsed?'collapsed':''}">
+      <button id="panel-toggle">${collapsed?'‹':'›'}</button>
+      <div class="windows">
+        <div class="win"><div class="win-head"><span class="win-grip">⠿</span><span class="win-title">Mapa</span><button class="win-collapse">▾</button></div>
+          <div class="win-body"><div id="minimap-box"><div style="width:100%;height:96px;background:#5a9e48;border-radius:6px;"></div><div id="coords">X -44 Y 7 Z 199</div><div id="city-name">Greenhollow</div></div></div></div>
+        <div id="vitals"><div class="bar hp"><div class="fill" style="width:100%"></div><span class="bar-text">100/100</span></div>
+          <div class="bar mana"><div class="fill" style="width:100%"></div><span class="bar-text">20/20</span></div></div>
+        <div class="win"><div class="win-head"><span class="win-grip">⠿</span><span class="win-title">Equipo</span><button class="win-collapse">▾</button></div>
+          <div class="win-body"><div id="paperdoll">${Array.from({length:9},()=>'<div class="slot"></div>').join('')}</div>
+          <div id="cap-row"><span id="cap-icon">${BAG}</span> <span id="cap-text">Cap: 344</span></div></div></div>
+      </div>
+      <div id="panel-btns">
+        <button class="panel-btn">≡</button><button class="panel-btn">✦</button>
+        <button class="panel-btn">?</button><button class="panel-btn">◉</button>
+        <button class="panel-btn">⊕</button><button class="panel-btn">♪</button>
+        <button class="panel-btn active" title="Modo móvil">${PHONE}</button>
+      </div>
+    </div>`;
+}
+
+function leftPanel() {
+  return `<div class="side-panel side-left collapsed"><button id="panel-toggle-left">›</button><div class="windows"></div></div>`;
+}
+
+// A floating joystick drawn at a representative spot (lower-left), plus tags.
+function joystick(x, y) {
+  return `<div id="stick-base" style="display:block; left:${x}px; top:${y}px;"><div id="stick-knob"></div></div>`;
+}
+function tag(text, x, y) { return `<div class="tag" style="left:${x}px; top:${y}px;">${text}</div>`; }
+
+// --- Portrait, panels collapsed -----------------------------------------
+{
+  const vp = document.getElementById('vp-portrait');
+  vp.insertAdjacentHTML('beforeend', leftPanel() + rightPanel(true) + hud() + controls() + joystick(78, 470));
+  vp.insertAdjacentHTML('beforeend',
+    tag('Joystick (toca y arrastra)', 12, 410) +
+    tag('Atacar', 196, 470) + tag('Saltar', 250, 420) + tag('Mochila', 240, 540) +
+    tag('Barra 1–0', 110, 588) + tag('Pestaña →', 250, 250));
+}
+
+// --- Portrait, right panel open ------------------------------------------
+{
+  const vp = document.getElementById('vp-portrait-open');
+  vp.insertAdjacentHTML('beforeend', leftPanel() + rightPanel(false) + hud() + controls());
+  vp.insertAdjacentHTML('beforeend', tag('Mapa + Equipo', 150, 12) + tag('Modo móvil', 150, 560));
+}
+
+// --- Landscape -----------------------------------------------------------
+{
+  const vp = document.getElementById('vp-landscape');
+  vp.insertAdjacentHTML('beforeend', leftPanel() + rightPanel(false) + hud() + controls() + joystick(120, 210));
+  vp.insertAdjacentHTML('beforeend', tag('Joystick', 40, 150) + tag('Acciones', 470, 250) + tag('Barra', 250, 286));
+}
+</script>
+</body>
+</html>

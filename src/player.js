@@ -37,6 +37,7 @@ export class Player {
   spawnAt(x, z) {
     this.pos.set(x, this.world.heightAt(x, z) + 0.2, z);
     this.vel.set(0, 0, 0);
+    this.grounded = false; // re-evaluated on the next update; never carry a stale value
     this.char.group.position.copy(this.pos);
     this.shadow.position.set(x, this.pos.y + 0.05, z);
   }
@@ -62,6 +63,11 @@ export class Player {
   }
 
   get inWater() {
+    // Only the SURFACE world has water. House interiors and caves are built far
+    // below y=0, so the old absolute "pos.y < WATER_LEVEL" wrongly read them as
+    // underwater — which let holding Space "swim up" forever (the infinite-jump
+    // bug indoors). Gate on the current world actually having water.
+    if (!this.world || !this.world.hasWater) return false;
     return this.pos.y + 0.4 < WATER_LEVEL;
   }
 
@@ -84,7 +90,8 @@ export class Player {
     // The Game Master always moves 5x an ordinary hero. This wins over the
     // boots' speedBonus (which recompute() rewrites whenever the inventory
     // changes), so GM speed never gets clobbered by an equip change.
-    const boost = this.gm ? 5 : 1 + (this.speedBonus || 0);
+    // A mount adds a flat +30% (mountBonus = 0.3) on top of the boots' speedBonus.
+    const boost = this.gm ? 5 : 1 + (this.speedBonus || 0) + (this.mountBonus || 0);
     // An ice/frost status slows movement (slowFactor < 1); GM ignores it.
     const slow = this.gm ? 1 : (this.slowFactor != null ? this.slowFactor : 1);
     const speed = (controls.sprint ? SPRINT : WALK) * boost * (inWater ? 0.45 : 1) * slow;
@@ -98,8 +105,8 @@ export class Player {
     this.vel.x = dx * speed;
     this.vel.z = dz * speed;
 
-    // jump / swim
-    if (controls.consumeJump() && this.grounded && !inWater) this.vel.y = JUMP_V;
+    // jump / swim — a mount gives +30% jump height (mountJumpMul = 1.3).
+    if (controls.consumeJump() && this.grounded && !inWater) this.vel.y = JUMP_V * (this.mountJumpMul || 1);
     if (inWater) {
       this.vel.y -= 7 * dt;
       this.vel.y = Math.max(this.vel.y, -2.6);
@@ -112,8 +119,15 @@ export class Player {
     // tall steps (walls), tree/rock footprints, and water deeper than the wade limit.
     let nx = this.pos.x + this.vel.x * dt;
     let nz = this.pos.z + this.vel.z * dt;
-    if (this._blocked(nx, this.pos.z)) { nx = this.pos.x; this.vel.x = 0; }
-    if (this._blocked(nx, nz)) { nz = this.pos.z; this.vel.z = 0; }
+    // If the player's CURRENT cell already counts as blocked (e.g. teleported
+    // onto a tree/rock footprint, or shoved into a solid), don't block moves out
+    // of it — otherwise every candidate is blocked too and they freeze forever.
+    // Only veto moves when we're starting from a clear cell. (Tradeoff: while
+    // stuck, movement is uncollided, so a very thin wall could be walked through
+    // — acceptable, since being able to escape always beats a permanent freeze.)
+    const stuck = this._blocked(this.pos.x, this.pos.z);
+    if (!stuck && this._blocked(nx, this.pos.z)) { nx = this.pos.x; this.vel.x = 0; }
+    if (!stuck && this._blocked(nx, nz)) { nz = this.pos.z; this.vel.z = 0; }
     this.pos.x = THREE.MathUtils.clamp(nx, -WORLD_LIMIT, WORLD_LIMIT);
     this.pos.z = THREE.MathUtils.clamp(nz, -WORLD_LIMIT, WORLD_LIMIT);
 
@@ -131,9 +145,14 @@ export class Player {
     // model animation and placement
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
     this.walkPhase += hSpeed * dt * 2.3;
+    // Mounted: the hero sits on the saddle (static straddle, no gait). `mounted`
+    // is set by the MountSystem on mount()/dismount().
+    if (this.char.setSeated) this.char.setSeated(!!this.mounted);
     this.char.animate(this.walkPhase, hSpeed / WALK, this.grounded || inWater, dt);
     this.char.updateAttack(dt);
     this.char.group.position.copy(this.pos);
+    // When mounted, lift the rider up onto the saddle (mountRiderY set by MountSystem).
+    this.char.group.position.y += (this.mountRiderY || 0);
     this.char.group.rotation.y = this.yaw + Math.PI;
 
     // contact shadow

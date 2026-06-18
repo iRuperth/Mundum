@@ -47,7 +47,8 @@ export const PROFESSIONS = [
     },
     color: 0x2f8fb0,
     allowedWeapons: ['bow'],
-    baseHp: 100, baseMana: 20, hpPerLevel: 15, manaPerLevel: 15, attackRange: 20,
+    // The archer is the LONG-RANGE specialist: the widest reach of any class.
+    baseHp: 100, baseMana: 20, hpPerLevel: 15, manaPerLevel: 15, attackRange: 26,
     regen: { hp: { amount: 2, every: 4 }, mana: { amount: 2, every: 4 } },
     // Named advancements. The first is the base job; the rest unlock at reqLevel.
     jobChain: [
@@ -59,8 +60,8 @@ export const PROFESSIONS = [
     skills: [
       // ---- Tier 1 (lv 1-29): the fundamentals ----
       { id: 'arrow_blow', tier: 1, reqLevel: 1, maxLevel: 20, kind: 'ranged', fx: 'single_arrow', fxColor: 0xbfe9ff,
-        name: { es: 'Flechazo', en: 'Arrow Blow' }, desc: { es: 'Una flecha veloz a un solo objetivo.', en: 'A swift arrow at a single target.' },
-        manaBase: 6, manaPerLevel: 0.8, cooldown: 1, powerBase: 12, powerPerLevel: 9, radius: 1.2 },
+        name: { es: 'Flechazo', en: 'Arrow Blow' }, desc: { es: 'Una flecha veloz y certera a un solo objetivo, desde muy lejos.', en: 'A swift, true arrow at a single target, from far away.' },
+        manaBase: 6, manaPerLevel: 0.8, cooldown: 1, powerBase: 16, powerPerLevel: 11, radius: 1.0, range: 26 },
       { id: 'bow_mastery', tier: 1, reqLevel: 3, maxLevel: 20, kind: 'passive',
         name: { es: 'Maestría de Arco', en: 'Bow Mastery' }, desc: { es: 'Pasiva. Cada nivel dispara 5% más rápido y +1% de alcance.', en: 'Passive. Each level fires 5% faster and +1% range.' },
         passive: { attackSpeedPerLevel: 0.05, rangePerLevel: 0.01 } },
@@ -71,8 +72,8 @@ export const PROFESSIONS = [
         name: { es: 'Ojo de Águila', en: 'Eagle Eye' }, desc: { es: 'Pasiva. Cada nivel +2% de probabilidad de crítico.', en: 'Passive. Each level adds 2% critical chance.' },
         passive: { critPerLevel: 0.02 } },
       { id: 'power_knockback', tier: 1, reqLevel: 12, maxLevel: 20, kind: 'ranged', fx: 'heavy_arrow', fxColor: 0x8fd0ff,
-        name: { es: 'Disparo de Empuje', en: 'Power Knock-back' }, desc: { es: 'Una flecha potente que repele al objetivo.', en: 'A forceful arrow that repels the target.' },
-        manaBase: 18, manaPerLevel: 1.4, cooldown: 2.2, powerBase: 55, powerPerLevel: 14, radius: 1.5, knockback: 4 },
+        name: { es: 'Disparo de Empuje', en: 'Power Knock-back' }, desc: { es: 'Una flecha potente que castiga a un objetivo desde lejos.', en: 'A forceful arrow that punishes a single far target.' },
+        manaBase: 18, manaPerLevel: 1.4, cooldown: 2.2, powerBase: 68, powerPerLevel: 16, radius: 1.3, range: 26, knockback: 4 },
       { id: 'arrow_bomb', tier: 1, reqLevel: 16, maxLevel: 20, kind: 'ranged', fx: 'explosive_arrow', fxColor: 0xff9a3a,
         name: { es: 'Flecha Bomba', en: 'Arrow Bomb' }, desc: { es: 'Una flecha que estalla al impactar.', en: 'An arrow that bursts on impact.' },
         manaBase: 30, manaPerLevel: 2.2, cooldown: 3.2, powerBase: 90, powerPerLevel: 15, radius: 3 },
@@ -136,8 +137,8 @@ export const PROFESSIONS = [
       { id: 'storm_of_arrows', tier: 4, reqLevel: 150, maxLevel: 30, kind: 'ranged', fx: 'arrow_rain', fxColor: 0xfff0a0,
         name: { es: 'Tormenta de Saetas', en: 'Storm of Arrows' }, desc: { es: 'El cielo entero se llena de flechas.', en: 'The whole sky fills with arrows.' },
         manaBase: 260, manaPerLevel: 8, cooldown: 14, powerBase: 880, powerPerLevel: 36, radius: 10 },
-      { id: 'phoenix_volley', tier: 4, reqLevel: 160, maxLevel: 30, kind: 'ranged', fx: 'hurricane', fxColor: 0xff8a3a,
-        name: { es: 'Andanada Fénix', en: 'Phoenix Volley' }, desc: { es: 'Una marea ardiente de flechas sin fin.', en: 'An endless burning tide of arrows.' },
+      { id: 'phoenix_storm', tier: 4, reqLevel: 160, maxLevel: 30, kind: 'ranged', fx: 'hurricane', fxColor: 0xff8a3a,
+        name: { es: 'Tormenta Fénix', en: 'Phoenix Storm' }, desc: { es: 'Una marea ardiente de flechas sin fin.', en: 'An endless burning tide of arrows.' },
         manaBase: 240, manaPerLevel: 7, cooldown: 10, powerBase: 800, powerPerLevel: 32, radius: 2, projectiles: 16, spread: 0.12 },
     ],
   },
@@ -174,6 +175,15 @@ export const PROFESSIONS = [
       { id: 'iron_body', tier: 1, reqLevel: 8, maxLevel: 20, kind: 'passive',
         name: { es: 'Cuerpo de Hierro', en: 'Iron Body' }, desc: { es: 'Pasiva. Cada nivel +3% de vida máxima.', en: 'Passive. Each level +3% max HP.' },
         passive: { maxHpPerLevel: 0.03 } },
+      // Early knight STANCES — the user wants the knight to raise its own DEFENCE
+      // and PHYSICAL ATTACK from the start. defenseMul<1 = tougher; damageMul>1 =
+      // harder hits (the knight's hits are physical, so this is its attack buff).
+      { id: 'guard_stance', tier: 1, reqLevel: 9, maxLevel: 15, kind: 'buff', fx: 'self_buff', fxColor: 0x9fd0ff,
+        name: { es: 'Postura de Guardia', en: 'Guard Stance' }, desc: { es: 'Alzas el escudo: recibes mucho menos daño un rato.', en: 'Raise your guard: take much less damage for a while.' },
+        manaBase: 14, manaPerLevel: 1, cooldown: 18, powerBase: 0, powerPerLevel: 0, buff: { defenseMul: 0.7, duration: 14 } },
+      { id: 'battle_focus', tier: 1, reqLevel: 14, maxLevel: 15, kind: 'buff', fx: 'self_buff', fxColor: 0xff8844,
+        name: { es: 'Concentración de Batalla', en: 'Battle Focus' }, desc: { es: 'Aprietas el arma: tu ataque físico sube un rato.', en: 'Grip your weapon: your physical attack rises for a while.' },
+        manaBase: 16, manaPerLevel: 1, cooldown: 20, powerBase: 0, powerPerLevel: 0, buff: { damageMul: 1.18, duration: 16 } },
       { id: 'rage_bleed', tier: 1, reqLevel: 12, maxLevel: 20, kind: 'melee', fx: 'double_slash', fxColor: 0xff6a4a,
         name: { es: 'Furia Sangrante', en: 'Rage' }, desc: { es: 'Un golpe furioso que hace sangrar al enemigo.', en: 'A raging blow that makes the foe bleed.' },
         manaBase: 18, manaPerLevel: 1.4, cooldown: 3, powerBase: 60, powerPerLevel: 15, radius: 2.4 },
@@ -191,6 +201,11 @@ export const PROFESSIONS = [
       { id: 'shield_wall', tier: 2, reqLevel: 30, maxLevel: 20, kind: 'buff', fx: 'self_buff', fxColor: 0x9fd0ff,
         name: { es: 'Muro de Escudo', en: 'Shield Wall' }, desc: { es: 'Reduces el daño recibido un tiempo.', en: 'Reduce incoming damage for a while.' },
         manaBase: 40, manaPerLevel: 2, cooldown: 25, buff: { defenseMul: 0.6, duration: 15 } },
+      // CHALLENGE (Tibia's Exeta Res): a war cry that FORCES every nearby creature
+      // to attack YOU — the knight's core tank tool, pulling a pack off allies.
+      { id: 'challenge', tier: 2, reqLevel: 34, maxLevel: 10, kind: 'buff', fx: 'roar', fxColor: 0xff8844,
+        name: { es: 'Desafío', en: 'Challenge' }, desc: { es: 'Un grito que obliga a las criaturas cercanas a atacarte a ti.', en: 'A war cry that forces nearby creatures to attack you.' },
+        manaBase: 30, manaPerLevel: 1.5, cooldown: 14, powerBase: 0, powerPerLevel: 0, radius: 7, taunt: true },
       { id: 'whirlwind', tier: 2, reqLevel: 36, maxLevel: 20, kind: 'area', fx: 'whirlwind', fxColor: 0xffd27a,
         name: { es: 'Torbellino', en: 'Whirlwind' }, desc: { es: 'Giras con el arma golpeando todo alrededor.', en: 'Spin with your weapon, hitting all around.' },
         manaBase: 55, manaPerLevel: 3, cooldown: 5, powerBase: 170, powerPerLevel: 18, radius: 4.2 },
@@ -279,19 +294,24 @@ export const PROFESSIONS = [
         name: { es: 'Fuente de Maná', en: 'Mana Font' }, desc: { es: 'Pasiva. Cada nivel +3% de maná máximo.', en: 'Passive. Each level +3% max mana.' },
         passive: { maxManaPerLevel: 0.03 } },
       { id: 'fire_arrow', tier: 1, reqLevel: 12, maxLevel: 20, kind: 'ranged', fx: 'fire_arrow', fxColor: 0xff5522,
-        name: { es: 'Flecha de Fuego', en: 'Fire Arrow' }, desc: { es: 'Una saeta ardiente que perfora a un enemigo.', en: 'A burning bolt that pierces one foe.' },
-        manaBase: 18, manaPerLevel: 2, cooldown: 1.8, powerBase: 44, powerPerLevel: 16, radius: 1.6 },
+        name: { es: 'Flecha de Fuego', en: 'Fire Arrow' }, desc: { es: 'Una saeta ardiente que estalla en una pequeña zona.', en: 'A burning bolt that bursts in a small area.' },
+        manaBase: 18, manaPerLevel: 2, cooldown: 1.8, powerBase: 44, powerPerLevel: 16, radius: 2.6 },
       { id: 'thunder_spear', tier: 1, reqLevel: 16, maxLevel: 20, kind: 'ranged', fx: 'lightning', fxColor: 0xbfe9ff,
-        name: { es: 'Lanza de Trueno', en: 'Thunder Spear' }, desc: { es: 'Una lanza de rayo que electrocuta a un enemigo.', en: 'A lance of lightning that shocks one foe.' },
-        manaBase: 28, manaPerLevel: 2.5, cooldown: 2, powerBase: 72, powerPerLevel: 18, radius: 1.7 },
+        name: { es: 'Lanza de Trueno', en: 'Thunder Spear' }, desc: { es: 'Una lanza de rayo que electrocuta en una zona.', en: 'A lance of lightning that shocks an area.' },
+        manaBase: 28, manaPerLevel: 2.5, cooldown: 2, powerBase: 72, powerPerLevel: 18, radius: 2.8 },
       { id: 'poison_mist', tier: 1, reqLevel: 22, maxLevel: 15, kind: 'area', fx: 'poison_cloud', fxColor: 0x88c43c,
-        name: { es: 'Niebla Venenosa', en: 'Poison Mist' }, desc: { es: 'Una nube tóxica que corroe a los enemigos.', en: 'A toxic cloud that corrodes foes.' },
-        manaBase: 40, manaPerLevel: 3, cooldown: 4, powerBase: 95, powerPerLevel: 14, radius: 4 },
+        name: { es: 'Niebla Venenosa', en: 'Poison Mist' }, desc: { es: 'Una gran nube tóxica que corroe a los enemigos.', en: 'A large toxic cloud that corrodes foes.' },
+        manaBase: 40, manaPerLevel: 3, cooldown: 4, powerBase: 95, powerPerLevel: 14, radius: 5.5 },
+      // Fire Wave: a cone of flame that sweeps forward and SETS ENEMIES ABLAZE
+      // (burn). The sorcerer's early signature wave.
+      { id: 'fire_wave', tier: 1, reqLevel: 20, maxLevel: 20, kind: 'area', fx: 'wave', fxColor: 0xff5a22,
+        name: { es: 'Ola de Fuego', en: 'Fire Wave' }, desc: { es: 'Una ola de fuego que barre al frente e incendia a los enemigos.', en: 'A wave of fire that sweeps ahead and sets foes ablaze.' },
+        manaBase: 34, manaPerLevel: 2.6, cooldown: 3, powerBase: 80, powerPerLevel: 15, radius: 3.4, range: 9 },
 
       // Tier 2 — Arcane Mage
       { id: 'explosion', tier: 2, reqLevel: 30, maxLevel: 20, kind: 'area', fx: 'explosion', fxColor: 0xff7a3a,
-        name: { es: 'Explosión', en: 'Explosion' }, desc: { es: 'Una detonación arcana que sacude una zona.', en: 'An arcane detonation that rocks an area.' },
-        manaBase: 55, manaPerLevel: 3.5, cooldown: 4.5, powerBase: 150, powerPerLevel: 16, radius: 4.5 },
+        name: { es: 'Explosión', en: 'Explosion' }, desc: { es: 'Una detonación arcana que sacude una amplia zona.', en: 'An arcane detonation that rocks a wide area.' },
+        manaBase: 55, manaPerLevel: 3.5, cooldown: 4.5, powerBase: 150, powerPerLevel: 16, radius: 6 },
       { id: 'mana_shield', tier: 2, reqLevel: 30, maxLevel: 20, kind: 'buff', fx: 'self_buff', fxColor: 0x6fa8ff,
         name: { es: 'Escudo de Maná', en: 'Mana Shield' }, desc: { es: 'El maná absorbe parte del daño recibido.', en: 'Mana absorbs part of incoming damage.' },
         manaBase: 50, manaPerLevel: 2, cooldown: 25, buff: { defenseMul: 0.7, duration: 20 } },
@@ -304,6 +324,11 @@ export const PROFESSIONS = [
       { id: 'blizzard', tier: 2, reqLevel: 55, maxLevel: 20, kind: 'area', fx: 'blizzard', fxColor: 0xcfeaff,
         name: { es: 'Ventisca', en: 'Blizzard' }, desc: { es: 'Una tormenta de hielo azota una gran zona.', en: 'An ice storm batters a large area.' },
         manaBase: 120, manaPerLevel: 5, cooldown: 7, powerBase: 340, powerPerLevel: 24, radius: 6 },
+      // Energy Wave: a forward cone of raw energy — the sorcerer's pure-damage
+      // wave (no status, just a hard hit, true to "el sorcerer hace más daño").
+      { id: 'energy_wave', tier: 2, reqLevel: 40, maxLevel: 20, kind: 'area', fx: 'wave', fxColor: 0xb070ff,
+        name: { es: 'Ola de Energía', en: 'Energy Wave' }, desc: { es: 'Una ola de energía pura que arrasa al frente.', en: 'A wave of pure energy that tears forward.' },
+        manaBase: 80, manaPerLevel: 3.5, cooldown: 4, powerBase: 200, powerPerLevel: 20, radius: 3.6, range: 10 },
 
       // Tier 3 — Archmage
       { id: 'meteor', tier: 3, reqLevel: 70, maxLevel: 30, kind: 'area', fx: 'meteor', fxColor: 0xff6a1a,
@@ -318,6 +343,11 @@ export const PROFESSIONS = [
       { id: 'inferno', tier: 3, reqLevel: 95, maxLevel: 25, kind: 'area', fx: 'explosion', fxColor: 0xff3a1a,
         name: { es: 'Infierno', en: 'Inferno' }, desc: { es: 'Un mar de llamas devora una gran zona.', en: 'A sea of flames devours a large area.' },
         manaBase: 190, manaPerLevel: 6.5, cooldown: 8, powerBase: 600, powerPerLevel: 30, radius: 6.5 },
+      // Energy Pulse: the sorcerer's ENERGY area-nuke (the missing "gran mas vis").
+      // A massive burst of pure energy — the hardest-hitting non-fire area spell.
+      { id: 'energy_pulse', tier: 3, reqLevel: 85, maxLevel: 25, kind: 'area', fx: 'explosion', fxColor: 0xc77cff,
+        name: { es: 'Pulso de Energía', en: 'Energy Pulse' }, desc: { es: 'Una detonación colosal de energía pura que sacude todo alrededor.', en: 'A colossal blast of pure energy rocking everything around.' },
+        manaBase: 200, manaPerLevel: 7, cooldown: 8, powerBase: 640, powerPerLevel: 30, radius: 6.5 },
 
       // Tier 4 — Grand Sorcerer
       { id: 'genesis', tier: 4, reqLevel: 120, maxLevel: 30, kind: 'area', fx: 'holy_nova', fxColor: 0xfff0a0,
@@ -383,8 +413,13 @@ export const PROFESSIONS = [
         name: { es: 'Bendición', en: 'Blessing' }, desc: { es: 'Pasiva. Cada nivel +2% de vida y maná máximos.', en: 'Passive. Each level +2% max HP and mana.' },
         passive: { maxHpPerLevel: 0.02, maxManaPerLevel: 0.02 } },
       { id: 'entangle', tier: 1, reqLevel: 12, maxLevel: 20, kind: 'area', fx: 'vine_burst', fxColor: 0x6ab04c,
-        name: { es: 'Enredadera', en: 'Entangle' }, desc: { es: 'Espinas brotan dañando a los enemigos cercanos.', en: 'Thorns erupt, damaging nearby foes.' },
-        manaBase: 30, manaPerLevel: 2.4, cooldown: 3.5, powerBase: 80, powerPerLevel: 14, radius: 4 },
+        name: { es: 'Enredadera', en: 'Entangle' }, desc: { es: 'Espinas brotan dañando y RALENTIZANDO a los enemigos, dejándolos envenenados.', en: 'Thorns erupt, damaging and SLOWING foes and leaving them poisoned.' },
+        manaBase: 30, manaPerLevel: 2.4, cooldown: 3.5, powerBase: 90, powerPerLevel: 16, radius: 5.5 },
+      // Poison Wave: the druid's signature wave — a cone of venom that SLOWS and
+      // POISONS (a long bleed). Less raw damage than the sorcerer, more control.
+      { id: 'poison_wave', tier: 1, reqLevel: 20, maxLevel: 20, kind: 'area', fx: 'wave', fxColor: 0x88c43c,
+        name: { es: 'Ola de Veneno', en: 'Poison Wave' }, desc: { es: 'Una ola tóxica que ralentiza y envenena a los enemigos al frente.', en: 'A toxic wave that slows and poisons foes ahead.' },
+        manaBase: 32, manaPerLevel: 2.4, cooldown: 3, powerBase: 60, powerPerLevel: 12, radius: 3.4, range: 9 },
       { id: 'summon_imp', tier: 1, reqLevel: 16, maxLevel: 15, kind: 'summon', fx: 'summon_poof', fxColor: 0xb98aff,
         name: { es: 'Invocar Diablillo', en: 'Summon Imp' }, desc: { es: 'Invoca diablillos que luchan a tu lado.', en: 'Summon imps that fight at your side.' },
         manaBase: 70, manaPerLevel: 4, cooldown: 12, powerBase: 0, powerPerLevel: 0, radius: 0, summonFamily: 'imp', summonCount: 2 },
@@ -406,8 +441,13 @@ export const PROFESSIONS = [
         name: { es: 'Invocar Lobo', en: 'Summon Wolf' }, desc: { es: 'Invoca un lobo feroz que combate por ti.', en: 'Summon a fierce wolf to fight for you.' },
         manaBase: 120, manaPerLevel: 5, cooldown: 16, powerBase: 0, powerPerLevel: 0, radius: 0, summonFamily: 'wolf', summonCount: 1 },
       { id: 'natures_wrath', tier: 2, reqLevel: 55, maxLevel: 20, kind: 'area', fx: 'vine_burst', fxColor: 0x4fd06a,
-        name: { es: 'Ira de la Naturaleza', en: "Nature's Wrath" }, desc: { es: 'Raíces gigantes destrozan una gran zona.', en: 'Giant roots tear through a large area.' },
+        name: { es: 'Ira de la Naturaleza', en: "Nature's Wrath" }, desc: { es: 'Raíces gigantes destrozan una gran zona, ralentizando y envenenando.', en: 'Giant roots tear through a large area, slowing and poisoning.' },
         manaBase: 110, manaPerLevel: 5, cooldown: 6, powerBase: 320, powerPerLevel: 22, radius: 5.5 },
+      // Ice Wave: a cone of frost that SLOWS hard (the druid's control wave). Low
+      // damage, strong slow — peels foes off allies.
+      { id: 'ice_wave', tier: 2, reqLevel: 40, maxLevel: 20, kind: 'area', fx: 'wave', fxColor: 0x9fe8ff,
+        name: { es: 'Ola de Hielo', en: 'Ice Wave' }, desc: { es: 'Una ola de escarcha que congela el paso de los enemigos al frente.', en: 'A wave of frost that freezes foes\' steps ahead.' },
+        manaBase: 70, manaPerLevel: 3, cooldown: 4, powerBase: 150, powerPerLevel: 16, radius: 3.6, range: 10 },
 
       // Tier 3 — High Druid
       { id: 'holy_symbol', tier: 3, reqLevel: 70, maxLevel: 25, kind: 'heal', fx: 'heal_nova', fxColor: 0xc8ffb0,
@@ -464,6 +504,35 @@ for (const p of PROFESSIONS) {
     s.manaCost = s.manaBase;
     s.power = s.powerBase;
     if (s.maxLevel == null) s.maxLevel = 20;
+  }
+}
+
+// --- Tibia-style STATUS effects on the SORCERER and DRUID damage spells -------
+// The combat engine reads `skill.inflicts` ('burn' | 'poison' | 'slow' |
+// 'slowpoison') and leaves that effect on every creature the spell hits.
+//   • SORCERER — its FIRE spells BURN (a damage-over-time pressure). The sorcerer
+//     hits harder but does NOT slow.
+//   • DRUID — its ICE spells SLOW, its NATURE/poison spells SLOW + POISON (a long
+//     bleed that drains HP while the fight lasts). The druid controls and bleeds
+//     rather than out-damaging. (Matches the user's brief: druid realentiza + veneno.)
+// Flagged by skill id so the spell bodies above stay clean.
+const INFLICTS = {
+  // SORCERER — fire BURNS (its DOT pressure). It does NOT slow: per the brief the
+  // sorcerer out-DAMAGES, control is the druid's job. Its ice/energy spells are
+  // pure damage (no status), so only fire is flagged here.
+  fire_arrow: 'burn', explosion: 'burn', inferno: 'burn', meteor: 'burn',
+  meteor_storm: 'burn', armageddon: 'burn', pyroclasm: 'burn',
+  fire_wave: 'burn',
+  // poison_mist is a venom cloud — the one sorcerer spell that poisons (no slow).
+  poison_mist: 'poison',
+  // DRUID — nature/poison spells SLOW + POISON (control + bleed); ice spells SLOW.
+  entangle: 'slowpoison', natures_wrath: 'slowpoison', thorn_storm: 'slowpoison',
+  wrath_of_nature: 'slowpoison', thorn_cataclysm: 'slowpoison',
+  poison_wave: 'slowpoison', ice_wave: 'slow',
+};
+for (const p of PROFESSIONS) {
+  for (const s of p.skills) {
+    if (INFLICTS[s.id]) s.inflicts = INFLICTS[s.id];
   }
 }
 
@@ -551,7 +620,13 @@ export function skillsByTier(professionId) {
 
 // Look up a skill by id across all professions.
 const SKILL_BY_ID = new Map();
-for (const p of PROFESSIONS) for (const sk of p.skills) SKILL_BY_ID.set(sk.id, sk);
+for (const p of PROFESSIONS) for (const sk of p.skills) {
+  // Skill ids must be globally unique — everything (cooldowns, learned levels,
+  // hotbar entries, getSkill) is keyed by id, so a duplicate silently collapses
+  // two skills into one. Fail loudly at load instead of shipping a subtle bug.
+  if (SKILL_BY_ID.has(sk.id)) throw new Error(`professions: duplicate skill id "${sk.id}"`);
+  SKILL_BY_ID.set(sk.id, sk);
+}
 export function getSkill(id) { return SKILL_BY_ID.get(id) || null; }
 
 // Aggregate the passive bonuses from skills the player has put points into. A
@@ -617,9 +692,57 @@ export function professionLevelGain(professionId) {
   return { hp: p.hpPerLevel, mana: p.manaPerLevel };
 }
 
-// Effective power (damage or heal) of a skill at a given SKILL LEVEL.
+const DAMAGE_KINDS = new Set(['area', 'ranged', 'melee']);
+
+// --- Tibia-style spell damage --------------------------------------------
+// In Tibia a spell's damage is driven by a base magic formula F = level*2 +
+// magicLevel*3, scaled by a per-spell factor. We follow that, but also let the
+// SKILL points you spent in the spell raise F (so investing in a spell matters),
+// and a per-class multiplier keeps the hierarchy (mage hits hardest, then the
+// archer, then the knight — casters out-nuke fighters). There is NO damage cap:
+// a high-level mage's ultimate climbs past 2000+, like Tibia.
+//
+//   F = level*2 + magicLevel*3 + skillPointLevel*8
+//   damage = (powerBase*0.35 + (powerBase/SPELL_REF) * F) * classMul
+//
+// The powerBase (relative spell strength, already authored per spell) is the
+// per-spell factor, so we don't re-tune 100+ skills. SPELL_REF (290) is
+// calibrated so a maxed mage ultimate (powerBase ~900) at level 80 / magic level
+// 80 lands ~2300, and a starter bolt still does a usable chunk at level 1-2.
+export const SPELL_REF = 290;
+export const SPELL_BASE_FRAC = 0.35;
+// Per-class spell damage multiplier. Mage nukes hardest; druid nearly as much;
+// the archer's volleys are strong but mobile; the knight's strikes are the
+// weakest spells (his power is in sustained melee + tankiness).
+export const CLASS_SPELL_MUL = { mage: 1.0, druid: 0.95, paladin: 0.24, knight: 0.30 };
+
+export function classSpellMul(professionId) {
+  return CLASS_SPELL_MUL[professionId] != null ? CLASS_SPELL_MUL[professionId] : 1.0;
+}
+
+// The multiplier to apply to a damage skill's raw power for the Tibia formula,
+// given the caster's character level, magic level and the per-class multiplier.
+// main.js multiplies this onto the raw (unscaled) skillPower so projectile/area
+// splits stay proportional. (rawPower = powerBase + powerPerLevel*(skillLv-1).)
+export function spellDamageMul(level, magicLevel, skillPointLevel, professionId) {
+  const F = (level || 1) * 2 + (magicLevel || 0) * 3 + (skillPointLevel || 1) * 8;
+  return (SPELL_BASE_FRAC + F / SPELL_REF) * classSpellMul(professionId);
+}
+
+// Whether a skill deals damage (vs heal/buff/summon), so callers know to apply
+// the spell-damage multiplier above.
+export function isDamageSkill(skill) {
+  return !!skill && DAMAGE_KINDS.has(skill.kind);
+}
+
+// Effective base power of a skill. For DAMAGE skills this returns the flat
+// per-spell FACTOR (powerBase) — the Tibia formula (spellDamageMul, which folds
+// in level, magic level AND the skill points via F) is applied by the caster, so
+// the skill-point growth must NOT be baked in here too. For heals/buffs/summons
+// it's the literal effect value, which DOES grow with the skill level invested.
 export function skillPower(skill, skillLevel) {
   if (!skill) return 0;
+  if (DAMAGE_KINDS.has(skill.kind)) return skill.powerBase;   // factor only; F carries growth
   const lv = Math.max(1, skillLevel || 1);
   return Math.round(skill.powerBase + skill.powerPerLevel * (lv - 1));
 }

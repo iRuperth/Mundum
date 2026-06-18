@@ -59,11 +59,68 @@ export const DUNGEONS = [
     creatureFamilies: ['demon', 'imp', 'cultist'],
     chest: { itemId: 'demon_sword', reward: 1, questId: 'demon-abyss-clear' },
   },
+  // Beast dens added with the mount overhaul: the wolf pack, the tiger hollow,
+  // and the glacial lair of the level-100 Crystal Dragon (supreme mount source).
+  {
+    id: 'wolfden', name: { es: 'Guarida del Lobo', en: 'Wolf Den' },
+    x: -120, z: 420, minLevel: 7, floors: 2,
+    creatureFamilies: ['wolf'],
+    chest: { itemId: 'studded_armor', reward: 1, questId: 'wolf-den-clear' },
+  },
+  {
+    id: 'tigerhollow', name: { es: 'Cubil del Tigre', en: "Tiger's Hollow" },
+    x: 340, z: 300, minLevel: 15, floors: 2,
+    creatureFamilies: ['tiger'],
+    chest: { itemId: 'chain_armor', reward: 1, questId: 'tiger-hollow-clear' },
+  },
+  {
+    id: 'glaciallair', name: { es: 'Guarida Glacial', en: 'Glacial Lair' },
+    x: -200, z: -900, minLevel: 90, floors: 4, big: true,
+    creatureFamilies: ['crystal_dragon'],
+    chest: { itemId: 'frost_armor', reward: 1, questId: 'glacial-lair-clear' },
+  },
 ];
 
 const ENTRANCE_RADIUS = 7;   // how close counts as "at the cave mouth"
 const OUTSIDE_RADIUS = 30;   // cave creatures also spawn outside within this range
 const CHEST_RADIUS = 2.5;    // how close counts as "at the chest"
+
+// Deterministic per-vertex jitter: pushes each vertex of a faceted primitive by
+// a hashed offset so a clean DodecahedronGeometry becomes a unique craggy rock.
+// Hashed from the vertex position (no Math.random — the world stays deterministic).
+// `amt` is the max push in metres, `salt` makes two rocks from the same geometry
+// differ. Mutates and returns the geometry.
+function jitterGeometry(geo, amt, salt = 0) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const h = (n) => {
+      let v = Math.imul((Math.round(x * 97) ^ Math.round(z * 131)) + n + salt, 374761393)
+            ^ Math.imul(Math.round(y * 113) + n * 53, 668265263);
+      v = Math.imul(v ^ (v >>> 13), 1274126177); v ^= v >>> 16;
+      return (v >>> 0) / 4294967296 - 0.5;
+    };
+    pos.setX(i, x + h(1) * amt);
+    pos.setY(i, y + h(7) * amt);
+    pos.setZ(i, z + h(13) * amt);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// A small pool of pre-jittered detail-1 boulder geometries, built lazily and
+// shared across every entrance so the cave mouths are craggy rock without a
+// per-boulder geometry cost. Pick one by index for variety.
+let boulderGeos = null;
+function boulders() {
+  if (boulderGeos) return boulderGeos;
+  boulderGeos = [];
+  for (let g = 0; g < 5; g++) {
+    boulderGeos.push(jitterGeometry(new THREE.DodecahedronGeometry(1, 1), 0.18, g * 23));
+  }
+  return boulderGeos;
+}
 
 // Shared materials, created lazily so the module can be imported without a
 // live THREE context for static checks.
@@ -228,6 +285,7 @@ function buildEntrance(group, world, d, m) {
   const R = 6.2;                                  // mound footprint radius
   const NOTCH = 0.55;                             // half-angle of the open stair notch (rad)
   const moundCenterA = Math.PI / 2;               // notch faces +Z (south)
+  const bgeos = boulders();                       // shared craggy rock geometries
   for (let i = 0; i < 14; i++) {
     const a = (i / 14) * Math.PI * 2;
     // Leave the south notch open for the stairway.
@@ -238,12 +296,31 @@ function buildEntrance(group, world, d, m) {
     const bz = d.z + Math.sin(a) * rr;
     const by = world.heightAt(bx, bz);
     const s = 1.6 + (i % 3) * 0.7;
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), i % 2 ? body : dark);
+    // Detail-1, pre-jittered boulder scaled to size: each ring stone reads as a
+    // unique craggy rock carved by weather rather than a smooth lump.
+    const rock = new THREE.Mesh(bgeos[i % bgeos.length], i % 2 ? body : dark);
+    rock.scale.setScalar(s);
     rock.position.set(bx, by + s * 0.45, bz);
     rock.rotation.set(i * 1.3, i * 0.7, i * 0.5);
     group.add(rock);
     // SOLID: a collision circle for this boulder so the player can't pass through.
     if (world.addSolid) world.addSolid(bx, bz, s * 0.62);
+  }
+  // A rocky arch/brow over the mouth: a few craggy boulders bridging the top of
+  // the south notch so the entrance reads as carved INTO the rock, not just a
+  // gap in a ring. Sit them above and behind the mouth disc; no collision (they
+  // overhang head height where the player can't stand).
+  for (let i = 0; i < 4; i++) {
+    const t = (i / 3) - 0.5;                       // -0.5 .. 0.5 across the brow
+    const bx = d.x + t * 5.2;
+    const bz = d.z + 2.4 - Math.abs(t) * 0.8;      // dip the ends down a touch
+    const by = world.heightAt(d.x, d.z) + 3.9 - Math.abs(t) * 1.1;
+    const s = 1.5 - Math.abs(t) * 0.5;
+    const rock = new THREE.Mesh(bgeos[(i + 2) % bgeos.length], i % 2 ? dark : body);
+    rock.scale.setScalar(s);
+    rock.position.set(bx, by, bz);
+    rock.rotation.set(i * 0.9, i * 1.7, i * 0.4);
+    group.add(rock);
   }
   // A capping back wall behind the mouth (north side) so the hill reads tall.
   const cap = new THREE.Mesh(new THREE.SphereGeometry(4.6, 10, 8), body);
@@ -277,6 +354,13 @@ function buildEntrance(group, world, d, m) {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.7, 0.95), dark);
       rail.position.set(d.x + side * 1.75, sy + 0.4, sz);
       group.add(rail);
+      // A small craggy chunk tucked against the rail to rough up the clean edge
+      // (cheap: shares the pooled boulder geometry, only on the rail steps).
+      const chunk = new THREE.Mesh(bgeos[(i + side + 5) % bgeos.length], dark);
+      chunk.scale.setScalar(0.45 + (i % 2) * 0.15);
+      chunk.position.set(d.x + side * 2.0, sy, sz);
+      chunk.rotation.set(i * 0.7, side * 1.1, i * 0.5);
+      group.add(chunk);
     }
   }
   // a dark pit at the bottom of the steps to sell the descent

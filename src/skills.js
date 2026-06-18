@@ -15,10 +15,23 @@ import { skillPower } from './data/professions.js';
 // effect — and shared across the pieces of one multi-piece effect — so colors
 // and opacity animate independently, then disposed in _retire / dispose.
 
-const MAX_EFFECTS = 24;        // hard cap on concurrent visual effects
+const MAX_EFFECTS = 40;        // hard cap on concurrent visual effects (layered
+                              // finishers spawn several pieces each, so give the
+                              // budget headroom — they're all lightweight meshes)
 const RING_LIFE = 0.45;        // seconds an area/heal ring expands and fades
 const BOLT_SPEED = 28;         // projectile travel speed (m/s)
 const SUMMON_POOF_LIFE = 0.5;  // seconds a summon poof lives
+
+// Blend two 0xRRGGBB ints by t (0=a, 1=b). Used to brighten an accent toward
+// white for the spark/mote layers of the big finishers.
+function mixHex(a, b, t) {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (g << 8) | bl;
+}
 
 // Per-kind tint fallback when a skill has no fxColor (older saves).
 const KIND_COLOR = {
@@ -54,6 +67,7 @@ const FX = {
   meteor: '_fxMeteor',
   frozen_orb: '_fxFrozenOrb',
   holy_nova: '_fxHolyNova',
+  wave: '_fxWave',                 // directional cone (vis/frigo/flam hur style)
   // Knight melee
   slash_arc: '_fxSlashArc',
   double_slash: '_fxDoubleSlash',
@@ -87,6 +101,8 @@ export class SkillSystem {
     this._spikeGeo = new THREE.ConeGeometry(0.12, 0.7, 5);   // thorn / ice spike
     this._orbGeo = new THREE.IcosahedronGeometry(0.32, 0);   // orb / meteor head
     this._shardGeo = new THREE.TetrahedronGeometry(0.16);    // ice shard
+    this._pillarGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true); // light column (open ends)
+    this._moteGeo = new THREE.SphereGeometry(0.1, 6, 5);     // spark mote (burst)
     // Bake the arrow cone so its tip points +Z; per-cast code then only sets the
     // position and lookAt()s it. Bake the spike so its base sits at y=0, so it
     // can rise from the ground by scaling y.
@@ -95,7 +111,7 @@ export class SkillSystem {
     this._geoms = [
       this._ringGeo, this._sphereGeo, this._thinRingGeo, this._discGeo,
       this._arrowGeo, this._bladeGeo, this._boltGeo, this._spikeGeo,
-      this._orbGeo, this._shardGeo,
+      this._orbGeo, this._shardGeo, this._pillarGeo, this._moteGeo,
     ];
     this._mats = []; // cloned materials we own and must dispose
   }
@@ -274,8 +290,12 @@ export class SkillSystem {
     const range = p.skill.range || 18;
     const target = this._aimPoint(p, range);
     const radius = p.radius || 1.5;
-    this._spawnBolt(this._launchPos(p), target, p.color, this._orbGeo, 0.6, BOLT_SPEED, () => {
+    this._spawnBolt(this._launchPos(p), target, p.color, this._orbGeo, 0.8, BOLT_SPEED, () => {
       this._damage(p.ctx, target, radius, p.amount);
+      // No longer "just a ball": the bolt bursts on impact with a ring + sparks.
+      this._spawnNova(target, radius, mixHex(p.color, 0xffffff, 0.4), 0.25, true);
+      this._spawnNovaRing(target, radius * 1.2, p.color, 0.32);
+      this._spawnBurst(target, radius * 0.9, p.color, 7, 0.4);
     });
     return true;
   }
@@ -308,8 +328,39 @@ export class SkillSystem {
     const radius = p.radius || 1.7;
     this._damage(p.ctx, strike, radius, p.amount);
     const top = strike.clone(); top.y += 0.05;
+    // A bolt down from the caster AND a second bolt straight down from the sky to
+    // the strike point — plus a bright column and a spark burst at the impact.
     this._spawnLightning(this._launchPos(p), top, p.color);
-    this._spawnNova(strike, radius, 0xffffff, 0.22, true); // strike flash
+    const sky = strike.clone(); sky.y += 7;
+    this._spawnLightning(sky, top, mixHex(p.color, 0xffffff, 0.5));
+    this._spawnPillar(strike, radius * 0.5, radius * 3.0, mixHex(p.color, 0xffffff, 0.6), 0.3);
+    this._spawnNova(strike, radius * 1.4, 0xffffff, 0.22, true); // strike flash
+    this._spawnBurst(strike, radius, mixHex(p.color, 0xffffff, 0.4), 8, 0.4);
+    return true;
+  }
+
+  // A directional WAVE (Tibia vis/frigo/flam hur): a cone of elemental energy
+  // that sweeps forward from the caster. Damage is applied at several points
+  // marching out along the aim direction, each in a small radius, so everything
+  // in the cone is hit. Visually: a row of expanding discs widening with range.
+  _fxWave(p) {
+    const range = p.skill.range || 9;
+    const steps = 4;                       // damage sample points along the cone
+    const start = p.casterPos.clone();
+    // Split the spell's power across the cone samples so a creature caught in two
+    // overlapping circles isn't hit for the full amount twice (a wave should equal
+    // one nuke spread over a line, not 2-4× it). Status (burn/poison/slow) is
+    // applied via combat.applyStatus on each hit but max()-merges, so it's fine.
+    const per = p.amount * 0.55;
+    for (let i = 1; i <= steps; i++) {
+      const d = (range / steps) * i;
+      const w = 1.4 + (d / range) * (p.radius || 3.2);   // cone widens with distance
+      const c = start.clone().addScaledVector(p.dir, d);
+      c.y = this._groundY(c.x, c.z) + 0.05;
+      this._damage(p.ctx, c, w, per);
+      this._spawnDisc(c, w, p.color, 0.4 + (steps - i) * 0.06);   // outer discs linger less
+      this._spawnNova(c, w * 0.8, mixHex(p.color, 0xffffff, 0.4), 0.22, true);
+    }
     return true;
   }
 
@@ -319,8 +370,11 @@ export class SkillSystem {
     const center = this._frontCenter(p);
     const radius = p.radius || 4.5;
     this._damage(p.ctx, center, radius, p.amount);
-    this._spawnNova(center, radius, 0xffffff, 0.28, true); // white-hot flash
-    this._spawnNovaRing(center, radius, p.color, 0.4);     // shock ring
+    this._spawnNova(center, radius, 0xffffff, 0.28, true);   // white-hot flash
+    this._spawnNovaRing(center, radius, p.color, 0.4);       // shock ring
+    this._spawnNovaRing(center, radius * 1.35, p.color, 0.55); // second, wider ring
+    this._spawnBurst(center, radius * 0.9, p.color, 12, 0.55); // flung debris/sparks
+    this._spawnPillar(center, radius * 0.35, radius * 1.4, 0xffffff, 0.4); // fireball column
     return true;
   }
 
@@ -329,7 +383,10 @@ export class SkillSystem {
     const radius = p.radius || 5;
     this._damage(p.ctx, center, radius, p.amount);
     this._spawnNovaRing(center, radius, p.color, 0.4);
-    this._spawnShards(center, radius, 6, p.color); // popping shards
+    this._spawnNovaRing(center, radius * 1.3, mixHex(p.color, 0xffffff, 0.4), 0.55);
+    this._spawnShards(center, radius, 9, p.color);          // more popping shards
+    this._spawnSpikes(center, radius * 0.8, p.color, () => {}); // ice spikes erupt
+    this._spawnBurst(center, radius * 0.7, mixHex(p.color, 0xffffff, 0.6), 8, 0.5);
     return true;
   }
 
@@ -363,8 +420,13 @@ export class SkillSystem {
     const radius = p.radius || 4;
     if (p.skill.kind === 'heal') this._heal(p.ctx, p.amount);
     else this._damage(p.ctx, center, radius, p.amount);
+    // A great descending column of holy light + twin rings + rising motes — the
+    // signature "from the heavens" finisher (Genesis, Sanctuary Blade, etc.).
+    this._spawnPillar(center, radius * 0.6, radius * 2.0, 0xffffff, 0.5);
     this._spawnNovaRing(center, radius, p.color, 0.4);
+    this._spawnNovaRing(center, radius * 1.4, p.color, 0.6);
     this._spawnDisc(center, radius * 0.7, p.color, 0.35, false); // golden flash
+    this._spawnBurst(center, radius * 0.8, mixHex(p.color, 0xffffff, 0.5), 12, 0.6);
     return true;
   }
 
@@ -427,7 +489,10 @@ export class SkillSystem {
     const sub = radius * 0.5;
     this._spawnRain(center, radius, n, p.color, this._orbGeo, (impact) => {
       this._damage(p.ctx, impact, sub, per);
-      this._spawnNova(impact, sub, p.color, 0.3, true); // crater burst
+      this._spawnNova(impact, sub, p.color, 0.3, true);          // crater flash
+      this._spawnNovaRing(impact, sub * 1.1, p.color, 0.4);      // shock ring
+      this._spawnBurst(impact, sub, 0xffae4a, 8, 0.5);           // ember spray
+      this._spawnPillar(impact, sub * 0.3, sub * 1.6, 0xffd27a, 0.35); // fire column
     }, 10, 0.12, 0.55); // higher drop, slower stagger, longer fall = meteor feel
     return true;
   }
@@ -459,8 +524,14 @@ export class SkillSystem {
 
   _fxHealNova(p) {
     const center = this._frontCenter(p);
+    const radius = p.radius || 6;
     this._heal(p.ctx, p.amount);
-    this._spawnDisc(center, p.radius || 6, p.color, 0.45, false);
+    // A radiant healing wave: ground disc + expanding ring + a soft column + motes
+    // rising like life returning — a big area heal looks like a blessing.
+    this._spawnDisc(center, radius, p.color, 0.45, false);
+    this._spawnNovaRing(center, radius, mixHex(p.color, 0xffffff, 0.5), 0.5);
+    this._spawnPillar(p.casterPos.clone(), radius * 0.4, radius * 0.9, mixHex(p.color, 0xffffff, 0.5), 0.55);
+    this._spawnBurst(center, radius * 0.7, mixHex(p.color, 0xffffff, 0.6), 10, 0.6);
     this._spawnSparkles(p.casterPos.clone(), p.color);
     return true;
   }
@@ -487,14 +558,23 @@ export class SkillSystem {
       pos.z += -Math.cos(a) * dist;
       pos.y = this._groundY(pos.x, pos.z);
       this._summon(p.ctx, family, pos, p.level);
+      // A summoning pillar + ring + poof so a pet arrives with presence, not a
+      // quiet pop.
+      this._spawnPillar(pos.clone(), 0.9, 3.2, mixHex(p.color, 0xffffff, 0.4), 0.5);
+      this._spawnNovaRing(pos.clone(), 2.2, p.color, 0.4);
+      this._spawnBurst(pos.clone(), 1.4, p.color, 8, 0.5);
       this._spawnPoof(pos.clone(), p.color);
     }
     return true;
   }
 
   _fxSelfBuff(p) {
-    // Buff tell only; no ctx damage. A single expanding ring + a few sparkles.
+    // Buff tell only; no ctx damage. A rising column of light around the caster +
+    // an expanding ring + sparkles so a buff reads as a real power-up.
+    const c = p.casterPos.clone(); c.y = this._groundY(c.x, c.z);
+    this._spawnPillar(c, 1.0, 2.8, p.color, 0.6);
     this._spawnNovaRing(this._frontCenter(p), p.radius || 2.5, p.color, 0.5);
+    this._spawnBurst(c, 1.2, mixHex(p.color, 0xffffff, 0.4), 7, 0.55);
     this._spawnSparkles(p.casterPos.clone(), p.color);
     return true;
   }
@@ -849,6 +929,52 @@ export class SkillSystem {
     this.effects.push({ kind: 'poof', mesh, t: 0, life: SUMMON_POOF_LIFE });
   }
 
+  // A towering COLUMN of light that shoots up from a point and fades — the single
+  // most "impressive" beat, used on the biggest area finishers and holy bursts.
+  // It flares wide briefly then thins as it rises, like a beam from the heavens.
+  _spawnPillar(center, radius, height, color, life = 0.55) {
+    if (this.effects.length >= MAX_EFFECTS) return;
+    const mesh = new THREE.Mesh(this._pillarGeo, this._mat(color, 0.6));
+    mesh.position.set(center.x, center.y + height / 2, center.z);
+    mesh.scale.set(radius, height, radius);
+    mesh.renderOrder = 7;
+    mesh.userData.baseY = center.y;   // keep the column's foot planted on the ground
+    this.scene.add(mesh);
+    this.effects.push({ kind: 'pillar', mesh, t: 0, life, radius, height, op: 0.6 });
+  }
+
+  // A radial BURST of bright motes flung outward and up, with gravity, then they
+  // fade. Adds sparks/debris to impacts so a hit reads as a real detonation, not
+  // a flat disc. n motes, each a tiny sphere.
+  _spawnBurst(center, radius, color, n = 10, life = 0.5) {
+    if (this.effects.length >= MAX_EFFECTS) return;
+    const group = new THREE.Group();
+    const mat = this._mat(color, 1);
+    const pieces = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+      const up = 0.6 + Math.random() * 1.2;
+      const sp = (0.6 + Math.random() * 0.8) * radius;
+      const m = new THREE.Mesh(this._moteGeo, mat);
+      m.position.copy(center);
+      m.scale.setScalar(0.7 + Math.random() * 0.8);
+      group.add(m);
+      pieces.push({ m, vx: Math.cos(a) * sp, vy: up * sp, vz: Math.sin(a) * sp });
+    }
+    group.renderOrder = 7;
+    this.scene.add(group);
+    this.effects.push({ kind: 'burst', mesh: group, t: 0, life, pieces, center: center.clone(), sharedMat: mat });
+  }
+
+  // Public: a small impact flash + spark burst at a world point, for the basic
+  // wand bolt / arrow so even a basic attack lands with a little pop instead of
+  // the projectile just blinking out. Cheap; safely no-ops over the FX budget.
+  impactBurst(pos, color, scale = 1) {
+    const c = pos.clone ? pos.clone() : new THREE.Vector3(pos.x, pos.y, pos.z);
+    this._spawnNova(c, 0.9 * scale, mixHex(color, 0xffffff, 0.4), 0.22, true);
+    this._spawnBurst(c, 0.8 * scale, color, 6, 0.35);
+  }
+
   // ================================================================ UPDATE
 
   // Advance and retire active effects. Disposes only the per-effect cloned
@@ -995,6 +1121,28 @@ export class SkillSystem {
         case 'poof': {
           e.mesh.scale.setScalar(0.5 + k * 2.2);
           e.mesh.material.opacity = 0.9 * (1 - k);
+          break;
+        }
+        case 'pillar': {
+          // Flare wide instantly, then narrow as it shoots up and fades, foot
+          // planted on the ground (baseY).
+          const flare = k < 0.25 ? (1 + (0.25 - k) * 2.2) : 1;       // brief widen
+          const grow = 0.3 + 1.05 * Math.min(1, k * 1.8);            // climb to full height
+          const h = e.height * grow;
+          const r = e.radius * flare * (1 - k * 0.35);
+          e.mesh.scale.set(r, h, r);
+          e.mesh.position.y = (e.mesh.userData.baseY || 0) + h / 2;
+          e.mesh.material.opacity = e.op * (1 - k * k);
+          break;
+        }
+        case 'burst': {
+          for (const pc of e.pieces) {
+            pc.vy -= 9 * dt;                                          // gravity
+            pc.m.position.x += pc.vx * dt;
+            pc.m.position.y += pc.vy * dt;
+            pc.m.position.z += pc.vz * dt;
+          }
+          e.sharedMat.opacity = 1 - k * k;
           break;
         }
         default: break;

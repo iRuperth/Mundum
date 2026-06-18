@@ -53,15 +53,25 @@ html, body {
   backdrop-filter: blur(4px);
 }
 
+/* Controls reminder. Moved out of the bottom-center (where it sat on top of the
+   hotbar) to the top, just under the clock row, and made unobtrusive: it wraps
+   instead of forcing one long line, and fades itself out a few seconds after the
+   game starts (see #hint.faded) so it isn't a permanent banner. */
 #hint {
-  position: absolute; bottom: calc(62px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
-  color: #fff; font-size: 13px; white-space: nowrap;
-  background: rgba(10, 16, 40, .55);
-  padding: 8px 16px; border-radius: 20px;
+  position: absolute; top: calc(52px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  max-width: min(680px, 92vw); text-align: center;
+  color: #e8eefc; font-size: 12px; line-height: 1.5;
+  background: rgba(10, 16, 40, .5);
+  padding: 6px 14px; border-radius: 14px;
   backdrop-filter: blur(4px);
+  transition: opacity .6s; opacity: .92;
 }
+#hint.faded { opacity: 0; }
 
 body.touch #hint { display: none; }
+/* On a narrow window the long hint would wrap into the right panel; keep it
+   clear of the ~188px panel so it never sits behind the minimap. */
+@media (max-width: 520px) { #hint { max-width: calc(100vw - 210px); font-size: 11px; } }
 
 /* Touch controls */
 #controls-ui { position: fixed; inset: 0; pointer-events: none; z-index: 6; }
@@ -89,11 +99,14 @@ body.touch #hint { display: none; }
   border: 2px solid rgba(255,255,255,.4);
   background: rgba(10, 16, 40, .45);
   color: #fff; font-size: 26px;
+  display: flex; align-items: center; justify-content: center;
   pointer-events: auto;
   cursor: pointer;
   backdrop-filter: blur(4px);
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
+.round-btn svg { display: block; }
 
 .round-btn:active { background: rgba(255,255,255,.3); }
 
@@ -103,6 +116,9 @@ body.touch #hint { display: none; }
 
 .touch-only { display: none; }
 body.touch .touch-only { display: block; }
+/* Round action buttons stay flex-centered (their SVG glyph needs centering)
+   even when .touch-only flips them to visible. */
+body.touch .round-btn.touch-only { display: flex; }
 body:not(.touch) #stick-base { display: none !important; }
 
 /* Character creation */
@@ -116,7 +132,7 @@ body:not(.touch) #stick-base { display: none !important; }
 #creation-card {
   pointer-events: auto;
   width: min(340px, 92vw);
-  max-height: 92vh;
+  max-height: 92svh;
   overflow-y: auto;
   background: rgba(10, 16, 40, .72);
   backdrop-filter: blur(10px);
@@ -177,7 +193,7 @@ body:not(.touch) #stick-base { display: none !important; }
 /* on narrow screens the card drops to the bottom so the character shows above */
 @media (max-width: 520px) {
   #creation { align-items: flex-end; justify-content: center; }
-  #creation-card { max-height: 52vh; padding: 12px 16px 8px; }
+  #creation-card { max-height: 52svh; padding: 12px 16px 8px; }
   #creation-card h1 { font-size: 22px; letter-spacing: 4px; }
   .subtitle { margin: 0 0 8px; font-size: 12px; }
   .field { margin-bottom: 8px; }
@@ -241,10 +257,38 @@ body:not(.touch) #stick-base { display: none !important; }
 /* Small Tibia-style square button box, pinned at the BOTTOM of the right panel
    (margin-top:auto pushes it down below the windows). A wrapping grid of little
    square buttons — replaces the big floating round buttons. */
+/* Collapsible/resizable button box. Header (toggle) is always visible; the grid
+   below shows when expanded. The grid is 2 columns and, by default, ~4 rows tall
+   with the rest reachable by mouse-wheel scroll; drag the bottom handle to resize. */
 #panel-btns {
-  margin-top: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-  padding: 6px; border-radius: 8px;
+  margin-top: auto; border-radius: 8px;
   background: rgba(12,16,34,.6); border: 1px solid rgba(255,255,255,.12);
+  display: flex; flex-direction: column; overflow: hidden;
+  --pb-btn: 38px;            /* one button cell (incl. gap) — drives the 4-row default */
+}
+#panel-btns-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 5px 8px; cursor: pointer; border: 0; border-radius: 7px;
+  background: transparent; color: #cdd6e6; font: 700 13px system-ui, sans-serif;
+}
+#panel-btns-toggle:hover { background: rgba(255,255,255,.10); }
+#panel-btns-toggle .pb-chevron { transition: transform .15s; }
+#panel-btns:not(.collapsed) #panel-btns-toggle .pb-chevron { transform: rotate(90deg); }
+#panel-btns-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px;
+  padding: 4px 6px 2px; overflow-y: auto; overscroll-behavior: contain;
+  /* Default visible height = 4 rows (set as inline style by JS / fallback here). */
+  max-height: calc(var(--pb-btn) * 4);
+}
+/* Minimized: only the header shows. */
+#panel-btns.collapsed #panel-btns-grid,
+#panel-btns.collapsed #panel-btns-resize { display: none; }
+/* Bottom resize handle (a grippy bar) — only when expanded. */
+#panel-btns-resize {
+  height: 9px; cursor: ns-resize; flex: 0 0 auto;
+  background:
+    linear-gradient(rgba(255,255,255,.18), rgba(255,255,255,.18)) center/22px 2px no-repeat;
+  border-top: 1px solid rgba(255,255,255,.10);
 }
 .panel-btn {
   aspect-ratio: 1; min-width: 0; border-radius: 6px; cursor: pointer;
@@ -305,19 +349,42 @@ body:not(.touch) #stick-base { display: none !important; }
   display: flex; flex-direction: column; gap: 8px;
   background: rgba(8,12,30,.55); backdrop-filter: blur(6px);
   transition: transform .25s; overflow-y: auto;
+  /* Let the panel scroll vertically on touch (html/body block all gestures). */
+  touch-action: pan-y; overscroll-behavior: contain;
 }
-.side-right { right: 0; border-left: 1px solid rgba(255,255,255,.12); }
-.side-left  { left: 0;  border-right: 1px solid rgba(255,255,255,.12); }
-.side-right.collapsed { transform: translateX(174px); }
-.side-left.collapsed  { transform: translateX(-174px); }
+/* Respect the notch in landscape (viewport-fit=cover): keep panels off the
+   rounded corner / camera cutout on iPhone held sideways. */
+.side-right { right: env(safe-area-inset-right); border-left: 1px solid rgba(255,255,255,.12); }
+.side-left  { left: env(safe-area-inset-left);  border-right: 1px solid rgba(255,255,255,.12); }
+/* Collapse by sliding the whole panel off-screen but leaving the toggle tab
+   poking out. On touch we leave a WIDER sliver (28px) so the collapsed panel is
+   easy to grab back with a thumb. */
+.side-right.collapsed { transform: translateX(calc(100% - 18px)); }
+.side-left.collapsed  { transform: translateX(calc(-100% + 18px)); }
+body.touch .side-right.collapsed { transform: translateX(calc(100% - 28px)); }
+body.touch .side-left.collapsed  { transform: translateX(calc(-100% + 28px)); }
 .windows { display: flex; flex-direction: column; gap: 8px; }
 #panel-toggle, #panel-toggle-left {
   position: absolute; top: 50%; transform: translateY(-50%);
-  width: 18px; height: 50px; border: none;
+  width: 18px; height: 50px; border: none; z-index: 8;
   background: rgba(8,12,30,.8); color: #fff; cursor: pointer; font-size: 14px;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 #panel-toggle      { left: -2px;  border-radius: 6px 0 0 6px; }
 #panel-toggle-left { right: -2px; border-radius: 0 6px 6px 0; }
+/* When EXPANDED the tab pokes out past the panel's inner edge (the -2px above).
+   When COLLAPSED the panel slides off-screen leaving only an 18px sliver of its
+   OUTER edge visible, so move the tab to that sliver and keep it fully on-screen
+   (right:0 / left:0). Without this the tab sat 2px past the viewport edge and got
+   clipped under body{overflow:hidden}, so the collapsed panel couldn't be
+   reopened — exactly the "panels disappear" bug. */
+.side-right.collapsed #panel-toggle      { left: 0; }
+.side-left.collapsed  #panel-toggle-left { right: 0; }
+/* Fatter, taller tab on touch so the collapsed panel is easy to grab back. The
+   collapsed sliver is 28px (see the touch collapse transform above), so the tab
+   fills it — a comfortable thumb target instead of the old 18px sliver. */
+body.touch #panel-toggle, body.touch #panel-toggle-left { width: 28px; height: 72px; font-size: 18px; }
+body.touch .side-right.collapsed #panel-toggle, body.touch .side-left.collapsed #panel-toggle-left { width: 28px; }
 /* Tibia-style window: a title bar + body, collapsible and (for bags) closable,
    reorderable by dragging the head. Lives stacked inside #side-panel. */
 .win {
@@ -356,25 +423,68 @@ body:not(.touch) #stick-base { display: none !important; }
 .win-collapse:hover { background: rgba(255,255,255,.18); }
 .win-body { padding: 7px; }
 .win.collapsed .win-body { display: none; }
+/* Resizable windows (everything but the map): a grip along the BOTTOM EDGE the
+   player drags up/down to size the window's height, Tibia-style. The width never
+   changes (columns stay fixed); the body scrolls so content never overflows. */
+.win.resizable { position: relative; }
+.win.resizable .win-body { overflow: auto; max-height: var(--win-body-h, none); }
+.win-resize {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 8px;
+  cursor: ns-resize; z-index: 2; touch-action: none;
+  /* Invisible by default (the grippy bar looked ugly) — the area still drags to
+     resize. A faint cyan line only appears on hover so it stays discoverable. */
+  background: transparent; transition: background .12s;
+}
+.win-resize:hover { background: linear-gradient(180deg, transparent 0 35%, rgba(126,201,255,.5) 42% 58%, transparent 65% 100%); }
+.win.resizing { outline: 1px dashed rgba(126,201,255,.8); user-select: none; }
+/* TOUCH: the window close/collapse buttons and the resize grip are too small for
+   a thumb at desktop sizes — enlarge them so a phone/tablet player can collapse,
+   close and resize windows exactly like on a computer. A faint always-visible
+   grip line on the resize edge makes it discoverable without a hover. */
+body.touch .win-collapse, body.touch .win-close { width: 30px; height: 30px; font-size: 15px; }
+body.touch .win-grip { font-size: 15px; padding: 0 4px; }
+body.touch .win-resize { height: 18px; background: linear-gradient(180deg, transparent 0 38%, rgba(126,201,255,.35) 45% 60%, transparent 66% 100%); }
+body.touch .win-head { padding-top: 4px; padding-bottom: 4px; }
 
 #windows { display: flex; flex-direction: column; gap: 8px; }
 
-#minimap-box { position: relative; }
-#minimap {
-  width: 100%; height: auto; aspect-ratio: 1; display: block;
-  border-radius: 8px; border: 1px solid rgba(255,255,255,.2); image-rendering: pixelated;
+/* Floating CIRCULAR minimap, pinned to the top-right — just clear of the right
+   side panel (≈188px) so the two never overlap. */
+#minimap-box {
+  position: fixed; z-index: 9;
+  /* Nudged down a touch so the #coords label (which floats 18px above the ring)
+     clears the top edge of the screen instead of being cut off. */
+  top: calc(24px + env(safe-area-inset-top)); right: 200px;
+  width: 132px; height: 132px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.28);
+  box-shadow: 0 4px 14px rgba(0,0,0,.5), inset 0 0 0 2px rgba(8,12,30,.6);
+  background: rgba(8,12,30,.5);
+  /* Labels sit just outside the ring (see #coords/#city-name), so don't clip. The
+     canvas is circular via its own border-radius. */
+  overflow: visible;
 }
-#minimap { cursor: pointer; }
+#minimap-box.hidden { display: none !important; }
+#minimap {
+  width: 100%; height: 100%; aspect-ratio: 1; display: block;
+  border-radius: 50%; cursor: pointer; image-rendering: pixelated;
+}
+/* The coords/city-name sit OUTSIDE the circle (coords above, city below) so they
+   never cover the N/S compass letters drawn on the map edge. overflow on the box
+   is visible-on-y for these via negative offsets. */
 #city-name {
-  position: absolute; bottom: 4px; left: 4px; right: 4px; text-align: center;
-  font-size: 11px; color: #fff; background: rgba(0,0,0,.5); border-radius: 6px;
-  padding: 2px 0;
+  position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; text-align: center;
+  font-size: 10px; color: #fff; background: rgba(0,0,0,.6); border-radius: 8px;
+  padding: 1px 8px; pointer-events: none;
 }
 #coords {
-  position: absolute; top: 4px; left: 4px; right: 4px; text-align: center;
-  font-size: 10px; font-variant-numeric: tabular-nums; color: #cfe8ff;
-  background: rgba(0,0,0,.5); border-radius: 6px; padding: 2px 0; pointer-events: none;
+  position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; text-align: center;
+  font-size: 9px; font-variant-numeric: tabular-nums; color: #cfe8ff;
+  background: rgba(0,0,0,.6); border-radius: 8px; padding: 1px 8px; pointer-events: none;
 }
+body.touch #minimap-box { right: 162px; }
+@media (max-width: 520px) { #minimap-box { width: 104px; height: 104px; right: 150px; } }
 
 /* Expanded map overlay (click the minimap to open) */
 #map-overlay {
@@ -422,7 +532,7 @@ body:not(.touch) #stick-base { display: none !important; }
   grid-template-areas:
     "amulet helmet bag"
     "weapon armor  shield"
-    ".      legs   extra"
+    "ring   legs   extra"
     ".      boots  .";
   gap: 5px;
   padding: 7px;
@@ -443,6 +553,7 @@ body:not(.touch) #stick-base { display: none !important; }
 .slot[data-slot="boots"]  { grid-area: boots; }
 .slot[data-slot="bag"]    { grid-area: bag; }
 .slot[data-slot="extra"]  { grid-area: extra; }
+.slot[data-slot="ring"]   { grid-area: ring; }
 
 .slot {
   width: 100%; height: 100%; cursor: pointer;
@@ -486,7 +597,7 @@ body:not(.touch) #stick-base { display: none !important; }
   box-shadow: inset 0 0 0 1px rgba(180,150,80,.2),
               inset 0 1px 4px rgba(0,0,0,.5);
 }
-#cap-icon { font-size: 13px; line-height: 1; }
+#cap-icon { font-size: 13px; line-height: 1; display: inline-flex; vertical-align: -2px; color: #d5c382; }
 #cap-text::before { content: "Cap: "; opacity: .7; font-weight: 600; }
 #cap-row .over, #cap-text.over { color: #ff6b5b; }
 
@@ -509,14 +620,39 @@ body:not(.touch) #stick-base { display: none !important; }
 }
 #tooltip.show { opacity: 1; }
 
+/* Skill-panel hover tip ("X% to next level"), shown after a ~1s hover. Anchors
+   above the row (translate up by its own height). */
+.sp-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  transform: translateY(-100%);
+  background: rgba(8,12,30,.96); color: #fff; font-size: 12px; line-height: 1.4;
+  padding: 5px 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,.22);
+  white-space: nowrap; opacity: 0; transition: opacity .12s;
+}
+.sp-tip.show { opacity: 1; }
+
 #context-card {
   position: fixed; z-index: 25; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(360px, 92vw); max-height: 80vh; overflow-y: auto;
+  width: min(360px, 92vw); max-height: 85svh; overflow-y: auto;
   background: rgba(8,12,30,.94); color: #fff;
   border: 1px solid rgba(255,255,255,.2); border-radius: 14px; padding: 16px;
   box-shadow: 0 14px 50px rgba(0,0,0,.5);
 }
-.ctx-head { font-size: 17px; font-weight: 800; margin-bottom: 8px; }
+.ctx-head { font-size: 17px; font-weight: 800; margin-bottom: 8px; padding-right: 26px; }
+/* Close X pinned top-right of any context dialog (shop, vendor, NPC chat, …). */
+.ctx-x {
+  position: absolute; top: 8px; right: 10px; width: 28px; height: 28px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 8px; cursor: pointer; font-size: 18px; line-height: 1; font-weight: 700;
+}
+.ctx-x:hover { background: rgba(255,80,80,.85); border-color: rgba(255,120,120,.9); }
+/* Per-item stat line under a shop/vendor row. */
+.shop-stats { font-size: 11px; opacity: .8; margin: 2px 0 0 26px; line-height: 1.35; }
+.shop-stats .st { margin-right: 8px; white-space: nowrap; }
+/* Market-stall item stats: the full Tibia-style detail block under each listing
+   so a buyer can judge an item before buying. */
+.market-item-stats { font-size: 11px; opacity: .78; margin: 2px 0 4px 26px; line-height: 1.4; }
 .ctx-sub, .ctx-gold { font-size: 12px; opacity: .85; margin-bottom: 10px; }
 .ctx-body { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
 .ctx-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -532,7 +668,20 @@ body:not(.touch) #stick-base { display: none !important; }
 }
 .shop-row span:first-child { flex: 1; }
 .shop-row .price { color: #f1c40f; }
+.shop-row .price-no { color: #e2685a; }   /* can't afford it */
 .shop-row button { padding: 5px 12px; border-radius: 7px; border: none; background: #2f86c9; color: #fff; cursor: pointer; }
+.shop-row button:disabled { background: #444b54; color: #8b95a0; cursor: not-allowed; opacity: .7; }
+
+/* Mount vendor + mounts panel rows: a richer card with name, description tag. */
+.mount-list { max-height: 56svh; overflow-y: auto; }
+.mount-row { align-items: flex-start; }
+.mount-row .mount-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.mount-row .mount-desc { font-size: 11px; opacity: .7; line-height: 1.35; }
+.mount-row .mount-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: #2ecc71; color: #06210f; font-weight: 700; }
+.mount-row .mount-tag.locked { background: #555c66; color: #c7ced6; font-weight: 600; }
+.mount-row.mount-active { border: 1px solid #2ecc71; background: rgba(46,204,113,.10); }
+.mount-row.mount-locked { opacity: .55; }
+.mount-row.mount-locked .mount-desc { font-style: italic; }
 .depot-cols { flex-direction: row; gap: 10px; }
 .depot-cols > div { flex: 1; }
 .col-h { font-size: 12px; font-weight: 700; opacity: .8; margin-bottom: 6px; }
@@ -543,9 +692,13 @@ body:not(.touch) #stick-base { display: none !important; }
 }
 
 #chat {
-  position: fixed; left: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 8;
-  width: min(320px, 70vw);
+  /* Sit to the RIGHT of the left side panel (≈188px) so the log/input never hide
+     behind it now that the left panel opens by default. */
+  position: fixed; left: 200px; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 8;
+  width: min(320px, 60vw);
 }
+body.touch #chat { left: 162px; }
+@media (max-width: 520px) { #chat { left: 152px; width: min(260px, 56vw); } }
 #chat-log {
   display: flex; flex-direction: column; gap: 2px; max-height: 130px; overflow: hidden;
   margin-bottom: 6px; pointer-events: none;
@@ -585,7 +738,21 @@ body:not(.touch) #stick-base { display: none !important; }
 .qobj { font-size: 11px; opacity: .85; margin-left: 4px; }
 .qobj.done { opacity: .55; text-decoration: line-through; }
 .shop-row.quest-ready { border: 1px solid #2ecc71; }
+.shop-row.quest-locked { border: 1px solid rgba(178,108,255,.45); opacity: .72; }
+.shop-row.quest-locked small { color: #c7a8ff; }
 .shop-row small { opacity: .7; font-size: 11px; }
+
+/* NPC rumors / tips: clickable questions that reveal a hint. */
+.npc-rumors { margin-top: 10px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 8px; }
+.npc-rumors-head { font-size: 11.5px; opacity: .8; margin-bottom: 6px; }
+.npc-rumor-chips { display: flex; flex-direction: column; gap: 4px; }
+.npc-rumor-chip { text-align: left; font-size: 11.5px; padding: 5px 8px; border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.05);
+  color: #d7e0ee; cursor: pointer; line-height: 1.35; }
+.npc-rumor-chip:hover { background: rgba(126,201,255,.18); border-color: #7ec9ff; color: #fff; }
+.npc-rumor-chip.active { border-color: #ffe27a; color: #ffe27a; }
+.npc-rumor-answer { margin-top: 7px; font-size: 12px; line-height: 1.5; font-style: italic;
+  color: #e8eef7; background: rgba(0,0,0,.25); border-radius: 7px; padding: 7px 9px; }
 
 body.touch .side-panel { width: 150px; }
 @media (max-width: 520px) {
@@ -600,9 +767,18 @@ body.touch .side-panel { width: 150px; }
 #crosshair::before, #crosshair::after {
   content: ''; position: absolute; background: rgba(255,255,255,.85);
   box-shadow: 0 0 2px rgba(0,0,0,.8);
+  transition: background .08s linear, box-shadow .08s linear;
 }
 #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
 #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+/* A locked target: the cross goes red so the player KNOWS the next hit will land.
+   A soft red glow + a faint ring make it pop without recolouring the creature. */
+#crosshair.on-target::before, #crosshair.on-target::after {
+  background: #ff3b3b;
+  box-shadow: 0 0 6px rgba(255,40,40,.95), 0 0 2px rgba(0,0,0,.7);
+}
+#crosshair.on-target { animation: crosshair-lock .18s ease-out; }
+@keyframes crosshair-lock { 0% { transform: translate(-50%, -50%) scale(1.45); } 100% { transform: translate(-50%, -50%) scale(1); } }
 body.touch #crosshair { display: none !important; }
 
 
@@ -618,7 +794,7 @@ body.touch #crosshair { display: none !important; }
 
 #auth-root .auth-card {
   width: min(360px, 94vw);
-  max-height: 94vh; overflow-y: auto;
+  max-height: 94svh; overflow-y: auto;
   background: rgba(10, 16, 40, .72);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,.18);
@@ -689,7 +865,7 @@ body.touch #crosshair { display: none !important; }
 /* ===== Full-viewport CREATE screen ====================================== */
 /* Edge-to-edge card filling the whole window, no page scroll. */
 #auth-root .auth-card-create {
-  width: 100vw; height: 100vh; max-height: 100vh;
+  width: 100vw; height: 100dvh; max-height: 100dvh;
   border-radius: 0; border: none; padding: 14px 18px 12px;
   display: flex; flex-direction: column; overflow: hidden;
   background: rgba(10, 16, 40, .82);
@@ -793,10 +969,12 @@ body.touch #crosshair { display: none !important; }
   #auth-root .auth-prof-desc { display: none; }
 }
 
-/* Floating backpack window (20-slot grid, Tibia style) */
+/* Floating backpack window (Tibia style): a fixed 4-column grid. The window only
+   resizes vertically (the resize grip), so columns stay at 4 and taller windows
+   just show more rows; the body scrolls when there are more than fit. */
 .bp-window {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-  max-height: 40vh; overflow-y: auto;
+  max-height: var(--win-body-h, 40svh); overflow-y: auto;
 }
 .bp-window .bp-cell { aspect-ratio: 1; font-size: 18px; }
 /* The context-card backpack (shops/depot reuse it) keeps the roomier 5-col grid. */
@@ -905,7 +1083,7 @@ body.touch #crosshair { display: none !important; }
 
 /* Hotbar assignment popup */
 .hb-menu {
-  position: fixed; z-index: 30; width: 170px; max-height: 60vh; overflow-y: auto;
+  position: fixed; z-index: 30; width: 170px; max-height: 60svh; overflow-y: auto;
   background: rgba(8,12,30,.96); border: 1px solid rgba(255,255,255,.2);
   border-radius: 10px; padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
 }
@@ -983,8 +1161,50 @@ body.touch #crosshair { display: none !important; }
 /* Character window: stats and skill tree (MapleStory style) */
 /* The Skills/Spells window content lives inside a side-panel .win now, so the
    card is fluid (no fixed width / overlay). Its body scrolls if tall. */
-.sp-wbody { max-height: 60vh; overflow-y: auto; }
+.sp-wbody { max-height: var(--win-body-h, 60svh); overflow-y: auto; }
 .sp-card { color: #fff; font-size: 13px; }
+
+/* ---- Quest Tracker panel ---- */
+.qt-wbody { max-height: var(--win-body-h, 62svh); overflow-y: auto; color: #fff; font-size: 12.5px; }
+.qt-empty { opacity: .7; font-size: 12px; padding: 8px 4px; line-height: 1.5; }
+.qt-card { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 9px; padding: 8px 9px; margin-bottom: 8px; }
+.qt-card.qt-ready { border-color: #2ecc71; background: rgba(46,204,113,.1); }
+.qt-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.qt-card-title { flex: 1; font-weight: 700; color: #ffe27a; font-size: 13px; }
+.qt-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  background: rgba(255,255,255,.12); white-space: nowrap; }
+.qt-badge-done { background: #2ecc71; color: #07210f; font-weight: 700; }
+.qt-where { font-size: 11.5px; opacity: .9; margin-bottom: 2px; }
+.qt-rumor { font-size: 11px; opacity: .62; line-height: 1.45; margin-bottom: 6px; font-style: italic; }
+.qt-gate { font-size: 11px; color: #c7a8ff; margin-bottom: 4px; }
+.qt-objs { display: flex; flex-direction: column; gap: 5px; }
+.qt-obj-top { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+.qt-obj.done .qt-obj-text { opacity: .5; text-decoration: line-through; }
+.qt-obj-count { opacity: .8; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.qt-bar { height: 5px; background: rgba(0,0,0,.35); border-radius: 3px; margin-top: 2px; overflow: hidden; }
+.qt-bar-fill { height: 100%; background: linear-gradient(90deg, #5dd6ff, #2ecc71); border-radius: 3px; transition: width .25s; }
+.qt-obj.done .qt-bar-fill { background: #2ecc71; }
+.qt-rewards { display: flex; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
+.qt-rew { font-size: 11px; background: rgba(255,255,255,.08); border-radius: 6px; padding: 1px 6px; }
+.qt-turnin { margin-top: 6px; font-size: 11.5px; color: #7bed6f; font-weight: 600; }
+.qt-arrow-toggle { display: flex; align-items: center; gap: 7px; font-size: 12px; opacity: .9;
+  padding: 4px 2px 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.08); cursor: pointer; }
+.qt-arrow-toggle input { accent-color: #ffd24d; cursor: pointer; }
+/* A freshly chained quest flashes gold for a few seconds. */
+.qt-card.qt-hot { border-color: #ffd24d; box-shadow: 0 0 0 1px #ffd24d, 0 0 12px rgba(255,210,77,.4); animation: qt-pulse 1.2s ease-in-out 3; }
+@keyframes qt-pulse { 0%,100% { box-shadow: 0 0 0 1px #ffd24d, 0 0 6px rgba(255,210,77,.3); } 50% { box-shadow: 0 0 0 1px #ffd24d, 0 0 16px rgba(255,210,77,.6); } }
+
+/* On-screen quest WAYPOINT ARROW — a screen-edge pointer toward the destination. */
+#quest-arrow { position: fixed; z-index: 6; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 6px; pointer-events: none;
+  background: rgba(10,14,30,.7); border: 1px solid rgba(255,210,77,.6); border-radius: 20px;
+  padding: 4px 10px 4px 6px; backdrop-filter: blur(3px); white-space: nowrap; }
+#quest-arrow .qa-arrow { display: inline-block; color: #ffd24d; font-size: 18px; line-height: 1;
+  transform-origin: 50% 50%; }
+#quest-arrow .qa-label { color: #fff; font-size: 12px; font-weight: 600; text-shadow: 0 1px 2px #000; }
+#quest-arrow.qa-turnin { border-color: #7bed6f; }
+#quest-arrow.qa-turnin .qa-arrow { color: #7bed6f; }
 .sp-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .sp-tab { flex: 1; padding: 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 8px;
   background: rgba(255,255,255,.08); color: #fff; cursor: pointer; font-size: 13px; }
@@ -997,10 +1217,26 @@ body.touch #crosshair { display: none !important; }
 }
 .sp-stat-name { width: 96px; font-weight: 800; }
 .sp-stat-val { width: 34px; font-size: 16px; text-align: right; }
-/* Tibia-style use-skill progress bar to the next level. */
-.sp-skillbar { flex: 1; height: 8px; border-radius: 5px; background: rgba(255,255,255,.12); overflow: hidden; }
-.sp-skillbar-fill { display: block; height: 100%; background: linear-gradient(90deg,#5dd6ff,#3a9bdd); }
+/* The use-skill rows are tighter than generic stat rows: the narrow side panel
+   (~158px usable) can't fit a 96px name + 34px value + a visible bar on one line,
+   so name/value shrink and gaps tighten to leave the Tibia fill bar real width. */
+.sp-stat-row { flex-wrap: wrap; gap: 4px 8px; }
+.sp-stat-row .sp-stat-name { width: auto; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-stat-row .sp-stat-val { width: auto; min-width: 22px; }
+/* Tibia-style use-skill progress bar to the next level. It takes the FULL row
+   width on its own line so it's always visible no matter how narrow the panel. */
+.sp-skillbar { flex: 1 0 100%; height: 7px; border-radius: 5px;
+  background: rgba(255,255,255,.12); overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); }
+.sp-skillbar-fill { display: block; height: 100%;
+  background: linear-gradient(90deg,#5dd6ff,#3a9bdd); transition: width .25s ease; }
 .sp-skill.locked { opacity: .5; }
+/* A learned, castable spell row can be dragged onto the hotbar. The grab cursor
+   and a faint dotted handle on hover signal it. */
+.sp-skill.sp-skill-drag { cursor: grab; }
+.sp-skill.sp-skill-drag:hover { border-color: rgba(126,201,255,.5); }
+.sp-skill.sp-skill-drag.drag-source { opacity: .4; }
 /* Per-tier section: a labelled group of skills with its own SP pool. */
 .sp-tier { margin-bottom: 12px; padding: 6px 0 2px; border-top: 1px solid rgba(255,255,255,.1); }
 .sp-tier:first-child { border-top: none; }
@@ -1031,7 +1267,7 @@ body.touch #crosshair { display: none !important; }
   backdrop-filter: blur(3px);
 }
 .wk-card {
-  width: min(640px, 96vw); height: min(88vh, 900px); display: flex; flex-direction: column;
+  width: min(640px, 96vw); height: min(88svh, 900px); display: flex; flex-direction: column;
   background: rgba(10,16,40,.98); color: #fff;
   border: 1px solid rgba(255,255,255,.2); border-radius: 16px; padding: 14px;
   box-shadow: 0 18px 60px rgba(0,0,0,.6); overflow: hidden;
@@ -1090,6 +1326,25 @@ body.touch #crosshair { display: none !important; }
 .wk-chip-btn:hover { background: rgba(126,201,255,.25); border-color: #7ec9ff; }
 .wk-dim { opacity: .6; }
 
+/* Wiki: materials & trophies grid. */
+.wk-matgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.wk-matcard { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 8px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); }
+.wk-matico { font-size: 18px; width: 22px; text-align: center; }
+.wk-matname { flex: 1; font-size: 13px; }
+.wk-matval { font-size: 12px; opacity: .8; white-space: nowrap; }
+
+/* Wiki: quest objectives & rewards, and mechanics paragraphs. */
+.wk-qobj-h { font-size: 12px; font-weight: 700; opacity: .8; margin-top: 6px; }
+.wk-qobj { margin: 2px 0 4px 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.wk-qobj li { margin: 1px 0; }
+/* Quest gate badges + required-key line in the wiki Quests tab. */
+.wk-gate-night { background: rgba(120,90,200,.3); border: 1px solid rgba(160,130,255,.5); }
+.wk-gate-day { background: rgba(220,170,60,.25); border: 1px solid rgba(255,210,90,.5); }
+.wk-gate-key { background: rgba(255,210,90,.2); border: 1px solid rgba(255,210,90,.45); }
+.wk-q-needs { font-size: 12.5px; margin: 4px 0; color: #ffe27a; }
+.wk-mech { font-size: 13px; line-height: 1.55; opacity: .9; margin: 2px 0; }
+
 .wk-controls { display: flex; gap: 8px; margin-bottom: 8px; }
 .wk-search { flex: 1; padding: 9px 11px; border-radius: 9px; border: 1px solid rgba(255,255,255,.2);
   background: rgba(0,0,0,.3); color: #fff; font-size: 13px; }
@@ -1135,6 +1390,46 @@ body.touch #crosshair { display: none !important; }
 .wk-item-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .wk-drops { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; align-items: center; }
 .wk-drops-l { font-size: 11px; opacity: .65; }
+
+/* Clickable catalog cards open the item "sources" panel. */
+.wk-hint { font-size: 12px; opacity: .8; margin: 0 0 8px; }
+.wk-item-click { cursor: pointer; transition: background .12s, border-color .12s; }
+.wk-item-click:hover { background: rgba(126,201,255,.12); border-color: #7ec9ff; }
+
+/* Item sources / "where does it come from" detail panel. */
+.wk-back { cursor: pointer; background: rgba(255,255,255,.08); color: #fff;
+  border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 6px 12px;
+  font-size: 12.5px; font-weight: 600; margin-bottom: 12px; }
+.wk-back:hover { background: rgba(126,201,255,.2); border-color: #7ec9ff; }
+.wk-id-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.wk-id-ico .wk-ico { width: 56px; height: 56px; }
+.wk-id-info { display: flex; flex-direction: column; gap: 3px; }
+.wk-id-title { display: flex; align-items: center; gap: 8px; font-size: 18px; }
+.wk-id-sub { font-size: 12px; opacity: .7; }
+.wk-src-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 4px; }
+.wk-src-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px; padding: 6px 9px; }
+.wk-src-cr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wk-src-zone { font-size: 11.5px; opacity: .7; }
+.wk-src-chance { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; }
+.wk-src-kills { font-size: 10.5px; }
+.wk-src-empty, .wk-shop-note { font-size: 12.5px; margin: 4px 0 0; }
+
+/* Rarity WORD colouring: green (common) -> red (extremely rare). Used in the
+   "dropped by" rows and the catalog teaser chips. */
+.wk-rar { font-weight: 800; font-size: 12.5px; }
+.wk-rar-0 { color: #7bed6f; }   /* común */
+.wk-rar-1 { color: #b6e36a; }   /* bastante común */
+.wk-rar-2 { color: #ffe27a; }   /* poco común */
+.wk-rar-3 { color: #ffb04d; }   /* raro */
+.wk-rar-4 { color: #ff7a4d; }   /* muy raro */
+.wk-rar-5 { color: #ff4d4d; }   /* extremadamente raro */
+
+/* Secret (GM-only) banner on an item's source panel. */
+.wk-secret { margin: 8px 0; padding: 12px 14px; border-radius: 10px;
+  background: linear-gradient(180deg, rgba(155,48,255,.18), rgba(40,12,60,.25));
+  border: 1px solid rgba(178,108,255,.5); font-size: 13.5px; line-height: 1.5; }
 
 .wk-swatch { display: inline-block; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); vertical-align: middle; }
 /* Real pixel-art icon inside wiki lists. */
@@ -1187,7 +1482,7 @@ body.touch #crosshair { display: none !important; }
   display: flex; align-items: center; justify-content: center;
 }
 .gm-modal {
-  width: min(380px, 92vw); max-height: 78vh; display: flex; flex-direction: column;
+  width: min(380px, 92vw); max-height: 78svh; display: flex; flex-direction: column;
   background: rgba(14,18,38,.97); border: 1px solid rgba(244,196,48,.5);
   border-radius: 12px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.6);
 }
@@ -1243,3 +1538,255 @@ body.touch #crosshair { display: none !important; }
 .ban-emoji { font-size: 64px; }
 .ban-title { font-size: 26px; font-weight: 800; margin-top: 12px; color: #ff6b6b; }
 .ban-sub { font-size: 15px; opacity: .8; margin-top: 8px; }
+
+/* ============================================================ KEYBOARD PANEL */
+/* MapleStory-style on-screen keyboard: drag powers/potions onto keys. */
+#kb-overlay {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(4,7,18,.82); backdrop-filter: blur(4px);
+}
+#kb-overlay.hidden { display: none !important; }
+#kb-window {
+  width: min(880px, 96vw); max-height: 92svh; overflow: auto;
+  background: rgba(14,18,38,.96); border: 1px solid rgba(255,255,255,.16);
+  border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.6); padding: 14px 16px 18px;
+  color: #e7ecf2;
+}
+.kb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.kb-title { flex: 1; font-size: 16px; font-weight: 800; }
+.kb-close {
+  border: none; background: rgba(255,255,255,.1); color: #fff; width: 30px; height: 30px;
+  border-radius: 8px; cursor: pointer; font-size: 15px;
+}
+.kb-close:hover { background: #a33; }
+.kb-hint { font-size: 12px; color: #9fb0c2; margin-bottom: 12px; }
+.kb-body { display: flex; gap: 16px; flex-wrap: wrap; }
+.kb-keys { flex: 1 1 460px; display: flex; flex-direction: column; gap: 6px; }
+.kb-row { display: flex; gap: 6px; }
+.kb-key {
+  flex: 1 1 0; min-width: 38px; height: 48px; border-radius: 8px; position: relative;
+  background: linear-gradient(180deg, rgba(34,42,72,.95), rgba(16,20,40,.95));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 2px 3px rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.kb-key-label { position: absolute; top: 3px; left: 5px; font-size: 9px; color: #9fb0c2; font-weight: 700; }
+.kb-key-ico { font-size: 22px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.kb-key-ico svg { width: 26px; height: 26px; }
+.kb-key.kb-bound { border-color: rgba(126,201,255,.7); background: linear-gradient(180deg, rgba(40,64,104,.95), rgba(20,30,58,.95)); }
+/* Reserved = a game action sits here. Dimmed a little, with a small action label
+   so the keyboard reads as the live control map. */
+.kb-key.kb-reserved { opacity: .62; cursor: default; background: rgba(60,40,30,.55); }
+.kb-key.kb-reserved .kb-key-label { color: #ffae8a; }
+.kb-actlabel { font-size: 8px; line-height: 1.05; color: #ffcf9a; font-weight: 700; text-align: center;
+  padding: 0 2px; word-break: break-word; }
+.kb-key.kb-drop { outline: 2px solid #7ec9ff; box-shadow: 0 0 10px rgba(126,201,255,.6); }
+
+/* Game-action rebind list ("click an action, then press a key"). */
+.kb-actions { flex: 1 1 200px; min-width: 180px; background: rgba(8,12,28,.6);
+  border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 10px; max-height: 360px; overflow-y: auto; }
+.kb-actions-title { font-size: 12px; font-weight: 800; color: #ffe27a; margin-bottom: 8px; }
+.kb-actions-list { display: flex; flex-direction: column; gap: 5px; }
+.kb-actrow { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 9px; border-radius: 8px; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.12); cursor: pointer; color: #fff; font-size: 13px; text-align: left; }
+.kb-actrow:hover { border-color: rgba(126,201,255,.5); }
+.kb-actrow.armed { border-color: #ffd27a; box-shadow: 0 0 8px rgba(255,210,122,.5); }
+.kb-actname { opacity: .9; }
+.kb-actkey { font-weight: 800; color: #7ec9ff; background: rgba(0,0,0,.3); border-radius: 6px;
+  padding: 2px 8px; min-width: 34px; text-align: center; }
+.kb-actrow.armed .kb-actkey { color: #ffd27a; }
+
+/* The drag source tray */
+.kb-tray { flex: 1 1 220px; min-width: 200px; background: rgba(8,12,28,.6); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px; padding: 10px; max-height: 360px; overflow-y: auto; }
+.kb-tray-title { font-size: 12px; font-weight: 800; color: #ffe27a; margin-bottom: 8px; }
+.kb-tray-items { display: flex; flex-direction: column; gap: 5px; }
+.kb-tray-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+  cursor: grab; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+.kb-tray-item:hover { border-color: rgba(126,201,255,.5); }
+.kb-tray-item.dragging { opacity: .4; }
+.kb-tray-ico { width: 26px; height: 26px; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+.kb-tray-ico svg { width: 24px; height: 24px; }
+.kb-tray-name { font-size: 13px; }
+.kb-tray-empty { font-size: 12px; color: #9fb0c2; padding: 6px; }
+/* The icon that follows the cursor while dragging onto a key */
+.kb-ghost { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center; font-size: 26px; filter: drop-shadow(0 3px 4px rgba(0,0,0,.6)); }
+.kb-ghost svg { width: 32px; height: 32px; }
+@media (max-width: 520px) {
+  .kb-key { height: 40px; min-width: 28px; }
+  .kb-key-ico { font-size: 18px; }
+}
+
+/* ===================== HOUSES ===================== */
+
+/* Centred "Press E to…" hint shown near a house door or showcase slot. */
+#interact-hint {
+  position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%);
+  z-index: 14; pointer-events: none; white-space: nowrap;
+  color: #fff; font-weight: 700; font-size: 14px;
+  background: rgba(20,16,12,.78); border: 1px solid rgba(255,210,120,.4);
+  padding: 7px 16px; border-radius: 20px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.5);
+}
+#interact-hint.hidden { display: none; }
+
+/* A management section inside the context card (colours, light, bans, sell). */
+.house-sec { margin: 6px 0 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
+.house-colhead { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 8px 0 4px; }
+.house-colrow { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.house-collabel { font-size: 12px; min-width: 70px; opacity: .9; }
+.house-swatches { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+.house-swatch {
+  width: 18px; height: 18px; border-radius: 5px; border: 2px solid rgba(255,255,255,.18);
+  padding: 0; cursor: pointer;
+}
+.house-swatch.on { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
+
+/* Warm / cold light toggle. */
+.house-lightrow { display: flex; gap: 8px; }
+.house-lightbtn {
+  flex: 1; padding: 8px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 13px;
+  background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.18);
+}
+.house-lightbtn.on { background: #c87f2e; border-color: #ffd9a0; }
+
+/* Ban list. */
+.house-closerow { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 8px; cursor: pointer; }
+.house-banadd { display: flex; gap: 6px; margin-bottom: 8px; }
+.house-baninput { flex: 1; padding: 6px 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,.18); background: rgba(0,0,0,.3); color: #fff; }
+.house-banadd button { padding: 6px 10px; border-radius: 7px; border: none; background: #2f86c9; color: #fff; cursor: pointer; }
+.house-banrow { display: flex; align-items: center; justify-content: space-between; font-size: 12px; background: rgba(255,80,80,.12); padding: 4px 8px; border-radius: 6px; margin-bottom: 4px; }
+.house-banrow button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 6px; width: 22px; height: 22px; cursor: pointer; }
+
+.house-sellbtn { width: 100%; padding: 9px; border-radius: 8px; border: none; cursor: pointer; background: #a14b2e; color: #fff; font-weight: 700; }
+
+/* The price input used for per-item / per-wall sale. */
+.house-priceinput { width: 100%; padding: 8px 10px; margin: 4px 0 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(0,0,0,.3); color: #fff; font-size: 15px; }
+
+/* Backpack pick grid (choose an item to hang on a wall). */
+.house-pickgrid { display: grid; grid-template-columns: repeat(auto-fill, 44px); gap: 6px; margin-bottom: 10px; max-height: 220px; overflow-y: auto; }
+.house-pickcell {
+  width: 44px; height: 44px; padding: 0; cursor: pointer; border-radius: 8px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  display: flex; align-items: center; justify-content: center;
+}
+.house-pickcell:hover { background: rgba(255,255,255,.14); }
+.house-pickcell .ico, .house-pickcell svg { width: 34px; height: 34px; }
+.house-empty { opacity: .6; font-size: 12px; padding: 8px; }
+
+/* Facade display: two front-wall slots in the house-manage panel. */
+.house-facadehint { opacity: .6; font-size: 11px; margin: 2px 0 6px; }
+.house-facaderow { display: flex; gap: 8px; }
+.house-facadecell {
+  width: 52px; height: 52px; padding: 0; cursor: pointer; border-radius: 8px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  display: flex; align-items: center; justify-content: center;
+}
+.house-facadecell:hover { background: rgba(255,255,255,.14); }
+.house-facadecell .ico { font-size: 22px; opacity: .8; }
+.house-facadecell .ico svg, .house-facadecell svg { width: 40px; height: 40px; }
+
+/* Showcase wall grid in the UI: white frame = not for sale, orange = for sale —
+   mirrors the 3D plaque frame convention. */
+.house-wall-grid { display: grid; gap: 5px; margin-bottom: 10px; }
+.house-cell {
+  aspect-ratio: 1; border-radius: 7px; background: rgba(0,0,0,.25);
+  border: 2px solid #f2efe6;   /* white frame: not for sale */
+  display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative;
+}
+.house-cell.for-sale { border-color: #ff8c1a; box-shadow: 0 0 6px rgba(255,140,26,.5); }  /* orange frame */
+.house-cell.empty { border-style: dashed; border-color: rgba(255,255,255,.2); }
+.house-cell .ico, .house-cell svg { width: 80%; height: 80%; }
+.house-cell .house-price { position: absolute; bottom: 1px; right: 3px; font-size: 9px; color: #ffb454; font-weight: 700; }
+
+/* ============================================================================
+   MOBILE & TABLET RESPONSIVE PASS
+   Touch buttons (interact/chat), item-card primary action, safe-area insets in
+   landscape, small-phone (≤400px) and tablet tiers, landscape-phone handling,
+   and bumped touch targets so a phone/tablet player can do everything a desktop
+   player can. (Joystick/look, panel collapse, window drag+resize already work.)
+   ============================================================================ */
+
+/* --- New on-screen touch buttons: INTERACT (above the attack cluster) + CHAT
+       (top of the bottom-left, clear of the joystick spawn zone). Both share the
+       round-btn look. round-btn-sm is a slightly smaller variant. --- */
+#btn-interact {
+  right: calc(28px + env(safe-area-inset-right));
+  bottom: calc(160px + env(safe-area-inset-bottom));
+  width: 56px; height: 56px; font-size: 24px;
+}
+#btn-chat {
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  width: 44px; height: 44px;
+}
+.round-btn-sm { width: 44px; height: 44px; }
+#btn-interact.hidden, #btn-chat.hidden { display: none; }
+
+/* The item-card primary action (Equip / Use / Open) — make it pop vs Drop. */
+.ctx-actions .ctx-primary {
+  background: linear-gradient(180deg, #2f7fd6, #1f5fae);
+  border-color: #5dd6ff; color: #fff; font-weight: 700;
+}
+
+/* Right/left notch safe-area for the bottom-right controls (landscape iPhone). */
+#btn-attack { right: calc(100px + env(safe-area-inset-right)); }
+#btn-jump, #btn-bag { right: calc(28px + env(safe-area-inset-right)); }
+
+/* iOS won't zoom a focused input that's ≥16px. */
+#chat-input { font-size: 16px; }
+
+/* ---- Bigger touch targets (≥44px is the comfortable thumb minimum) ---- */
+body.touch .ctx-x { width: 40px; height: 40px; font-size: 20px; }
+body.touch .wk-x { width: 40px; height: 40px; }
+body.touch .gm-modal-close { width: 36px; height: 36px; }
+body.touch .kb-close { width: 38px; height: 38px; }
+body.touch .house-swatch { width: 30px; height: 30px; }
+body.touch .sp-plus { width: 36px; height: 36px; }
+body.touch #bigmap-recenter, body.touch #bigmap-close { width: 44px; height: 44px; }
+body.touch .panel-btn { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+body.touch .ctx-actions button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; min-height: 40px; }
+@media (max-width: 520px) {
+  .swatch, #auth-root .auth-swatch { width: 32px; height: 32px; }
+}
+
+/* ---- SMALL PHONE (≤400px): narrow the panel and clear the minimap/chat so they
+        don't collide, and shrink the hotbar so 10 slots fit a 320–360px screen. -- */
+@media (max-width: 400px) {
+  body.touch .side-panel { width: 132px; }
+  #minimap-box, body.touch #minimap-box { width: 92px; height: 92px; right: calc(140px + env(safe-area-inset-right)); }
+  body.touch #chat { left: calc(8px + env(safe-area-inset-left)); width: min(200px, 58vw);
+                     bottom: calc(116px + env(safe-area-inset-bottom)); }
+  .hb-slot { width: 30px; height: 30px; font-size: 15px; }
+  #hotbar { gap: 2px; }
+  #hotbar-wrap { max-width: 100vw; }
+}
+
+/* ---- TABLET (521–1024px, touch): roomier panel + minimap than phone, but still
+        a touch layout (the ≤520 phone shrink rules don't reach here). ---- */
+@media (min-width: 521px) and (max-width: 1024px) and (pointer: coarse) {
+  body.touch .side-panel, .side-panel { width: 172px; }
+  body.touch #minimap-box { right: calc(190px + env(safe-area-inset-right)); }
+}
+
+/* ---- LANDSCAPE PHONE (short height): tall overlays/cards must fit; lift the
+        controls so they don't stack off the bottom of a ~340px-tall screen. ---- */
+@media (orientation: landscape) and (max-height: 480px) {
+  #creation-card, #auth-root .auth-card { max-height: 94svh; }
+  .wk-card { height: 94svh; }
+  #context-card { max-height: 94svh; }
+  #kb-window, .gm-modal { max-height: 94svh; }
+  #quest-box { max-height: 62svh; top: 64px; }
+  .side-panel { width: 156px; font-size: 12px; }
+  #btn-attack { bottom: calc(86px + env(safe-area-inset-bottom)); right: calc(92px + env(safe-area-inset-right)); width: 60px; height: 60px; }
+  #btn-jump  { bottom: calc(140px + env(safe-area-inset-bottom)); }
+  #btn-bag   { bottom: calc(86px + env(safe-area-inset-bottom)); }
+  #btn-interact { bottom: calc(196px + env(safe-area-inset-bottom)); }
+  .hb-slot { width: 34px; height: 34px; }
+}

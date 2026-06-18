@@ -2,16 +2,48 @@
 // date so every player gets the same one without a server.
 
 // Total accumulated xp required to reach a level. Level 1 starts at 0.
-// A gentle exponent keeps two kids of different levels roughly in sync.
+// This is the OFFICIAL Tibia experience curve — XP = (50/3)(L³ − 6L² + 17L − 12)
+// — so leveling follows Tibia's roadmap exactly: gentle at the very start, then
+// steeply cubic (e.g. reaching level 20 costs ~98,800 total, like Tibia). Kept
+// in step with the creatures' fixed per-level exp so the kills-per-level pace
+// matches Tibia rather than the old, far flatter curve.
 export function xpForLevel(level) {
   if (level <= 1) return 0;
-  return Math.floor(45 * Math.pow(level - 1, 2.35));
+  const L = level;
+  return Math.round((50 / 3) * (L * L * L - 6 * L * L + 17 * L - 12));
 }
 
 export function levelForXp(xp) {
   let lvl = 1;
   while (xp >= xpForLevel(lvl + 1)) lvl++;
   return lvl;
+}
+
+// --- Level-banded XP boost ------------------------------------------------
+// Early levels grant BONUS experience so a new player races up, with the bonus
+// tapering as they grow (Tibia's own "low-level rapid xp" idea, but stronger and
+// explicit). The multiplier is chosen by the PLAYER'S level when a kill is
+// scored. Flip LEVEL_XP_SCALE_ENABLED to false to play on plain ×1 exp.
+export const LEVEL_XP_SCALE_ENABLED = true;
+
+// [maxLevel, multiplier] bands, low → high. The last band (×1) covers everything
+// above it. A player of level L uses the first band whose maxLevel ≥ L.
+const LEVEL_XP_BANDS = [
+  [10, 10],   // levels 1–10  : ×10
+  [20, 9],    // levels 11–20 : ×9
+  [50, 8],    // levels 21–50 : ×8
+  [70, 6],    // levels 51–70 : ×6
+  [100, 5],   // levels 71–100: ×5
+  [120, 4],   // levels 101–120: ×4
+  [Infinity, 1], // level 121+  : ×1 (normal)
+];
+
+// The XP multiplier for a player at `level`. Returns 1 when the scale is off.
+export function levelXpMultiplier(level) {
+  if (!LEVEL_XP_SCALE_ENABLED) return 1;
+  const L = Math.max(1, level || 1);
+  for (const [maxLv, mul] of LEVEL_XP_BANDS) if (L <= maxLv) return mul;
+  return 1;
 }
 
 export function xpProgress(xp) {

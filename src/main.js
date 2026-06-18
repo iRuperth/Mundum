@@ -5,30 +5,39 @@ import { Controls } from './controls.js';
 import { DayNight } from './daynight.js';
 import { HAIR_STYLES } from './character.js';
 import { initLang, getLang, setLang, applyStaticDom, t } from './i18n.js';
-import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor } from './inventory.js';
+import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor, instanceFromQuiver } from './inventory.js';
 import { EquipVisuals, buildWeaponMesh, buildArrowMesh } from './equipVisuals.js';
-import { wandColorForLevel } from './data/items.js';
+import { wandColorForLevel, coinLootLabel, mmCoins } from './data/items.js';
 import { CombatSystem } from './combat.js';
 import { PlayerStatus } from './statusEffects.js';
-import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, CITIES } from './cities.js';
+import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, CITIES, houseLotAt } from './cities.js';
+import { HouseStore, HouseInterior, housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, buildForSaleSign, buildExteriorSkin, buildFacadeDisplay, FACADE_SLOTS } from './house.js';
+import { MarketStore, MarketDisplay, STALL_CAP } from './market.js';
 import { Minimap } from './minimap.js';
 import { UI } from './ui.js';
 import { Peers } from './peers.js';
+import { Bots } from './bots.js';
+import { ZONES } from './zones.js';
 import { Net } from './net.js';
 import { buildGMPanel, showAnnounceBanner } from './gm.js';
 import { audio } from './audio.js';
-import { makeStarterWand, getContainer, getWeapon, getArmor, rollWeaponInstance, instanceFromPotion, potionRestore } from './data/items.js';
-import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt } from './data/professions.js';
+import { makeStarterWand, getContainer, getWeapon, getArmor, getQuiver, rollWeaponInstance, instanceFromPotion, potionRestore, getLight, instanceFromLight } from './data/items.js';
+import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt, spellDamageMul, isDamageSkill } from './data/professions.js';
 import { SkillSystem } from './skills.js';
 import { skillIcon } from './skillIcons.js';
 import { Hotbar } from './hotbar.js';
+import { KeyboardPanel } from './keyboardPanel.js';
 import { CharacterStats, weaponTypeToSkill } from './characterStats.js';
 import { SkillPanel } from './skillPanel.js';
+import { QuestTracker } from './questTracker.js';
+import { currentWaypoint, questGiverInfo } from './questGuide.js';
 import { Wiki } from './wiki.js';
-import { xpProgress, eventMultipliers } from './progression.js';
+import { xpProgress, eventMultipliers, levelXpMultiplier } from './progression.js';
 import { QuestLog } from './questlog.js';
 import { WorldNpcs } from './worldNpcs.js';
-import { questsForNpc } from './data/quests.js';
+import { questsForNpc, getQuest } from './data/quests.js';
+import { MountSystem } from './mountSystem.js';
+import { getMount, shopMounts, MOUNTS, mountForQuest } from './data/mounts.js';
 import { buildDungeonEntrances, dungeonEntranceAt, dungeonDescendAt, dungeonOutsideAt, chestAt, openChestVisual, update as updateDungeons, DUNGEONS } from './dungeons.js';
 import { getCaveFloor } from './caves.js';
 import { buildRuins, ruinAt } from './ruins.js';
@@ -42,8 +51,41 @@ const SEED = 20260612;
 const PROFILE_KEY = 'mundum.profile';
 const SAVE_KEY = 'mundum.save';
 
-const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+// Build marker — confirms in the console that the LATEST code is loaded (not a
+// stale browser cache). If you don't see this line after a reload, the browser
+// served an old cached module: open DevTools → Network → tick "Disable cache".
+console.log('%cMundum build 2026-06-18 · free market stalls + house facade display', 'color:#5dd6ff;font-weight:700');
+
+// Whether the device looks touch-driven. The player can override this with a
+// manual "mobile mode" toggle (stored in localStorage) so the on-screen
+// joystick/buttons can be forced ON in a desktop browser — handy for testing
+// the phone layout — or OFF on a touch laptop. `auto` follows the device.
+const TOUCH_MODE_KEY = 'mundum.touchMode';
+// Auto-detect touch as the PRIMARY input: a coarse pointer (finger) with no fine
+// pointer (mouse/trackpad). This keeps phones/tablets in touch mode but does NOT
+// false-positive a touchscreen LAPTOP/2-in-1 the user drives with a mouse. The
+// `ontouchstart` fallback only kicks in when matchMedia can't decide.
+const deviceIsTouch = (() => {
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const fine = matchMedia('(pointer: fine)').matches;
+  if (coarse && !fine) return true;            // phone / tablet: finger only
+  if (!coarse && fine) return false;           // desktop / laptop with a mouse
+  // Ambiguous (hybrid reports both, or neither): fall back to touch support, but
+  // a real mousemove later flips the auto pref to desktop (see below).
+  return ('ontouchstart' in window) && !matchMedia('(any-pointer: fine)').matches;
+})();
+function touchModePref() {
+  try { return localStorage.getItem(TOUCH_MODE_KEY) || 'auto'; } catch (_) { return 'auto'; }
+}
+function resolveTouch() {
+  const pref = touchModePref();
+  return pref === 'on' ? true : pref === 'off' ? false : deviceIsTouch;
+}
+// `isTouch` is the effective mode at load (drives renderer quality + FOV); the
+// live value used by controls is kept in sync by applyTouchMode() below.
+let isTouch = resolveTouch();
 if (isTouch) document.body.classList.add('touch');
+let hintFadeTimer = 0;   // fades the on-screen controls reminder after a while
 
 const canvas = document.getElementById('game');
 
@@ -193,7 +235,9 @@ function setViewModel(item, level) {
 // hidden whenever a bow or a two-handed weapon is held (the off-hand is taken).
 function setViewShield(shieldItem, weaponItem) {
   if (viewShieldMesh) { viewShield.remove(viewShieldMesh); viewShieldMesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); viewShieldMesh = null; }
-  const blocked = !shieldItem
+  // Only draw the off-hand SHIELD viewmodel for an actual shield (a dual-wielded
+  // off-hand weapon is shown by the third-person model, not here).
+  const blocked = !shieldItem || shieldItem.type !== 'shield'
     || (weaponItem && (weaponItem.type === 'bow' || weaponItem.twoHanded));
   if (blocked) return;
   const color = shieldItem.color || 0x8a5a2b;
@@ -305,6 +349,25 @@ placeCities(world);
 const citiesBuild = buildCities(scene, world);
 const cityProps = citiesBuild.props;
 const citiesGroup = citiesBuild.group;
+// Temple healing auras (tagged in cities.js), collected once so the tick can
+// gently pulse them without traversing the whole city group every frame.
+const templeAuras = [];
+citiesGroup.traverse((o) => { if (o.userData && o.userData.templeAura) templeAuras.push(o); });
+// Buyable house lots in the round towns (cities.js owns the shells; house.js
+// owns ownership, interiors and decoration). The player owns at most one.
+const houseLots = citiesBuild.houses || [];
+const houseLotById = new Map(houseLots.map((h) => [h.id, h]));
+const houseStore = new HouseStore();
+// Free market: cache each city's stall ring (positions built in cities.js) so
+// interacting can find the stall the player stands at. The stall CONTENTS live
+// in Supabase (auth.js market_* methods), never here.
+const marketStore = new MarketStore();
+for (const p of cityProps) marketStore.setLayout(p.city.id, p.stalls || []);
+// The 3D goods shown ON the stall counters (rebuilt per city as listings load).
+const marketDisplay = new MarketDisplay(scene, marketStore);
+// Ground height per city, so stall goods stand at the right level.
+const cityGroundY = new Map();
+for (const c of CITIES) cityGroundY.set(c.id, c.groundY != null ? c.groundY : world.heightAt(c.x, c.z));
 const dungeonBuild = buildDungeonEntrances(scene, world);
 const dungeonEntrances = dungeonBuild.entrances;
 const dungeonChests = dungeonBuild.chests;
@@ -332,6 +395,9 @@ profile.gm = isGMName(profile.name);
 // at the origin (the capital); a player can change it at a Town Hall (residency).
 let homeCity = CITIES.find((c) => c.id === profile.homeCityId) || nearestCity(0, 0);
 const player = new Player(scene, world, profile);
+// The inventory must exist before applyVocationStats()/recomputeCombatStats()
+// run during boot (they read equipped-ring bonuses via inv.skillBonus/equipBonus).
+const inv = new Inventory();
 spawnInCity(homeCity);
 world.update(player.pos.x, player.pos.z, true);
 
@@ -369,6 +435,14 @@ player.speedBonus = 0;
 player.gold = 0;
 player.alive = true;
 player.gm = !!profile.gm; // 5x speed + creature invisibility (read in player.js/combat.js)
+player.mounted = false;   // true while riding (drives the seated pose)
+player.mountBonus = 0;    // +0.3 while mounted (read in player.js)
+player.mountJumpMul = 1;  // ×1.3 jump while mounted
+player.mountRiderY = 0;   // saddle lift for the rider while mounted
+
+// Rideable mounts: +30% speed / +30% jump. Owns the active beast model and the
+// owned-mount set; persisted with the character (serialize/load below).
+const mounts = new MountSystem(scene, player);
 
 // Recompute maxHp/maxMana from the current vocation + level. When `fill` is
 // true (creation, level-up, respawn) HP/mana are topped to full; otherwise the
@@ -410,11 +484,25 @@ function recomputeCombatStats() {
     ? passiveCombatBonuses(player.profession, charStats.skillLevels)
     : { attackSpeedMul: 1, rangeMul: 1, damageMul: 1 };
   player.attackRange = (player.baseAttackRange || 0) * passives.rangeMul;
-  player.damageMul = (player.baseDamageMul || 1) * passives.damageMul;
+  // Keep the buff-free product so updateBuffs() can fold the live attack buff
+  // (Battle Focus / Battle Roar / Iron Avatar) into player.damageMul each frame —
+  // that's what makes a knight's buff raise its PHYSICAL (basic) attack, not just
+  // its spells.
+  player.passiveDamageMul = (player.baseDamageMul || 1) * passives.damageMul;
+  // Re-fold any live attack buff. activeBuffs may be in its temporal-dead-zone
+  // during the very first setup call, so reach for it defensively; applyBuff()
+  // and updateBuffs() keep player.damageMul in sync once buffs actually exist.
+  let buffDmg = 1;
+  try { buffDmg = buffMods().damageMul; } catch (_) { buffDmg = 1; }
+  player.damageMul = player.passiveDamageMul * buffDmg;
   const weaponType = player.weapon ? player.weapon.type : null;
   // The Tibia use-skill for the held weapon drives basic-attack damage + miss
   // (read by CombatSystem.attack).
-  player.weaponSkill = charStats ? charStats.weaponSkillLevel(weaponType) : 10;
+  player.weaponSkill = (charStats ? charStats.weaponSkillLevel(weaponType) : 10)
+    + (inv.skillBonus ? inv.skillBonus(weaponTypeToSkill(weaponType)) : 0);   // ring/amulet skill rings
+  // Archer quiver: its flat arrowAtk adds to the bow's effective attack
+  // (combat.js _resolveHit folds player.arrowAtk in for bows only).
+  player.arrowAtk = (weaponType === 'bow' && inv.equipBonus) ? inv.equipBonus('arrowAtk') : 0;
   const base = weaponAttackSpeed(weaponType);
   const dexMul = charStats ? charStats.attackSpeedMul() : 1;
   const speedMul = dexMul * passives.attackSpeedMul;
@@ -427,15 +515,33 @@ function recomputeCombatStats() {
 // so the cadence stays accurate regardless of frame rate.
 let regenHpAcc = 0;
 let regenManaAcc = 0;
+// How much faster HP regenerates while at a temple, and how close counts as "at"
+// the temple (a hair beyond the ~4.2m marble floor so standing on it always
+// qualifies). The temple's green aura signals this healing zone in the world.
+const TEMPLE_HEAL_MUL = 10;
+const TEMPLE_HEAL_RADIUS = 6;
+// True when the player is standing on/by a city temple (surface only). Temples
+// sit at the city centre (cityProps[].temple).
+function atTemple() {
+  if (place !== 'surface') return false;
+  for (const p of cityProps) {
+    const tp = p.temple;
+    if (tp && Math.hypot(tp.x - player.pos.x, tp.z - player.pos.z) < TEMPLE_HEAL_RADIUS) return true;
+  }
+  return false;
+}
 function regenVitals(dt) {
   if (!player.alive) return;
   const r = professionRegen(player.profession);
   regenHpAcc += dt;
   regenManaAcc += dt;
-  if (player.hp < player.maxHp && regenHpAcc >= r.hp.every) {
-    const ticks = Math.floor(regenHpAcc / r.hp.every);
+  // Standing on/by a temple heals HP 10× faster — a clear sanctuary that mends
+  // you while you rest there.
+  const hpEvery = atTemple() ? r.hp.every / TEMPLE_HEAL_MUL : r.hp.every;
+  if (player.hp < player.maxHp && regenHpAcc >= hpEvery) {
+    const ticks = Math.floor(regenHpAcc / hpEvery);
     player.hp = Math.min(player.maxHp, player.hp + ticks * r.hp.amount);
-    regenHpAcc -= ticks * r.hp.every;
+    regenHpAcc -= ticks * hpEvery;
   } else if (player.hp >= player.maxHp) {
     regenHpAcc = 0;
   }
@@ -446,15 +552,31 @@ function regenVitals(dt) {
   } else if (player.mana >= player.maxMana) {
     regenManaAcc = 0;
   }
+  // Ring/amulet flat per-second regen (Life Ring +N hp/s, Mana Ring +N mana/s).
+  const hpr = inv.equipBonus ? inv.equipBonus('hpRegenPerSec') : 0;
+  const mpr = inv.equipBonus ? inv.equipBonus('manaRegenPerSec') : 0;
+  if (hpr || mpr) {
+    ringRegenAcc += dt;
+    if (ringRegenAcc >= 1) {
+      const secs = Math.floor(ringRegenAcc);
+      if (hpr && player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + secs * hpr);
+      if (mpr && player.mana < player.maxMana) player.mana = Math.min(player.maxMana, player.mana + secs * mpr);
+      ringRegenAcc -= secs;
+    }
+  } else { ringRegenAcc = 0; }
 }
+let ringRegenAcc = 0;
 
-const inv = new Inventory();
 const depot = new DepotStore();
 const questLog = new QuestLog();
 const worldNpcs = new WorldNpcs(scene, world, citiesBuild.interiors);
 let equipVisuals = new EquipVisuals(player.char);
 const peers = new Peers(scene, world);
+const bots = new Bots(scene, world);
 const net = new Net();
+// Last-known level per connected peer, so we can fire bot congratulations only
+// when a real player's level actually rises (see net.onPeerUpdate).
+const peerLevels = new Map();
 let currentDungeon = null;
 let lastRuinId = null;           // the surface ruin the player was last inside
 let firstQuestHintShown = false;
@@ -475,15 +597,54 @@ let lastFullWarn = -99;    // game clock of the last "can't carry" toast (thrott
 
 let firstPerson = true;
 let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
+let _evClock = 0, _evCached = null;   // cached daily event multipliers (refreshed every 30s)
+const _crosshairEl = document.getElementById('crosshair');   // cached (looked up every frame otherwise)
+
+// Quest waypoint arrow on/off (persisted). Toggled from the Quests panel.
+const QUEST_ARROW_KEY = 'mundum.questArrow';
+let showQuestArrow = (() => { try { return localStorage.getItem(QUEST_ARROW_KEY) !== 'off'; } catch (_) { return true; } })();
+function toggleQuestArrow() {
+  showQuestArrow = !showQuestArrow;
+  try { localStorage.setItem(QUEST_ARROW_KEY, showQuestArrow ? 'on' : 'off'); } catch (_) {}
+  if (!showQuestArrow) { const a = document.getElementById('quest-arrow'); if (a) a.classList.add('hidden'); }
+  return showQuestArrow;
+}
+// Cached current waypoint (recomputed on quest progress, not every frame).
+let _waypoint = null;
+let _questPoi = null;   // the live minimap POI object for the quest destination
+function refreshWaypoint() {
+  _waypoint = currentWaypoint(questLog, questLog.activeList());
+  // Mirror it onto the minimap as a single quest POI. Remove the old one, add the
+  // new (minimap.pois is the array the minimap renders each frame).
+  if (typeof minimap !== 'undefined' && minimap && Array.isArray(minimap.pois)) {
+    if (_questPoi) { const i = minimap.pois.indexOf(_questPoi); if (i >= 0) minimap.pois.splice(i, 1); }
+    _questPoi = null;
+    if (_waypoint) { _questPoi = { x: _waypoint.x, z: _waypoint.z, icon: '📍' }; minimap.pois.push(_questPoi); }
+  }
+}
 let introHold = 0;  // seconds the front view is held before it can swing behind
 let state = 'create';
 let authCharacterId = null;  // the Supabase character row id for cloud saves
+let _cloudSavedAt = 0;       // updated_at (ms) of the cloud row applied this session
 
 // Cave/underground state (see caves.js). 'surface' or 'cave'.
 // NB: named `place`, not `location`, so it never shadows window.location.
+// 'surface', 'cave', or 'house' (inside an instanced house interior).
 let place = 'surface';
 let activeCave = null;
 let caveTransitioning = false;
+// House interior state. activeHouse is the HouseInterior the player is inside;
+// houseReturn is where they spawn back outside; activeHouseLot is its lot.
+let activeHouse = null;
+let activeHouseLot = null;
+let houseTransitioning = false;
+const houseReturn = new THREE.Vector3();
+let _camBeforeHouse = false;   // outdoor camera mode, restored when leaving a house
+// Remote visitors' house snapshots: lotId -> { owner, colors, light, walls, bans }.
+const visitedHouses = new Map();
+// The exterior dressing (for-sale signs + the owner's recolour skin) added to the
+// surface, rebuilt whenever ownership / colours change.
+let houseExteriorGroup = null;
 // Which floor the cave minimap is currently SHOWING (lets you peek up/down a
 // floor on the map without moving). Reset to the player's floor on each descent.
 let caveViewFloor = 0;
@@ -508,17 +669,20 @@ let lightPhase = 0;
 // the player can use. Called whenever the inventory changes (recompute()).
 function recomputeLight() {
   torchItem = null; gemItem = null;
-  const scan = (it) => {
-    if (!it || it.kind !== 'light') return;
-    if (it.passive) { if (!gemItem || (it.intensity || 0) > (gemItem.intensity || 0)) gemItem = it; }
-    else if (!torchItem) torchItem = it;
+  // The TORCH only lights when it sits in the fire (extra) equip slot — its own
+  // pocket. A torch buried in the backpack gives NO light (you have to put it in
+  // the antorcha slot to use it). Passive glow GEMS still shine from anywhere in
+  // the bag, since they're an always-on aura, not a held light source.
+  const e = inv.equip.extra;
+  if (e && e.kind === 'light' && !e.passive) torchItem = e;
+  const scanGem = (it) => {
+    if (!it || it.kind !== 'light' || !it.passive) return;
+    if (!gemItem || (it.intensity || 0) > (gemItem.intensity || 0)) gemItem = it;
   };
-  // The torch in the fire (extra) equip slot is the one you light, so check it
-  // first. Gems carried anywhere in the bag still contribute their passive aura.
-  scan(inv.equip.extra);
+  scanGem(e);
   for (const it of inv.backpack) {
-    scan(it);
-    if (it && it.contents) for (const inner of it.contents) scan(inner);
+    scanGem(it);
+    if (it && it.contents) for (const inner of it.contents) scanGem(inner);
   }
   if (!torchItem) torchOn = false; // can't keep a torch lit you no longer carry
 }
@@ -565,6 +729,8 @@ const ui = {
   btnRange: document.getElementById('btn-range'),
   btnAttack: document.getElementById('btn-attack'),
   btnBag: document.getElementById('btn-bag'),
+  btnInteract: document.getElementById('btn-interact'),
+  btnChat: document.getElementById('btn-chat'),
   creation: document.getElementById('creation'),
   nameInput: document.getElementById('name-input'),
   swatchRows: document.getElementById('swatch-rows'),
@@ -572,6 +738,7 @@ const ui = {
   clockIcon: document.getElementById('clock-icon'),
   clockTime: document.getElementById('clock-time'),
   hudEvent: document.getElementById('hud-event'),
+  interactHint: document.getElementById('interact-hint'),
 };
 
 const panelRefs = {
@@ -596,7 +763,7 @@ const panelRefs = {
 const gameUI = new UI(panelRefs, inv, depot, {
   equip: (i) => doEquip(i),
   unequip: (slot) => doUnequip(slot),
-  dropItem: (i, bagIndex) => doDropItem(i, bagIndex),
+  dropItem: (i, bagIndex, count) => doDropItem(i, bagIndex, count),
   usePotion: (i) => doUsePotion(i),
   toggleTorch: () => toggleTorch(),
   moveIntoBag: (from, bag) => { inv.moveIntoBag(from, bag); recompute(); },
@@ -613,7 +780,13 @@ const gameUI = new UI(panelRefs, inv, depot, {
   },
   assignHotbar: (item) => assignPotionToHotbar(item),
   assignDraggedToSlot: (slotIndex, item) => hotbar.assignItem(slotIndex, item),
+  // Drop a spell dragged from the Spells window onto a hotbar slot.
+  assignSpellToSlot: (slotIndex, spell) => {
+    hotbar.setSlot(slotIndex, { ...spell, skillKind: spell.kind, kind: 'skill' });
+    audio.sfx.click?.();
+  },
   convertCoin: (id) => { const ok = inv.convertCoin(id); if (ok) { audio.sfx.pickup(); recompute(); } return ok; },
+  convertCoinDown: (id) => { const ok = inv.convertCoinDown(id); if (ok) { audio.sfx.pickup(); recompute(); } return ok; },
   buy: (def, refresh, price) => doBuy(def, refresh, price),
   sell: (i, npc, refresh) => doSell(i, npc, refresh),
   depositItem: (city, i) => {
@@ -628,6 +801,14 @@ const gameUI = new UI(panelRefs, inv, depot, {
     if (item && inv.addToBackpack(item, player.level) !== 'ok') depot.deposit(city, item);
     recompute();
   },
+  // --- House hooks (display-only showcase items; selling moved to the market) ---
+  houseStore: () => houseStore,
+  houseHangItem: (wallId, index, bpIndex) => houseHangItem(wallId, index, bpIndex),
+  houseTakeItem: (wallId, index) => houseTakeItem(wallId, index),
+  // --- Free-market hooks (place item, take it back, buy from a stall) ---
+  marketPlace: (stall, bpIndex, price) => marketPlace(stall, bpIndex, price),
+  marketTake: (listingId, stall) => marketTake(listingId, stall),
+  marketBuy: (listingId, item, price, stall) => marketBuy(listingId, item, price, stall),
 });
 
 const minimapCanvas = document.getElementById('minimap');
@@ -660,6 +841,12 @@ const minimap = new Minimap(minimapCanvas, world, document.getElementById('city-
 
 // Tap the minimap to open the full-screen map; tap the backdrop or ✕ to close.
 minimapCanvas.addEventListener('click', () => minimap.toggle(true));
+// Mouse wheel over the corner minimap zooms it (down = out, up = in), so you can
+// pull back for the lay of the land or zoom in to read a city's streets/houses.
+minimapCanvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  minimap.zoomCorner(e.deltaY > 0 ? 1.15 : 0.87);
+}, { passive: false });
 document.getElementById('bigmap-close').addEventListener('click', () => minimap.toggle(false));
 mapOverlay.addEventListener('click', (e) => { if (e.target === mapOverlay) minimap.toggle(false); });
 // Unified Escape handler: close whichever overlay is open (most-recent intent
@@ -668,7 +855,8 @@ addEventListener('keydown', (e) => {
   if (e.code !== 'Escape' || controls.chatting) return;
   if (typeof skillPanel !== 'undefined' && skillPanel && skillPanel.isOpen) { skillPanel.close(); return; }
   if (typeof wiki !== 'undefined' && wiki && wiki.isOpen) { wiki.close(); return; }
-  if (gameUI && gameUI.closeAllWindows && gameUI.closeAllWindows()) return;  // open bags
+  // Backpack/bag windows are intentionally NOT closed by Escape — they stay open
+  // (close them with their own ✕). Only overlays/panels below are Escape-closable.
   if (minimap.expanded) { minimap.toggle(false); return; }
 });
 // M toggles the full-screen map (open if closed, close if open).
@@ -725,11 +913,31 @@ const hotbar = new Hotbar(document.getElementById('hotbar'), {
   },
 });
 
+// MapleStory-style on-screen KEYBOARD: drag skills/potions onto any key, then
+// press that key to use it. Shares the same options + activation as the hotbar.
+const activateEntry = (entry) => {
+  if (!entry) return;
+  if (entry.kind === 'skill') castSkill(entry);
+  else if (entry.kind === 'potion') useHotbarPotion(entry);
+  else if (entry.kind === 'light') toggleTorch();
+};
 const controls = new Controls(canvas, ui, {
   onToggleCamera: () => { firstPerson = !firstPerson; introCam = 0; },
-  onHotbarKey: (digit) => { if (state === 'play' && player.alive) hotbar.activateKey(digit); },
+  onHotbarKeyCode: (code) => {
+    if (state !== 'play' || !player.alive) return;
+    // A custom Keyboard-panel bind wins; else fall back to the number-row hotbar.
+    if (keyboardPanel.handleKey(code)) return;
+    hotbar.handleKey(code);
+  },
   onLockChange: (locked) => {
     ui.hint.classList.toggle('hidden', locked);
+    // Freeing the mouse re-shows the reminder (and restarts its fade); grabbing
+    // it again just hides it.
+    if (!locked) {
+      ui.hint.classList.remove('faded');
+      clearTimeout(hintFadeTimer);
+      hintFadeTimer = setTimeout(() => ui.hint.classList.add('faded'), 9000);
+    }
     document.getElementById('crosshair').classList.toggle('hidden', !locked || state !== 'play');
   },
   onToggleBag: () => {
@@ -739,8 +947,64 @@ const controls = new Controls(canvas, ui, {
     else { gameUI.openBackpack('main'); if (document.pointerLockElement) document.exitPointerLock(); }
   },
   onToggleRange: () => toggleRangeRing(),
+  onToggleMount: () => toggleMount(),
   onChat: () => openChat(),
+  // Tab / M frees or re-grabs the mouse (desktop only — touch never locks).
+  onToggleMouse: () => {
+    if (isTouch) return;
+    if (document.pointerLockElement) document.exitPointerLock();
+    else if (state === 'play') lockPointer();
+  },
 });
+
+// Built after `controls` so the keyboard panel shares its keymap (the rebindable
+// game-action keys). onHotbarKeyCode (above) references keyboardPanel lazily.
+const keyboardPanel = new KeyboardPanel({
+  getOptions: () => hotbarOptions(),
+  activate: (entry) => activateEntry(entry),
+  onChange: () => { saveLocal(); saveToAccount(); },
+  keymap: controls.keymap,
+});
+
+// Apply the effective touch mode (auto/on/off) live: flips the body.touch class
+// the CSS keys off of, keeps controls.isTouch in sync so input routing matches,
+// and tidies the crosshair / pointer lock so switching never leaves a stuck
+// pointer lock or an orphaned joystick on screen.
+function applyTouchMode() {
+  isTouch = resolveTouch();
+  document.body.classList.toggle('touch', isTouch);
+  controls.setTouch(isTouch);
+  // Keep the camera's field of view matched to the mode (touch uses a slightly
+  // wider 70°) so a runtime toggle doesn't leave the view at the load-time value.
+  const fov = isTouch ? 70 : 75;
+  if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  const btn = document.getElementById('btn-touch');
+  if (btn) btn.classList.toggle('active', isTouch);
+  if (isTouch) {
+    // Touch never uses pointer lock — release it so the camera-look drag works.
+    if (document.pointerLockElement) document.exitPointerLock();
+    ui.hint.classList.add('hidden');
+  }
+  // Show the crosshair while playing whenever we're aiming: in touch mode, or on
+  // desktop once the pointer is locked.
+  const showCrosshair = (isTouch || document.pointerLockElement != null) && state === 'play';
+  document.getElementById('crosshair').classList.toggle('hidden', !showCrosshair);
+}
+function cycleTouchMode() {
+  // Cycle auto → on → off → auto so a quick tap forces the layout and another
+  // restores device default.
+  const next = { auto: 'on', on: 'off', off: 'auto' };
+  const pref = next[touchModePref()] || 'auto';
+  try { localStorage.setItem(TOUCH_MODE_KEY, pref); } catch (_) { /* storage blocked; session-only */ }
+  applyTouchMode();
+  gameUI.toast?.(pref === 'on' ? t('touchOn') : pref === 'off' ? t('touchOff') : t('touchAuto'));
+}
+{
+  const btnTouch = document.getElementById('btn-touch');
+  if (btnTouch) btnTouch.addEventListener('click', (e) => { e.stopPropagation(); cycleTouchMode(); });
+  // Reflect the saved preference (and its active highlight) on load.
+  applyTouchMode();
+}
 
 // Burn / poison / slow afflicting the player. Damage-over-time drains HP through
 // this hook and shows a coloured floating number; the slow is read in the loop.
@@ -764,13 +1028,17 @@ const combat = new CombatSystem(scene, world, {
     // Shielding (Tibia use-skill) blocks part of the blow — but only when you
     // actually carry a shield (a two-handed weapon means no shield, no block and
     // no training). Defensive buffs reduce damage further.
-    const shield = inv.equip && inv.equip.shield;
+    // A shield can sit in EITHER hand now, so look in both hand slots for it.
+    const shield = inv.equip && ((inv.equip.shield && inv.equip.shield.type === 'shield' && inv.equip.shield)
+      || (inv.equip.weapon && inv.equip.weapon.type === 'shield' && inv.equip.weapon));
     const twoHanded = player.weapon && player.weapon.twoHanded;
     let dmgIn = dmg;
     if (shield && !twoHanded && charStats) {
       const shieldSkill = charStats.useSkill('shielding');
       const def = shield.defense || 0;
-      const block = shieldSkill * def * 0.015 + def * 0.1;
+      // Re-tuned for the compressed shield defense scale (<=41): keeps a shield a
+      // ~20-35% mitigator without granting full immunity.
+      const block = shieldSkill * def * 0.02 + def * 0.25;
       dmgIn = Math.max(0, dmgIn - block);
       // Taking a hit while shielded trains Shielding.
       maybeAdvanceSkill(charStats.trainSkill('shielding', 1), 'shielding');
@@ -781,8 +1049,12 @@ const combat = new CombatSystem(scene, world, {
     shakeAmount = Math.min(0.5, shakeAmount + 0.18);
     if (player.hp <= 0) onPlayerDeath();
   },
-  onCreatureHit: (c, dmg, mult, miss) => {
+  onCreatureHit: (c, dmg, mult, miss, statusKind) => {
     if (miss) { spawnFloatText(c.pos, 'MISS', '#cfd3d8'); return; }
+    // DOT ticks (burn/poison from a sorcerer's fire or druid's venom) float in
+    // their element colour and don't replay the hit sound — they're a bleed.
+    if (statusKind === 'burn') { spawnFloatText(c.pos, `${dmg}`, '#ff7a33'); return; }
+    if (statusKind === 'poison') { spawnFloatText(c.pos, `${dmg}`, '#7bd33a'); return; }
     audio.sfx.creatureHit();
     if (mult > 1) { spawnFloatText(c.pos, `${dmg}!`, '#7bed6f'); shakeAmount = Math.min(0.5, shakeAmount + 0.1); }
     else if (mult === 0) spawnFloatText(c.pos, '0', '#9aa0a6');
@@ -791,13 +1063,22 @@ const combat = new CombatSystem(scene, world, {
     if (c.flash) c.flash();
   },
   onKill: (c, xp) => {
-    gainXp(xp);
-    gameUI.toast(t('gainedXp', xp));
+    // Apply the level-banded XP boost (×10 early, tapering to ×1 past level 120;
+    // toggled by LEVEL_XP_SCALE_ENABLED in progression.js) on top of the event
+    // multiplier already folded into `xp`. Keyed to the player's current level.
+    const gained = Math.round(xp * levelXpMultiplier(player.level));
+    gainXp(gained);
+    gameUI.toast(t('gainedXp', gained));
     const changed = questLog.onEvent('kill', c.def.family);
     if (changed.length) onQuestProgress();
   },
   onLoot: (loot) => {
-    if (loot.gold) { inv.addGold(loot.gold); player.gold = inv.gold; gameUI.toast(`+${loot.gold} ${t('gold')} 💰`, 'loot'); }
+    if (loot.gold) {
+      inv.addGold(loot.gold); player.gold = inv.gold;
+      // Show the haul as a single mm-coins total ("+5 mm coins"), not by denomination.
+      gameUI.toast(`+${coinLootLabel(loot.gold)} 💰`, 'loot');
+      persistProgress();
+    }
   },
 });
 
@@ -856,8 +1137,9 @@ function enterWithCharacter(character) {
   charStats = new CharacterStats(player.profession);
   if (!character.stats) {
     charStats.grantForLevels(1, 4);
-    // Learn the job's first castable skill so the player has something usable on
-    // the bar (passives apply on their own and aren't placed on the hotbar).
+    // Learn the job's first castable skill so the player has a spell to drag onto
+    // the hotbar from the Spells window (passives apply on their own and can't go
+    // on the bar).
     const first = skillsOf(player.profession).find((sk) => sk.reqLevel <= 1 && sk.kind !== 'passive');
     if (first) charStats.addSkillPoint(first);
   }
@@ -871,7 +1153,11 @@ function enterWithCharacter(character) {
 
 addEventListener('pointerdown', () => audio.unlock(), { once: true });
 addEventListener('keydown', () => audio.unlock(), { once: true });
-addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyE' && !controls.chatting) tryInteract(); });
+addEventListener('keydown', (e) => { if (state === 'play' && controls.keymap.isAction('interact', e.code) && !controls.chatting) tryInteract(); });
+// Touch interact + chat buttons (no E / Enter key on a phone). The interact
+// button is shown only when something is in range (see updateInteractHint).
+if (ui.btnInteract) ui.btnInteract.addEventListener('click', (e) => { e.stopPropagation(); if (state === 'play') tryInteract(); });
+if (ui.btnChat) ui.btnChat.addEventListener('click', (e) => { e.stopPropagation(); if (state === 'play') openChat(); });
 addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyK' && !controls.chatting) skillPanel.toggle(); });
 // Underground: page the minimap up/down a floor to peek at what's above/below
 // (PageUp/PageDown, or the bracket keys). Other floors never reveal creatures.
@@ -891,11 +1177,29 @@ const skillPanel = new SkillPanel(() => charStats, {
   getLevel: () => player.level,
   getXp: () => xpProgress(player.exp),
   onChange: () => { applyVocationStats(false); prefillHotbar(); recompute(); saveToAccount(); },
+  // The castable hotbar entry for a skill id (or null if not castable yet), used
+  // when a spell row is dragged onto the bar.
+  spellEntry: (id) => hotbarOptions().skills.find((s) => s.id === id) || null,
+  // Wire a Spells row up to drag onto the hotbar (mouse + touch).
+  makeDraggable: (el, getSpell) => gameUI.makeSpellDraggable(el, getSpell),
 }, { panel: document.getElementById('windows'), wireWindow: (w, o) => gameUI.wireWindow(w, o) });
+// One button opens the skills panel; the player switches between its two tabs
+// (combat skills / spells) inside the window.
 const btnSkills = document.getElementById('btn-skills');
-if (btnSkills) btnSkills.addEventListener('click', (e) => { e.stopPropagation(); skillPanel.toggleTab('combat'); });
-const btnSpells = document.getElementById('btn-spells');
-if (btnSpells) btnSpells.addEventListener('click', (e) => { e.stopPropagation(); skillPanel.toggleTab('skills'); });
+if (btnSkills) btnSkills.addEventListener('click', (e) => { e.stopPropagation(); skillPanel.toggle(); });
+
+// Quest tracker: a side-panel window listing active quests, their stage/progress
+// and where to go. Opened by the 📜 button or the 'J' key; refreshed whenever
+// quest progress changes (see onQuestProgress).
+const questTracker = new QuestTracker(questLog, {
+  getLevel: () => player.level,
+  isNight: () => daynight.isNight(),
+  getArrowOn: () => showQuestArrow,
+  toggleArrow: () => toggleQuestArrow(),
+}, { panel: document.getElementById('windows'), wireWindow: (w, o) => gameUI.wireWindow(w, o) });
+const btnQuests = document.getElementById('btn-quests');
+if (btnQuests) btnQuests.addEventListener('click', (e) => { e.stopPropagation(); questTracker.toggle(); });
+addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyJ' && !controls.chatting) questTracker.toggle(); });
 
 // The Wiki: an in-game compendium built live from the data modules. It stays a
 // full-screen overlay (its creature/item tables need the width); the small 📚
@@ -908,6 +1212,15 @@ function toggleWiki() {
 const btnWiki = document.getElementById('btn-wiki');
 if (btnWiki) btnWiki.addEventListener('click', (e) => { e.stopPropagation(); toggleWiki(); });
 addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyY' && !controls.chatting) toggleWiki(); });
+const btnMounts = document.getElementById('btn-mounts');
+if (btnMounts) btnMounts.addEventListener('click', (e) => { e.stopPropagation(); openMountsPanel(); });
+// Hotkeys: open the MapleStory-style on-screen Keyboard panel — drag powers and
+// potions onto keys. Opens from the ⌨ button or the '\' key.
+const btnHotkeys = document.getElementById('btn-hotkeys');
+if (btnHotkeys) btnHotkeys.addEventListener('click', (e) => { e.stopPropagation(); keyboardPanel.toggle(); });
+addEventListener('keydown', (e) => {
+  if (state === 'play' && e.code === 'Backslash' && !controls.chatting) { e.preventDefault(); keyboardPanel.toggle(); }
+});
 // (Escape-to-close for wiki is handled by the unified Escape handler above.)
 
 document.getElementById('hud-mute').addEventListener('click', (e) => {
@@ -915,6 +1228,30 @@ document.getElementById('hud-mute').addEventListener('click', (e) => {
   const muted = audio.toggleMute();
   e.target.textContent = muted ? '♪̸' : '♪';   // simple symbol, no emoji
 });
+
+// Button box: header toggles minimize/expand (starts minimized); the bottom
+// handle drags to resize the visible rows; the grid scrolls with the wheel.
+(() => {
+  const box = document.getElementById('panel-btns');
+  const toggle = document.getElementById('panel-btns-toggle');
+  const grid = document.getElementById('panel-btns-grid');
+  const handle = document.getElementById('panel-btns-resize');
+  if (!box || !toggle || !grid || !handle) return;
+  toggle.addEventListener('click', (e) => { e.stopPropagation(); box.classList.toggle('collapsed'); });
+  // Drag the handle to set the grid's visible height (clamped to 2…all rows).
+  let dragY = 0, startH = 0, dragging = false;
+  const onMove = (ev) => {
+    if (!dragging) return;
+    const h = Math.max(76, Math.min(grid.scrollHeight, startH + (ev.clientY - dragY)));
+    grid.style.maxHeight = h + 'px';
+  };
+  const onUp = () => { dragging = false; window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+  handle.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    dragging = true; dragY = ev.clientY; startH = grid.getBoundingClientRect().height;
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
+  });
+})();
 
 // Left panel toggle (empty by default; drag windows here from the right).
 const leftToggle = document.getElementById('panel-toggle-left');
@@ -1051,7 +1388,9 @@ async function startGame() {
   loadSave();
 
   giveStarterGear();
+  if (player.level >= 20) upgradeTorchToBright();   // already past 20 on load → bright torch
   recompute();
+  refreshHouseExteriors();   // FOR SALE signs + the owner's recolour skin
   gameUI.setName(profile.name);
   onQuestProgress();
 
@@ -1070,9 +1409,13 @@ async function startGame() {
   ui.hud.classList.remove('hidden');
   ui.controlsUi.classList.remove('hidden');
   panelRefs.sidePanel.classList.remove('hidden');
-  // Left panel: shown (so its pull-out tab is visible) but collapsed/empty by
-  // default — drag windows over to use it.
-  document.getElementById('side-panel-left').classList.remove('hidden');
+  // Left panel: open by default too (same as the right panel). Its pull-out tab
+  // still collapses/expands it, and windows can be dragged over to it.
+  const leftPanel = document.getElementById('side-panel-left');
+  leftPanel.classList.remove('hidden');
+  gameUI._setPanelCollapsed(leftPanel, false);
+  // The floating circular minimap (top-right, outside the panels).
+  document.getElementById('minimap-box').classList.remove('hidden');
   gameUI.openBackpack('main'); // backpack window open by default, Tibia-style
   document.getElementById('chat').classList.remove('hidden');
   if (isTouch) document.getElementById('crosshair').classList.remove('hidden');
@@ -1080,6 +1423,15 @@ async function startGame() {
   audio.unlock();
   audio.startMusic();
   if (!isTouch) lockPointer();
+  // The controls reminder is helpful at first, then just clutter — fade it out
+  // after a few seconds (it reappears whenever the mouse is freed; see
+  // onLockChange, which clears the faded state). Skipped on touch, where the
+  // hint is display:none anyway.
+  if (!isTouch) {
+    ui.hint.classList.remove('faded');
+    clearTimeout(hintFadeTimer);
+    hintFadeTimer = setTimeout(() => ui.hint.classList.add('faded'), 9000);
+  }
 
   if (!localStorage.getItem('mundum.onboarded')) {
     localStorage.setItem('mundum.onboarded', '1');
@@ -1094,11 +1446,20 @@ async function startGame() {
 
   connectOnline();
 
+  // Free market: claim any sales made while we were offline (credits gold to the
+  // character row, then shows a "X bought your item" toast for each). Uses the
+  // account session (auth), independent of the realtime net session above.
+  claimMarketPayouts();
+
+  // Ambient bots: fake players that populate the cities and zones. Built once;
+  // they have no HP and live entirely client-side.
+  if (place === 'surface' && !bots.bots.length) bots.spawn(CITIES, ZONES, { lang: getLang() });
+
   // Debug handle (only with ?debug): lets QA/tests give items, drop them, and
   // inspect live drop positions without touching gameplay otherwise.
   if (new URLSearchParams(location.search).has('debug')) {
     window.__mundum = {
-      player, inv, combat, hotbar, charStats, skillPanel, ui: gameUI, worldNpcs, world, cityProps, seaFauna,
+      player, inv, combat, hotbar, charStats, skillPanel, ui: gameUI, worldNpcs, world, cityProps, seaFauna, bots,
       toss: (id) => { const it = resolveItem(id, () => 0.5, player.level, getLang()); if (it) tossItemForward(it); return it; },
       castSkill: (s) => castSkill(s), toggleSkillPanel: () => skillPanel.toggle(),
       give: (id) => { const it = resolveItem(id, () => 0.5, player.level, getLang()); if (it) inv.addToBackpack(it, player.level); recompute(); return it; },
@@ -1132,13 +1493,26 @@ async function connectOnline() {
     return;
   }
 
-  net.onPeerUpdate((id, s) => peers.update(id, s));
+  net.onPeerUpdate((id, s) => {
+    peers.update(id, s);
+    // When another real player's level rises, the ambient bots cheer them too —
+    // staggered, same as for the local player. Track each peer's last level so we
+    // only fire on the increase (and not on their first sighting).
+    if (s && typeof s.level === 'number') {
+      const prev = peerLevels.get(id);
+      if (prev != null && s.level > prev && place === 'surface') {
+        bots.congratulate(s.name || '', getLang());
+      }
+      peerLevels.set(id, s.level);
+    }
+  });
   net.onPeerLeave((id) => {
     peers.remove(id);
+    peerLevels.delete(id);
     if (trade && trade.peerId === id) { gameUI.toast(t('partnerLeft') || 'Partner left', 'bad'); endTrade(false); }
   });
   net.onPeerJoin((id, meta) => { if (meta && meta.name) gameUI.toast(t('connected', meta.name)); });
-  net.onChat((m) => addChatLine(m.name, m.text));
+  net.onChat((m) => { if (chatBlocked.has(m.name)) return; addChatLine(m.name, m.text); });
 
   // Incoming trade request: a peer wants to trade. Auto-open the window if I'm
   // free (a friendly kid game; no spam guard needed beyond one trade at a time).
@@ -1161,7 +1535,15 @@ async function connectOnline() {
     } else if (payload.kind === 'respond' && !payload.accept) {
       gameUI.toast(t('tradeDeclined') || 'Trade declined', 'bad'); endTrade(false);
     } else if (payload.kind === 'result') {
-      if (payload.ok) { for (const it of trade.theirOffer) inv.addToBackpack(it, player.level); gameUI.toast(t('tradeDone') || 'Trade complete', 'good'); endTrade(true); }
+      // Credit the received items exactly once per session: if both sides
+      // confirmed, this side may also have added them in onConfirm, so the
+      // `credited` flag stops a double-add (item duplication).
+      if (payload.ok && !trade.credited) {
+        trade.credited = true;
+        for (const it of trade.theirOffer) returnItemToPlayer(it);
+        gameUI.toast(t('tradeDone') || 'Trade complete', 'good');
+        endTrade(true);
+      }
     }
   });
 
@@ -1176,8 +1558,40 @@ async function connectOnline() {
   });
   net.onGmKick(async () => { await net.disconnect(); showBanScreen(); });
 
-  const cloud = await net.loadCharacter();
-  if (cloud) applyCloudSave(cloud);
+  // Houses: a peer published their house → remember its public snapshot so the
+  // local player can walk to that lot's door and visit. ownerId is carried so a
+  // visitor's purchase can route back to the owner.
+  net.onHouseSync((fromId, snap) => {
+    if (!snap || !snap.lotId) {
+      // The owner gave up / sold: drop any snapshot they previously published.
+      for (const [lotId, s] of visitedHouses) if (s.ownerId === fromId) visitedHouses.delete(lotId);
+      refreshHouseExteriors();
+      return;
+    }
+    visitedHouses.set(snap.lotId, { ...snap, ownerId: fromId });
+    // If we're currently visiting this very house, refresh the live room.
+    if (place === 'house' && activeHouseLot && activeHouseLot.id === snap.lotId && activeHouse && activeHouse.readOnly) {
+      activeHouse.state = visitedHouses.get(snap.lotId);
+      activeHouse.rebuild();
+    }
+    refreshHouseExteriors();
+  });
+  net.onHouseInside((fromId, payload) => {
+    // Purely informational for now (could show "X is home"); snapshot already
+    // tells us the house exists. Kept as a hook for future presence polish.
+    void fromId; void payload;
+  });
+
+  // On connect, publish our own house so already-online peers can see it.
+  broadcastHouse();
+
+  // NOTE: the authoritative cloud copy of this character (exp/gold/items) is the
+  // ACCOUNT row, already fetched at character-select via auth.listCharacters and
+  // applied in applyCharacterRow — local vs cloud is reconciled in loadSave().
+  // We deliberately do NOT read the character row through net here: net uses a
+  // separate ANONYMOUS realtime session, so net.loadCharacter would query the
+  // wrong row and could clobber real progress. Multiplayer presence rides the
+  // realtime channel, not the characters table.
 }
 
 // ===== Players: click to inspect, friends, trade =====
@@ -1194,6 +1608,43 @@ function addFriend(name) {
 }
 function removeFriend(name) {
   if (friends.delete(name)) { gameUI.toast(`${name} removed`, 'info'); saveToAccount(); }
+}
+
+// Chat block list (names whose messages are hidden) and a follow target (a peer
+// id the player auto-walks after). Both toggle from the player-info panel.
+const chatBlocked = new Set();
+function isBlocked(name) { return chatBlocked.has(name); }
+function toggleBlock(name) {
+  if (!name) return;
+  if (chatBlocked.delete(name)) gameUI.toast(`${name}: ${t('unblockChat') || 'chat unblocked'}`, 'info');
+  else { chatBlocked.add(name); gameUI.toast(`${name}: ${t('blockChat') || 'chat blocked'}`, 'info'); }
+}
+let followingPeerId = null;
+function toggleFollow(id) {
+  followingPeerId = (followingPeerId === id) ? null : id;
+  gameUI.toast(followingPeerId ? (t('following') || 'Following') : (t('stopFollow') || 'Stopped following'), 'info');
+}
+// When following a peer, steer the player toward them by writing controls.move
+// (camera-relative), so the normal movement + collision path carries it. Manual
+// WASD input wins (cancels follow for that frame); follow ends if the peer is
+// gone or you arrive within ~2m.
+function applyFollow(controls) {
+  if (!followingPeerId) return;
+  const peer = peers && peers.peers.get(followingPeerId);
+  if (!peer) { followingPeerId = null; return; }
+  // Don't fight the player: if they're pressing a direction, let them drive.
+  if (controls.move && (Math.abs(controls.move.x) > 0.01 || Math.abs(controls.move.z) > 0.01)) return;
+  const dx = peer.pos.x - player.pos.x, dz = peer.pos.z - player.pos.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 2.0) { if (controls.move) { controls.move.x = 0; controls.move.z = 0; } return; } // close enough
+  // Convert the world-space direction to camera-relative move (the inverse of the
+  // forward/right basis player.update uses), so steering matches the camera yaw.
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const ux = dx / dist, uz = dz / dist;
+  if (controls.move) {
+    controls.move.z = ux * fx + uz * fz;      // forward component
+    controls.move.x = ux * (-fz) + uz * fx;   // right component
+  }
 }
 
 // Left-click reach for selecting another player (metres). A reusable raycaster
@@ -1218,15 +1669,27 @@ function openPlayerInfo(id, peer) {
   gameUI.openPlayerInfo({
     id, name,
     isFriend: isFriend(name),
+    isBlocked: isBlocked(name),
+    isFollowing: followingPeerId === id,
     onAddFriend: () => { addFriend(name); },
     onRemoveFriend: () => { removeFriend(name); },
     onTrade: () => { startTradeWith(id, name); },
+    onBlock: () => { toggleBlock(name); },
+    onFollow: () => { toggleFollow(id); },
   });
 }
 
 // ----- Player-to-player TRADE (max 6 items per side) -----
 const MAX_TRADE_ITEMS = 6;
 let trade = null;   // active trade session or null
+
+// Return a traded item to the player. The bag may be full/over-weight (the item
+// was already pulled out of it), so fall back to dropping it at the feet rather
+// than silently destroying it — never lose a player's items.
+function returnItemToPlayer(item) {
+  if (!item) return;
+  if (inv.addToBackpack(item, player.level) !== 'ok') combat.spawnDrop(player.pos, item);
+}
 
 function startTradeWith(peerId, peerName) {
   if (trade) return;
@@ -1254,7 +1717,7 @@ function renderTrade() {
     },
     onRemove: (i) => {
       const it = trade.myOffer.splice(i, 1)[0];
-      if (it) inv.addToBackpack(it, player.level);
+      returnItemToPlayer(it);
       trade.iConfirmed = trade.theirConfirmed = false;
       net.setTradeOffer(trade.peerId, trade.myOffer);
       recompute(); renderTrade();
@@ -1263,9 +1726,11 @@ function renderTrade() {
       trade.iConfirmed = true;
       renderTrade();
       const res = await net.confirmTrade(trade.peerId, trade.myOffer, trade.theirOffer);
-      if (res && res.ok) {
-        // Items I gave are already out of the bag; add what I received.
-        for (const it of trade.theirOffer) inv.addToBackpack(it, player.level);
+      if (res && res.ok && trade && !trade.credited) {
+        // Items I gave are already out of the bag; add what I received. The
+        // `credited` flag ensures the partner's `result` echo can't add them again.
+        trade.credited = true;
+        for (const it of trade.theirOffer) returnItemToPlayer(it);
         gameUI.toast(t('tradeDone') || 'Trade complete', 'good');
         endTrade(true);
       } else if (res && res.reason !== 'offline') {
@@ -1279,7 +1744,7 @@ function renderTrade() {
 // Close the trade. On a non-completed cancel, return my offered items to the bag.
 function endTrade(completed) {
   if (trade && !completed) {
-    for (const it of trade.myOffer) inv.addToBackpack(it, player.level);
+    for (const it of trade.myOffer) returnItemToPlayer(it);
   }
   trade = null;
   recompute();
@@ -1403,9 +1868,15 @@ function setupChat() {
   input.placeholder = t('chatPlaceholder');
   input.addEventListener('keydown', (e) => {
     e.stopPropagation();
+    // Tab would move focus out of the chat field (and our global Tab handler
+    // frees the mouse) — keep focus in the input while chatting. Don't blanket-
+    // preventDefault, or normal typing breaks.
+    if (e.code === 'Tab') e.preventDefault();
     if (e.code === 'Enter') {
       const text = input.value.trim();
-      if (text) { net.sendChat(text); addChatLine(profile.name, text); }
+      // sendChat echoes the line locally (online or offline), so do NOT addChatLine
+      // here too — that printed every message twice.
+      if (text) net.sendChat(text);
       input.value = '';
       input.classList.add('hidden');
       controls.chatting = false;
@@ -1464,13 +1935,23 @@ function doUnequip(slot) {
   else gameUI.toast(t('full'), 'bad');
 }
 
-function doDropItem(i, bagIndex) {
+// Drop an item to the ground. `count` (optional) drops just that many off a
+// stack and leaves the rest in the bag; omitted/whole-stack drops the lot.
+function doDropItem(i, bagIndex, count) {
+  const arr = bagIndex != null
+    ? (inv.backpack[bagIndex] && inv.backpack[bagIndex].contents)
+    : inv.backpack;
+  if (!arr) return;
+  const src = arr[i];
+  if (!src) return;
   let item;
-  if (bagIndex != null) {
-    const bag = inv.backpack[bagIndex];
-    item = bag && bag.contents ? bag.contents.splice(i, 1)[0] : null;
+  const have = src.count || 1;
+  if (count != null && count > 0 && count < have) {
+    // Peel a partial stack off; the original keeps the remainder.
+    src.count = have - count;
+    item = { ...src, count };
   } else {
-    item = inv.removeFromBackpack(i);
+    item = arr.splice(i, 1)[0];
   }
   if (item) { tossItemForward(item); recompute(); }
 }
@@ -1536,13 +2017,29 @@ function castSkill(skill) {
   if (skillLv < 1) { gameUI.toast(t('skillLocked'), 'bad'); return; }
   const cd = cooldowns[def.id];
   if (cd && nowSec < cd.until) return; // still cooling down
+  // SUMMONS share ONE 60-second cooldown across every summon skill, so a druid
+  // can't chain Imp + Wolf + Bear instantly — only one new pet per minute, of
+  // whichever kind. (The pet cap of 2 and the replace-the-strongest rule live in
+  // combat.spawnAlly.)
+  const SUMMON_COOLDOWN = 60;
+  if (def.kind === 'summon') {
+    const sc = cooldowns.__summon;
+    if (sc && nowSec < sc.until) return;
+  }
   const manaCost = skillMana(def, skillLv);
   if (manaCost > player.mana) { gameUI.toast(t('noMana'), 'bad'); return; }
 
   player.mana -= manaCost;
   // Spending mana on a spell trains Magic Level (Tibia-style).
   maybeAdvanceSkill(charStats.trainMagic(manaCost), 'magic');
-  cooldowns[def.id] = { until: nowSec + (def.cooldown || 1), total: def.cooldown || 1 };
+  // A summon stamps the shared 60s gate (and a matching per-skill cooldown so the
+  // hotbar slot shows the sweep); other skills use their own cooldown.
+  if (def.kind === 'summon') {
+    cooldowns.__summon = { until: nowSec + SUMMON_COOLDOWN, total: SUMMON_COOLDOWN };
+    cooldowns[def.id] = { until: nowSec + SUMMON_COOLDOWN, total: SUMMON_COOLDOWN };
+  } else {
+    cooldowns[def.id] = { until: nowSec + (def.cooldown || 1), total: def.cooldown || 1 };
+  }
   audio.sfx.attack();
 
   // Buff skills (Sharp Eyes, Battle Roar, Mana/Holy Shield, Rejuvenation…) grant
@@ -1554,20 +2051,41 @@ function castSkill(skill) {
     return;
   }
 
-  // Effect strength comes from the SKILL level; Magic Level (use-skill) and any
-  // active damage buff scale it further — so a mage's spells clearly out-hit a
-  // knight's, matching the user's "magic level raises power" intent.
-  const statMul = charStats.spellPowerMul() * buffMods().damageMul;
+  // Spell DAMAGE follows the Tibia formula F = level*2 + magicLevel*3 (+ the skill
+  // points you put in the spell), scaled by a per-class multiplier — so a mage's
+  // ultimate climbs past 2000 with no cap while a knight's strongest strike stays
+  // a few hundred. Magic level (the 'magic' use-skill, plus any ring bonus) feeds
+  // F directly. Heals/buffs/summons keep their literal value (no damage scaling).
+  // TAUNT (knight Challenge): force every nearby creature to aggro the player.
+  // No damage — pure threat control. Still plays its fx (a roar) so it reads.
+  if (def.taunt) {
+    combat.tauntArea(player.pos, def.radius || 6);
+    skillSystem.cast(def, player.pos, player.yaw, skillLv, {});
+    gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+    return;
+  }
+
+  const mlRing = inv.equipBonus ? inv.equipBonus('magicLevelBonus') : 0;
+  const magicLevel = charStats.useSkill('magic') + mlRing;
+  const dmgMul = spellDamageMul(player.level, magicLevel, skillLv, player.profession) * buffMods().damageMul;
+  const statMul = isDamageSkill(def) ? dmgMul : 1;   // non-damage skills: raw value
+  // The status a damage spell leaves behind (sorcerer fire → burn; druid ice/
+  // poison → slow / poison / both). Read straight off the skill definition.
+  const inflict = def.inflicts || null;
   skillSystem.cast(def, player.pos, player.yaw, skillLv, {
     damageArea: (center, radius, amount) => {
-      const hits = combat.damageArea(center, radius, Math.round(amount * statMul));
+      const hits = combat.damageArea(center, radius, Math.round(amount * statMul), inflict);
       if (hits) shakeAmount = Math.min(0.5, shakeAmount + 0.12);
     },
     healPlayer: (amount) => {
       player.hp = Math.min(player.maxHp, player.hp + amount);
       spawnFloatText(player.pos, `+${amount}`, '#7bed6f');
     },
-    spawnSummon: (family, pos) => combat.spawnAlly(family, pos, skillLv),
+    spawnSummon: (family, pos) => {
+      const pet = combat.spawnAlly(family, pos, skillLv);
+      // If the druid already has a foe locked, the fresh pet runs at it at once.
+      if (pet && combat.currentTarget) pet.focus = combat.currentTarget;
+    },
   });
   gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
 }
@@ -1585,6 +2103,9 @@ function applyBuff(def) {
   rec.critAdd = b.critAdd || 0;
   rec.regenPerSec = b.regenPerSec || 0; // fraction of maxHp per second
   if (!existing) activeBuffs.push(rec);
+  // Fold the (new) attack buff into player.damageMul right away so the knight's
+  // basic PHYSICAL swings hit harder, not just its spells.
+  player.damageMul = (player.passiveDamageMul || 1) * buffMods().damageMul;
   const name = (def.name && (def.name[getLang()] || def.name.es)) || def.id;
   gameUI.toast(`✦ ${name}`, 'levelup');
 }
@@ -1604,8 +2125,14 @@ function buffMods() {
 // Per-frame: expire finished buffs and apply any regen-over-time buffs.
 let buffRegenAcc = 0;
 function updateBuffs(dt) {
+  const hadBuffs = activeBuffs.length;
   for (let i = activeBuffs.length - 1; i >= 0; i--) {
     if (nowSec >= activeBuffs[i].until) activeBuffs.splice(i, 1);
+  }
+  // When a damage buff expired, drop player.damageMul back to its passive value so
+  // basic attacks stop benefiting (applyBuff raises it; this lowers it again).
+  if (hadBuffs && activeBuffs.length !== hadBuffs) {
+    player.damageMul = (player.passiveDamageMul || 1) * buffMods().damageMul;
   }
   // Regen buffs heal once a second so the number ticks cleanly.
   buffRegenAcc += dt;
@@ -1628,10 +2155,14 @@ function useHotbarPotion(entry) {
   doUsePotion(idx);
 }
 
-// What the player can put on the hotbar right now: usable skills + held potions.
+// What the player can put on the hotbar right now: LEARNED skills (≥1 point) +
+// held consumables (potions/fruit) + a carried torch.
 function hotbarOptions() {
   const skills = skillsForLevel(player.profession, player.level)
     .filter((s) => s.kind !== 'passive') // passives apply automatically, never cast
+    // Only skills the player has actually LEARNED (spent a point on) are castable,
+    // so an unlearned power like Energy Bolt never shows up to assign.
+    .filter((s) => charStats && charStats.skillLevel(s.id) >= 1)
     .map((s) => ({
       id: s.id, name: (s.name && (s.name[getLang()] || s.name.es)) || s.id,
       icon: SKILL_ICON[s.kind] || '✨', iconHtml: skillIcon(s), manaCost: s.manaCost || 0,
@@ -1641,17 +2172,56 @@ function hotbarOptions() {
     }));
   const seen = new Set();
   const potions = [];
+  // Consumables: potions AND fruit/food both stack here (anything you "use up").
   const addPotion = (it) => {
     if (it && it.kind === 'potion' && !seen.has(it.baseId)) {
       seen.add(it.baseId);
       potions.push({ id: it.baseId, baseId: it.baseId, name: potionName(it), icon: it.icon || '🧪' });
     }
   };
+  // A carried TORCH can sit on the bar too, to light/snuff it fast. One entry.
+  let torchEntry = null;
+  const addTorch = (it) => {
+    if (it && it.kind === 'light' && !it.passive && !torchEntry) {
+      torchEntry = { id: it.baseId, baseId: it.baseId, name: (typeof it.name === 'string' ? it.name : potionName(it)), icon: it.icon || '🔥', kind: 'light' };
+    }
+  };
+  // Scan the extra (fire) slot for the torch, then the whole backpack.
+  addTorch(inv.equip && inv.equip.extra);
   for (const it of inv.backpack) {
     addPotion(it);
-    if (it && it.contents) for (const inner of it.contents) addPotion(inner);
+    addTorch(it);
+    if (it && it.contents) for (const inner of it.contents) { addPotion(inner); addTorch(inner); }
   }
+  // The torch rides in the consumables list so the keyboard panel and hotbar menu
+  // both offer it without special-casing; its 'light' kind routes to toggleTorch.
+  if (torchEntry) potions.push(torchEntry);
   return { skills, potions };
+}
+
+// Rebuild a saved hotbar entry ({kind,id,baseId}) into a full live entry so it
+// shows its icon and fires correctly after a reload. Skills resolve from the
+// profession tree; potions/lights from the item tables (icon painted lazily).
+function resolveHotbarEntry(saved) {
+  if (!saved) return null;
+  if (saved.kind === 'skill') {
+    const sk = getSkill(saved.id);
+    if (!sk) return null;
+    return {
+      id: sk.id, name: (sk.name && (sk.name[getLang()] || sk.name.es)) || sk.id,
+      icon: SKILL_ICON[sk.kind] || '✨', iconHtml: skillIcon(sk),
+      manaCost: sk.manaCost || 0, cooldown: sk.cooldown || 1, kind: 'skill', skillKind: sk.kind,
+    };
+  }
+  // potion / light: resolve a fresh instance just for its name + icon. The
+  // hotbar's entryIcon() paints potions/lights via iconFor() from kind+baseId, so
+  // no iconHtml is needed here.
+  const item = resolveItem(saved.baseId || saved.id, () => 0.5, player.level, getLang());
+  if (!item) return { kind: saved.kind, id: saved.id, baseId: saved.baseId, name: saved.baseId || '', icon: '🧪' };
+  return {
+    kind: saved.kind, id: item.baseId, baseId: item.baseId,
+    name: potionName(item), icon: item.icon || (saved.kind === 'light' ? '🔥' : '🧪'),
+  };
 }
 
 // A potion's display name handles both string and {es,en} shapes.
@@ -1671,21 +2241,21 @@ function assignPotionToHotbar(item) {
 
 const SKILL_ICON = { area: '🔥', melee: '💥', ranged: '🎯', heal: '💚', summon: '🐾', passive: '🌀' };
 
-// Put the vocation's available skills on the first hotbar slots so a new player
-// has their powers ready without configuring anything. Only fills empty slots.
-// Put the skills the player has actually LEARNED (skill level >= 1) onto empty
-// hotbar slots, so the bar only shows usable skills. Called on entering the game
-// and whenever a skill point is spent.
+// The hotbar is now player-arranged: spells are DRAGGED onto it from the Spells
+// window (and removed by dragging them off), they no longer auto-populate. This
+// only keeps the saved bar honest — it drops entries for skills the character
+// can no longer cast (an old save, or a skill above the current level) so a
+// stale slot never tries to fire something the player doesn't have. It
+// deliberately does NOT add anything. Called on entering the game and whenever
+// a skill point is spent.
 function prefillHotbar() {
-  const learned = hotbarOptions().skills.filter((sk) => charStats.skillLevel(sk.id) >= 1);
-  for (const sk of learned) {
-    const onBar = hotbar.slots.some((e) => e && e.kind === 'skill' && e.id === sk.id);
-    if (onBar) continue;
-    const free = hotbar.slots.findIndex((e) => !e);
-    if (free < 0) break;
-    hotbar.setSlot(free, { ...sk, skillKind: sk.kind, kind: 'skill' });
+  const castable = new Set(hotbarOptions().skills.map((s) => s.id));
+  let changed = false;
+  for (let i = 0; i < hotbar.slots.length; i++) {
+    const e = hotbar.slots[i];
+    if (e && e.kind === 'skill' && !castable.has(e.id)) { hotbar.slots[i] = null; changed = true; }
   }
-  hotbar.render();
+  if (changed) hotbar.render();
 }
 
 function doBuy(def, refresh, price) {
@@ -1694,6 +2264,7 @@ function doBuy(def, refresh, price) {
   let item;
   if (getWeapon(def.id)) item = rollShopWeapon(def.id);
   else if (getArmor(def.id)) item = instanceFromArmor(getArmor(def.id));
+  else if (getQuiver(def.id)) item = instanceFromQuiver(getQuiver(def.id));
   else if (getContainer(def.id)) item = instanceFromContainer(def);
   else if (def.kind === 'potion') item = instanceFromPotion(def, getLang());
   if (!item) return;
@@ -1735,18 +2306,19 @@ function rollShopWeapon(id) {
 // The level-1 starter weapon for each vocation.
 const STARTER_WEAPON = { knight: 'wooden_sword', paladin: 'wooden_bow', mage: 'apprentice_wand', druid: 'apprentice_wand' };
 
-// Equip a fresh character: a level-1 weapon for their vocation and a small bag
-// (8 slots) holding a spare bag. The 20-slot backpack is NOT free; buy it at a
-// shop or get it from a level-20-ish creature.
+// Equip a fresh character: a level-1 weapon for their vocation and a brown
+// BACKPACK (20 slots) with a brown BAG (8 slots) tucked inside it — the classic
+// Tibia starter so the player has real room from minute one plus a spare
+// container to sort loot into.
 function giveStarterGear() {
   if (!inv.equip.weapon) {
     const wid = STARTER_WEAPON[player.profession] || 'wooden_sword';
     inv.equip.weapon = rollWeaponInstance(wid, () => 0.5) || rollShopWeapon(wid);
   }
   if (!inv.equip.bag) {
-    inv.equip.bag = instanceFromContainer(getContainer('bag'));
-    const spare = instanceFromContainer(getContainer('bag'));
-    inv.backpack.push(spare);
+    inv.equip.bag = instanceFromContainer(getContainer('backpack'));
+    const innerBag = instanceFromContainer(getContainer('bag'));
+    inv.backpack.push(innerBag);
   }
   // Everyone starts with a basic torch worn in the fire (extra) slot — double-
   // click it there to light it. Only hand one out if the player has none yet
@@ -1762,6 +2334,25 @@ function giveStarterGear() {
   }
 }
 
+// At level 20 the plain Torch becomes a Bright Torch. Swap every 'torch' the
+// player holds (the lit fire slot + the backpack + nested bags) for a bright one,
+// keeping it in the same place. Preserves the lit state of the equipped torch.
+function upgradeTorchToBright() {
+  const brightDef = getLight('bright_torch');
+  if (!brightDef) return;
+  let changed = false;
+  const swap = (it) => {
+    if (it && it.kind === 'light' && it.baseId === 'torch') { Object.assign(it, instanceFromLight(brightDef, getLang())); changed = true; return true; }
+    return false;
+  };
+  swap(inv.equip.extra);
+  for (const it of inv.backpack) { swap(it); if (it && it.contents) for (const inner of it.contents) swap(inner); }
+  if (changed) {
+    recomputeLight();
+    gameUI.toast(getLang() === 'en' ? '🔥 Your torch flares into a Bright Torch!' : '🔥 ¡Tu antorcha se vuelve una Antorcha Brillante!', 'levelup');
+  }
+}
+
 function recompute() {
   player.defense = inv.totalDefense();
   player.weapon = inv.weapon();
@@ -1770,8 +2361,13 @@ function recompute() {
 
   recomputeLight();
   equipVisuals.refresh(inv.equip, player.level);
-  setViewModel(inv.equip.weapon, player.level);
-  setViewShield(inv.equip.shield, inv.equip.weapon);
+  // Either hand may hold the weapon now. The first-person viewmodel always shows
+  // the weapon you actually fight with (player.weapon), and the off-hand view
+  // shows whatever sits in the OTHER hand (a shield, or nothing).
+  const heldWeapon = player.weapon;
+  const offHandItem = (inv.equip.weapon && inv.equip.weapon === heldWeapon) ? inv.equip.shield : inv.equip.weapon;
+  setViewModel(heldWeapon, player.level);
+  setViewShield(offHandItem, heldWeapon);
   gameUI.renderAll();
   gameUI.setCapacity(player.level);
   saveLocal();
@@ -1802,14 +2398,23 @@ function gainXp(xp) {
         audio.sfx.levelUp();
       }
     }
+    // At level 20 your humble torch flares into a BRIGHT TORCH — upgrade any
+    // plain torch the player carries (equipped fire slot or in the bag).
+    if (before < 20 && player.level >= 20) upgradeTorchToBright();
     equipVisuals.refresh(inv.equip, player.level);
+    // The ambient bots cheer you on — a trickle of "gratz!" over the next few
+    // seconds (bots.congratulate staggers them; only on the surface where bots live).
+    if (place === 'surface') bots.congratulate(profile.name, getLang());
   }
   gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, info);
+  // Save the XP gain promptly so a reload right after a kill keeps it.
+  persistProgress();
 }
 
 function onPlayerDeath() {
   player.alive = false;
   player.hp = 0;
+  mounts.dismount();   // you fall off your mount when you die
   audio.sfx.death();
   let lostMsg = t('keptItems');
 
@@ -1850,11 +2455,18 @@ function spawnFloatText(pos, text, color) {
 }
 
 function tryInteract() {
+  // Inside a house, E acts on the nearest showcase slot (place / take / buy).
+  if (place === 'house' && activeHouse) { interactHouseSlot(); return; }
+
   const npc = worldNpcs.npcAt(player.pos.x, player.pos.z);
   if (npc) { openNpcDialog(npc); return; }
 
   const chest = chestAt(dungeonChests, player.pos.x, player.pos.z);
   if (chest && !chest.opened) { openDungeonChest(chest); return; }
+
+  // At a house door: buy it, manage your own, or visit someone else's.
+  const lot = houseAtPlayer();
+  if (lot) { houseDoorAction(lot); return; }
 
   const node = interactableAt(cityProps, player.pos.x, player.pos.z);
   if (!node) return;
@@ -1862,6 +2474,451 @@ function tryInteract() {
   if (node.kind === 'shop') gameUI.openShop(node.city);
   else if (node.kind === 'depot') gameUI.openDepot(node.city);
   else if (node.kind === 'portal') gameUI.openTeleport(node.city, (dest) => teleportTo(dest));
+  else if (node.kind === 'stall') openMarketStall({ stallId: node.stallId, city: node.city.id });
+  else if (node.kind === 'healStatue') useHealStatue();
+}
+
+// Talk to a gate healing statue: tops HP up to HEAL_STATUE_HP_PCT and mana up to
+// HEAL_STATUE_MANA_PCT of the maximum (never lowers them), unlimited times — but
+// only for low-level travellers (level <= HEAL_STATUE_MAX_LEVEL). Higher levels
+// are gently turned away.
+const HEAL_STATUE_MAX_LEVEL = 20;
+const HEAL_STATUE_HP_PCT = 0.80;
+const HEAL_STATUE_MANA_PCT = 0.50;
+function useHealStatue() {
+  if (!player.alive) return;
+  if (player.level > HEAL_STATUE_MAX_LEVEL) {
+    gameUI.toast(t('healStatueTooHigh', HEAL_STATUE_MAX_LEVEL), 'bad');
+    return;
+  }
+  const hpTarget = Math.round(player.maxHp * HEAL_STATUE_HP_PCT);
+  const manaTarget = Math.round(player.maxMana * HEAL_STATUE_MANA_PCT);
+  const before = { hp: player.hp, mana: player.mana };
+  player.hp = Math.max(player.hp, Math.min(player.maxHp, hpTarget));
+  player.mana = Math.max(player.mana, Math.min(player.maxMana, manaTarget));
+  if (player.hp === before.hp && player.mana === before.mana) {
+    gameUI.toast(t('healStatueFull'), 'info');
+    return;
+  }
+  audio.sfx.levelUp?.();
+  gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+  gameUI.toast('✨ ' + t('healStatueHealed'), 'levelup');
+}
+
+// Doorstep action: your own house → manage menu; an unowned lot → buy dialog;
+// a lot someone else owns (online) → ask to enter their house.
+function houseDoorAction(lot) {
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (houseStore.ownsLot(lot.id)) { openHouseManage(lot); return; }
+  const visited = visitedHouses.get(lot.id);
+  if (visited && visited.owner) { askVisitHouse(lot, visited); return; }
+  if (houseStore.ownsAny()) { gameUI.toast(t('houseAlreadyOwn'), 'info'); return; }
+  openHouseBuy(lot);
+}
+
+// E on a showcase slot inside a house. Owner: place from backpack onto an empty
+// slot, or open the slot's options (sell-flag / take). Visitor: buy if for sale.
+function interactHouseSlot() {
+  // Pick the wall slot the player is AIMING at (crosshair = screen centre), so the
+  // item lands exactly where they point — not at a slot chosen by proximity.
+  _peerRay.setFromCamera(_peerCenter, camera);
+  const hit = activeHouse.slotAtAim
+    ? activeHouse.slotAtAim(_peerRay, player.pos.x, player.pos.z)
+    : activeHouse.nearestSlot(player.pos.x, player.pos.z, 2.4);
+  if (!hit) return;
+  if (document.pointerLockElement) document.exitPointerLock();
+  const owner = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+  if (owner) gameUI.openHouseSlot(hit.wallId, hit.index);
+  else gameUI.openHouseVisitorSlot(activeHouse, hit.wallId, hit.index);
+}
+
+// The buy dialog for an unowned lot.
+function openHouseBuy(lot) {
+  gameUI.openHouseBuy(lot, inv.gold, { buy: () => buyHouse(lot) });
+}
+
+// The owner's management menu (colours, light, ban list, walls, sell house).
+function openHouseManage(lot) {
+  gameUI.openHouseManage(lot, houseStore, {
+    enter: () => enterHouse(lot, houseStore, { readOnly: false }),
+    setColor: (key, hex) => { houseStore.setColor(key, hex); onHouseChanged(); },
+    setLight: (temp) => { houseStore.setLight(temp); onHouseChanged(); },
+    ban: (name) => { houseStore.ban(name); onHouseChanged(); gameUI.toast(t('houseBanned', name)); },
+    unban: (name) => { houseStore.unban(name); onHouseChanged(); gameUI.toast(t('houseUnbanned', name)); },
+    toggleClosed: (v) => { houseStore.closed = !!v; onHouseChanged(); },
+    sellHouse: () => sellHouse(lot),
+    // Facade display: show / clear one of the two front-wall slots. Display-only
+    // (the item is copied for show, never removed from the backpack).
+    setFacade: (index, bpIndex) => {
+      const item = inv.backpack[bpIndex];
+      if (item && item.kind !== 'coin') houseStore.setFacade(index, item);
+      onHouseChanged();
+    },
+    clearFacade: (index) => { houseStore.clearFacade(index); onHouseChanged(); },
+  });
+}
+
+// Ask a visitor whether to enter someone's house, honouring the ban list.
+function askVisitHouse(lot, snapshot) {
+  const myName = (profile && profile.name) || 'Adventurer';
+  if (snapshot.closed || (Array.isArray(snapshot.bans) && snapshot.bans.includes(myName.toLowerCase()))) {
+    gameUI.toast(t(snapshot.closed ? 'houseClosedToVisitors' : 'houseBannedYou'), 'bad');
+    return;
+  }
+  gameUI.confirmVisitHouse(snapshot.owner, () => {
+    enterHouse(lot, snapshot, { readOnly: true });
+  });
+}
+
+// Sell the owned house: refund half, drop the displayed items, clear ownership.
+function sellHouse(lot) {
+  const refund = Math.floor(housePrice(lot) / 2);
+  houseStore.sell();
+  inv.addGold(refund); player.gold = inv.gold;
+  audio.sfx.pickup();
+  gameUI.toast(t('houseSold', mmCoins(refund)), 'levelup');
+  recompute();
+  refreshHouseExteriors();
+  persistProgress();
+  broadcastHouse();
+  gameUI.closeContext();
+}
+
+// Called after any house edit (colour, light, item, ban): repaint the live
+// interior, the surface skin, save and sync.
+function onHouseChanged() {
+  refreshActiveHouse();
+  refreshHouseExteriors();
+  persistProgress();
+  broadcastHouse();
+}
+
+// --- Showcase item operations (owner) -------------------------------------
+
+// Place backpack item #bpIndex onto wall `wallId` at slot `index`. Removes it
+// from the backpack and hangs it. Returns true on success.
+function houseHangItem(wallId, index, bpIndex) {
+  const item = inv.backpack[bpIndex];
+  if (!item) return false;
+  const used = houseStore.place(wallId, item, index);
+  if (used < 0) { gameUI.toast(t('houseWallFull'), 'bad'); return false; }
+  inv.removeFromBackpack(bpIndex);
+  audio.sfx.click();
+  recompute();
+  onHouseChanged();
+  return true;
+}
+
+// Take an item off the wall back into the backpack (owner only).
+function houseTakeItem(wallId, index) {
+  const item = houseStore.slot(wallId, index);
+  if (!item) return false;
+  const r = inv.addToBackpack(item.item, player.level);
+  if (r !== 'ok') { gameUI.toast(t(r === 'heavy' ? 'tooHeavy' : 'full'), 'bad'); return false; }
+  houseStore.take(wallId, index);
+  audio.sfx.pickup();
+  recompute();
+  onHouseChanged();
+  return true;
+}
+
+// ---- Free market (city stalls) --------------------------------------------
+//
+// The DB (auth.js market_* methods, backed by ADD_market.sql) is the single
+// source of truth for stall contents. The buy/claim RPCs mutate the character's
+// gold COLUMN and backpack jsonb server-side; the local inv.gold is derived from
+// coin stacks, so after any DB-side gold change we re-read the character row and
+// re-hydrate gold + backpack (reconcileFromCloud). The seller may be offline at
+// sale time — the gold + "sold" message wait in market_payouts and are claimed
+// on the seller's next login (claimMarketPayouts).
+
+// Cached owning auth user id (whose uid owns the character row). Avoids awaiting
+// currentUser() on every stall open / ownership test.
+let _marketUid = null;
+async function marketMyUid() {
+  if (_marketUid) return _marketUid;
+  const u = await auth.currentUser();
+  _marketUid = u ? u.id : null;
+  return _marketUid;
+}
+
+// Re-read the signed-in character and re-apply ONLY the gold + backpack (never
+// the position — a buy must not teleport the buyer). The single reconciliation
+// point after any DB-side gold/item mutation (buy + payout claim).
+async function reconcileFromCloud() {
+  if (!authCharacterId || !auth.isAvailable()) return;
+  const row = await auth.loadCharacter(authCharacterId);
+  if (!row) return;
+  inv.gold = row.gold || 0;
+  if (Array.isArray(row.backpack)) inv.backpack = row.backpack;
+  recompute();
+}
+
+// Fetch a city's listings and rebuild the 3D goods on its stall counters, so
+// every occupied stall shows its items from a distance. Returns the listings so
+// callers (openMarketStall) can reuse the same fetch. No-op offline.
+async function refreshMarketDisplay(cityId) {
+  if (!cityId || !auth.isAvailable()) return [];
+  const all = await auth.listListings(cityId);
+  // Sign label per stall, e.g. "Tienda de Mara" / "Mara's shop".
+  marketDisplay.refreshCity(cityId, all, cityGroundY.get(cityId) || 0,
+    (sellerName) => (sellerName ? t('marketShopSign', sellerName) : ''),
+    t('marketFreeSign'));
+  return all;
+}
+
+// Open a stall: fetch the city's listings (also refreshing the 3D goods), decide
+// whether this stall is mine / free, show the browse window. Online-only; offline
+// shows a toast and never throws.
+async function openMarketStall(stall) {
+  if (!auth.isAvailable()) { gameUI.toast(t('marketOffline'), 'bad'); return; }
+  if (document.pointerLockElement) document.exitPointerLock();
+  const all = await refreshMarketDisplay(stall.city);
+  const here = all.filter((r) => r.stall_id === stall.stallId);
+  const myUid = await marketMyUid();
+  // This stall is "mine" when it's empty (I can claim it) or every listing is mine.
+  const free = here.length === 0;
+  const mine = free || here.every((r) => r.seller_id === myUid);
+  gameUI.openMarketStall(stall, here, mine, {
+    free,
+    place: (s, bp, price) => marketPlace(s, bp, price),
+    take: (id) => marketTake(id, stall),
+    buy: (id, item, price) => marketBuy(id, item, price, stall),
+    refresh: (s) => openMarketStall(s),
+  });
+}
+
+// Put one backpack item on sale at a stall (next free slot). A seller may run
+// only ONE stall at a time, so this rejects placing in a stall held by someone
+// else AND placing while the seller already has listings in a different stall.
+// Caps at STALL_CAP per stall.
+async function marketPlace(stall, bpIndex, price) {
+  const item = inv.backpack[bpIndex];
+  if (!item || item.kind === 'coin') return;
+  const myUid = await marketMyUid();
+  const all = await auth.listListings(stall.city);
+  const here = all.filter((r) => r.stall_id === stall.stallId);
+  if (here.length && here.some((r) => r.seller_id !== myUid)) { gameUI.toast(t('marketStallTaken'), 'bad'); return; }
+  if (here.length >= STALL_CAP) { gameUI.toast(t('marketStallFull'), 'bad'); return; }
+  // One stall per seller: refuse if I already sell in a different stall (this
+  // city or any other — listMyStall spans cities).
+  const mine = await auth.listMyStall();
+  if (mine.some((r) => !(r.city === stall.city && r.stall_id === stall.stallId))) {
+    gameUI.toast(t('marketOneStall'), 'bad'); return;
+  }
+  const r = await auth.placeListing(stall.stallId, stall.city, here.length, item, price, profile.name);
+  if (!r.ok) { gameUI.toast(t('marketOffline'), 'bad'); return; }
+  inv.removeFromBackpack(bpIndex);   // the item now lives in the DB listing
+  audio.sfx.click();
+  recompute();                       // persists the now-shorter backpack
+  openMarketStall(stall);            // re-opens the window AND refreshes the 3D goods
+}
+
+// Unsell: pull the item back out of the DB listing and into the backpack. If the
+// bag is full the item is re-listed so nothing is ever lost.
+async function marketTake(listingId, stall) {
+  const r = await auth.takeListing(listingId);
+  if (!r.ok || !r.item) { gameUI.toast(t('marketOffline'), 'bad'); return; }
+  const add = inv.addToBackpack(r.item, player.level);
+  if (add !== 'ok') {
+    await auth.placeListing(stall.stallId, stall.city, 0, r.item, r.item.value || 0, profile.name);
+    gameUI.toast(t(add === 'heavy' ? 'tooHeavy' : 'full'), 'bad');
+    openMarketStall(stall);
+    return;
+  }
+  audio.sfx.pickup();
+  recompute();
+  gameUI.toast(t('marketTaken'), 'info');
+  openMarketStall(stall);
+}
+
+// Buy a listing through the atomic RPC, then reconcile gold + backpack from the
+// DB (the RPC mutated them server-side, bypassing the local coin pile).
+async function marketBuy(listingId, item, price, stall) {
+  const r = await auth.buyListing(listingId);
+  if (!r.ok) {
+    const key = ({ gold: 'marketNotEnoughGold', gone: 'marketGone', self: 'marketNoSelf',
+                   nochar: 'marketOffline', offline: 'marketOffline', 'no-market': 'marketOffline' })[r.reason] || 'marketOffline';
+    gameUI.toast(t(key), 'bad');
+    if (r.reason === 'gone') openMarketStall(stall);   // refresh: the item left
+    return;
+  }
+  await reconcileFromCloud();        // re-hydrate the authoritative gold + bag
+  audio.sfx.pickup();
+  const name = (item && item.name) ? (typeof item.name === 'string' ? item.name : (item.name[getLang()] || item.name.es)) : '';
+  gameUI.toast(t('marketBought', name), 'loot');
+  openMarketStall(stall);
+}
+
+// On login: credit any sales made while we were away and toast each one. The
+// claim RPC already added the gold to the character row, so reconcile the local
+// pile from the DB rather than adding coins twice.
+async function claimMarketPayouts() {
+  if (!auth.isAvailable() || !authCharacterId) return;
+  const rows = await auth.claimPayouts();
+  if (!rows.length) return;
+  await reconcileFromCloud();
+  for (const r of rows) {
+    gameUI.toast(t('marketItemSold', r.item_name, r.buyer_name) + ' (+' + mmCoins(r.gold) + ')', 'loot');
+  }
+}
+
+// --- House networking bridges ---------------------------------------------
+// These are no-ops offline. Implemented against net.js (broadcast house state,
+// who's inside, and item purchases) so other connected players see the room.
+
+function broadcastHouse() {
+  if (!net.isOnline()) return;
+  const lot = houseStore.owned ? houseLotById.get(houseStore.owned.lotId) : null;
+  net.houseSync(houseStore.owned ? houseStore.publicState(lot, (profile && profile.name) || 'Adventurer') : { lotId: null });
+}
+
+function broadcastHouseInside(lotId, inside) {
+  if (!net.isOnline()) return;
+  net.houseInside(lotId, inside);
+}
+
+// The centred "Press E to…" hint shown near a house door or showcase slot.
+let _lastHint = '';
+function updateInteractHint() {
+  let hint = '';
+  if (state === 'play' && player.alive) {
+    if (place === 'house' && activeHouse) {
+      if (activeHouse.nearestSlot(player.pos.x, player.pos.z, 2.4)) {
+        const owner = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+        // Houses are display-only: the owner places items, a visitor just looks.
+        hint = owner ? '🖼️ ' + t('housePlaceItem') : '🖼️ ' + t('houseOnlyOwner');
+      }
+    } else if (place === 'surface') {
+      const lot = houseAtPlayer();
+      if (lot) {
+        if (houseStore.ownsLot(lot.id)) hint = '🏠 ' + t('houseManage');
+        else {
+          const visited = visitedHouses.get(lot.id);
+          if (visited && visited.owner) hint = '🚪 ' + t('houseEnterPrompt', visited.owner);
+          else if (!houseStore.ownsAny()) hint = '🏠 ' + t('houseBuyPrompt');
+        }
+      } else {
+        const node = interactableAt(cityProps, player.pos.x, player.pos.z);
+        if (node && node.kind === 'stall') hint = '🛒 ' + t('marketStallHint');
+        else if (node && node.kind === 'healStatue') hint = '✨ ' + t('healStatueHint');
+      }
+    }
+  }
+  if (hint !== _lastHint) {
+    _lastHint = hint;
+    ui.interactHint.textContent = hint;
+    ui.interactHint.classList.toggle('hidden', !hint);
+  }
+  // Show the touch INTERACT button whenever anything is in range (NPCs, doors,
+  // shops, depot, portals, stalls, chests, house slots) — touch players have no E.
+  if (ui.btnInteract) {
+    const near = controls.isTouch && state === 'play' && player.alive && interactableNearby();
+    ui.btnInteract.classList.toggle('hidden', !near);
+  }
+}
+
+// True if tryInteract() would do something right now (mirrors its checks). Drives
+// the touch interact button's visibility so it only appears when it's useful.
+function interactableNearby() {
+  if (place === 'house' && activeHouse) return !!activeHouse.nearestSlot(player.pos.x, player.pos.z, 2.4);
+  if (worldNpcs.npcAt(player.pos.x, player.pos.z)) return true;
+  const chest = chestAt(dungeonChests, player.pos.x, player.pos.z);
+  if (chest && !chest.opened) return true;
+  if (houseAtPlayer()) return true;
+  return !!interactableAt(cityProps, player.pos.x, player.pos.z);
+}
+
+// Quest WAYPOINT ARROW: a screen-space pointer toward the current quest
+// destination (_waypoint, set by refreshWaypoint). It hugs the screen edge,
+// rotates to point at the target, and shows the place name + distance. Hidden
+// when the toggle is off, when there's no quest target, when off the surface, or
+// when the player is basically on top of the destination.
+const _qArrowEl = document.getElementById('quest-arrow');
+const _qArrowGlyph = _qArrowEl ? _qArrowEl.querySelector('.qa-arrow') : null;
+const _qArrowLabel = _qArrowEl ? _qArrowEl.querySelector('.qa-label') : null;
+function updateQuestArrow() {
+  if (!_qArrowEl) return;
+  const off = !showQuestArrow || state !== 'play' || place !== 'surface' || !_waypoint || !player.alive;
+  if (off) { if (!_qArrowEl.classList.contains('hidden')) _qArrowEl.classList.add('hidden'); return; }
+
+  const dx = _waypoint.x - player.pos.x, dz = _waypoint.z - player.pos.z;
+  const dist = Math.hypot(dx, dz);
+  // Arrived: within ~14m, don't clutter — you can see the place/NPC.
+  if (dist < 14) { if (!_qArrowEl.classList.contains('hidden')) _qArrowEl.classList.add('hidden'); return; }
+
+  const W = innerWidth, H = innerHeight, cx = W / 2, cy = H / 2;
+  // Direction in WORLD space, rotated into camera/screen space by the camera's
+  // yaw. This is robust whether the target is in front or behind (the old
+  // screen-projection mirror jittered when the target sat near the center while
+  // behind, because the mirror loses sign there). atan2(forward, right) gives a
+  // screen angle where straight-ahead = up.
+  camera.getWorldDirection(camDir);
+  const camYaw = Math.atan2(camDir.x, camDir.z);      // heading the camera faces
+  const tgtYaw = Math.atan2(dx, dz);                  // heading to the target
+  let rel = tgtYaw - camYaw;                          // 0 = dead ahead
+  while (rel > Math.PI) rel -= Math.PI * 2;
+  while (rel < -Math.PI) rel += Math.PI * 2;
+  // Screen unit vector: ahead → up (-y), right of view → +x.
+  let ax = Math.sin(rel), ay = -Math.cos(rel);
+  const margin = 64;
+  // Scale the unit direction out to the viewport box (whichever edge it hits first).
+  const tx = (cx - margin) / (Math.abs(ax) || 1e-3);
+  const ty = (cy - margin) / (Math.abs(ay) || 1e-3);
+  const t = Math.min(tx, ty);
+  const ex = cx + ax * t, ey = cy + ay * t;
+
+  _qArrowEl.style.left = ex + 'px';
+  _qArrowEl.style.top = ey + 'px';
+  if (_qArrowGlyph) _qArrowGlyph.style.transform = `rotate(${Math.atan2(ay, ax)}rad)`;
+  if (_qArrowLabel) {
+    const name = _waypoint.name || '';
+    const verb = _waypoint.turnIn ? (getLang() === 'en' ? 'Turn in' : 'Entregar') : '';
+    _qArrowLabel.textContent = `${verb ? verb + ' · ' : ''}${name} · ${Math.round(dist)}m`;
+  }
+  _qArrowEl.classList.toggle('qa-turnin', !!_waypoint.turnIn);
+  if (_qArrowEl.classList.contains('hidden')) _qArrowEl.classList.remove('hidden');
+}
+
+// Keep the 3D stall goods in sync with the DB as the player moves around: when
+// they come within MARKET_VIEW_R of a city's market, (re)fetch that city's
+// listings and rebuild the counter plaques. Refreshes once on arrival, then at
+// most every MARKET_REFRESH_MS so newly-listed items by other players appear
+// without re-walking. Throttled hard so it never spams the network per frame.
+const MARKET_VIEW_R = 60;        // how near a city before we render its goods
+const MARKET_REFRESH_MS = 20000; // re-poll the visible city's listings this often
+let _marketCityId = null;
+let _marketNextPoll = 0;
+function updateMarketProximity() {
+  if (place !== 'surface' || !auth.isAvailable()) return;
+  const c = nearestCity(player.pos.x, player.pos.z);
+  const near = c && Math.hypot(c.x - player.pos.x, c.z - player.pos.z) < MARKET_VIEW_R;
+  if (!near) { _marketCityId = null; return; }
+  const now = performance.now();
+  if (c.id !== _marketCityId) {
+    _marketCityId = c.id;
+    _marketNextPoll = now + MARKET_REFRESH_MS;
+    refreshMarketDisplay(c.id);     // fire-and-forget; rebuilds the counter goods
+  } else if (now >= _marketNextPoll) {
+    _marketNextPoll = now + MARKET_REFRESH_MS;
+    refreshMarketDisplay(c.id);
+  }
+}
+
+// Gently breathe the temple healing auras (opacity pulse on the translucent disc
+// + dome) and slowly turn the whole aura so the motes drift — a living "this is
+// healing you" glow. Cheap: only the few aura groups, only on the surface.
+function updateTempleAuras() {
+  if (place !== 'surface' || !templeAuras.length) return;
+  const pulse = 0.78 + 0.22 * Math.sin(nowSec * 2.0);   // 0.56..1.0
+  for (const aura of templeAuras) {
+    aura.rotation.y = nowSec * 0.25;
+    for (const child of aura.children) {
+      const m = child.material;
+      if (m && m.transparent && m._baseOpacity == null) m._baseOpacity = m.opacity;
+      if (m && m.transparent) m.opacity = m._baseOpacity * pulse;
+    }
+  }
 }
 
 function openNpcDialog(npc) {
@@ -1881,10 +2938,14 @@ function openNpcDialog(npc) {
   const npcCity = CITIES.find((c) => c.id === npc.city);
   if (npc.role === 'banker' && npcCity) { gameUI.openDepot(npcCity); return; }
   if (npc.role === 'mayor' && npcCity) { openResidency(npc, npcCity); return; }
+  // The stable master sells the two starter mounts.
+  if (npc.role === 'stable') { openMountVendor(npc); return; }
   gameUI.openNpc(npc, questLog, player.level, {
     questsForNpc: (id) => questsForNpc(id),
     accept: (qid) => { if (questLog.accept(qid)) { audio.sfx.click(); onQuestProgress(); maybeFirstQuestHint(); } },
     complete: (qid) => completeQuest(qid),
+    // World gates for imaginative quests: night-only and "must hold this key/barter".
+    questCtx: { isNight: daynight.isNight(), hasItems: (id, n) => inv.hasItems(id, n) },
   });
   onQuestProgress();
 }
@@ -1909,6 +2970,16 @@ function maybeFirstQuestHint() {
 }
 
 function completeQuest(qid) {
+  // Spend any `collect` items the quest asked the player to BRING (dusts, fangs,
+  // etc.) — handing them over on turn-in, the imaginative "barter" step. The KEY
+  // gate (requiresItems) is deliberately NOT consumed: you brandish it to pass,
+  // and keep it. Read the quest before complete() clears it from the log.
+  const qdef = getQuest(qid);
+  if (qdef && questLog.readyToComplete().includes(qid)) {
+    for (const o of (qdef.objectives || [])) {
+      if (o.type === 'collect' && o.target) inv.removeById(o.target, o.count || 1);
+    }
+  }
   const res = questLog.complete(qid);
   if (!res) return;
   const r = res.rewards;
@@ -1920,10 +2991,67 @@ function completeQuest(qid) {
       if (item) inv.addToBackpack(item, player.level);
     }
   }
+  // Mount reward: either an explicit r.mount, or the quest→mount mapping.
+  const mountId = r.mount || mountForQuest(qid);
+  if (mountId) grantMount(mountId);
   audio.sfx.questComplete();
   gameUI.toast('🎉 ' + t('questDone'), 'levelup');
+  // CHAIN ADVANCE: complete() auto-accepted the `next` quest. Tell the player
+  // where to pick the trail back up ("Nueva misión: habla con X en Y") and flag
+  // the tracker to highlight it.
+  if (res.next) {
+    const nq = getQuest(res.next);
+    if (nq) {
+      const info = questGiverInfo(nq, getLang());
+      const title = (nq.title && (nq.title[getLang()] || nq.title.es)) || res.next;
+      let where = '';
+      if (info && info.npcName && info.cityName) where = ` — ${t('questTalkTo', info.npcName, info.cityName)}`;
+      else if (info && info.cityName) where = ` — ${info.cityName}`;
+      gameUI.toast('📜 ' + t('questNew', title) + where, 'levelup');
+      if (questTracker.highlight) questTracker.highlight(res.next);
+    }
+  }
   onQuestProgress();
   recompute();
+}
+
+// Unlock a mount (quest reward or shop purchase). Toasts + persists.
+function grantMount(mountId) {
+  const def = getMount(mountId);
+  if (!def) return false;
+  if (!mounts.unlock(mountId)) return false;   // already owned
+  audio.sfx.levelUp();
+  gameUI.toast('🐎 ' + t('mountUnlocked', def.name[getLang()] || def.name.es), 'levelup');
+  persistProgress();
+  return true;
+}
+
+// Mount vendor (the stable master): sells the two `source:'shop'` mounts.
+function openMountVendor(npc) {
+  if (document.pointerLockElement) document.exitPointerLock();
+  gameUI.openMountVendor(npc, shopMounts(), mounts, {
+    buy: (mount) => buyMount(mount, npc),
+  });
+}
+
+function buyMount(mount, npc) {
+  if (!mount || mount.source !== 'shop') return;
+  if (mounts.has(mount.id)) { gameUI.toast(t('alreadyOwned'), 'info'); return; }
+  if (inv.gold < mount.cost) { gameUI.toast(t('notEnoughGold'), 'bad'); return; }
+  inv.gold -= mount.cost;
+  player.gold = inv.gold;
+  grantMount(mount.id);
+  recompute();
+  openMountVendor(npc);   // refresh the dialog (now showing it as owned)
+}
+
+// The mounts panel: list every owned mount, pick the active one, mount/dismount.
+function openMountsPanel() {
+  if (document.pointerLockElement) document.exitPointerLock();
+  gameUI.openMountsPanel(mounts, MOUNTS, {
+    select: (id) => { mounts.select(id); openMountsPanel(); persistProgress(); },
+    toggle: () => { toggleMount(); openMountsPanel(); },
+  });
 }
 
 function openDungeonChest(chest) {
@@ -1940,6 +3068,10 @@ function openDungeonChest(chest) {
 
 function onQuestProgress() {
   gameUI.renderQuests(questLog);
+  // questTracker is constructed during init; every caller of onQuestProgress runs
+  // after that (combat hooks, UI handlers, post-init setup), so it's always set.
+  questTracker.refresh();
+  refreshWaypoint();
   worldNpcs.refreshMarkers((npc) => {
     const qs = questsForNpc(npc.id);
     return qs.some((q) => questLog.canAccept(q.id, player.level) || (questLog.isActive(q.id) && questLog.readyToComplete().includes(q.id)));
@@ -1992,8 +3124,12 @@ function screenFade(toBlack) {
   });
 }
 
-// The active world provider for height/camera math (surface or cave).
-function activeWorld() { return place === 'cave' ? activeCave : world; }
+// The active world provider for height/camera math (surface, cave or house).
+function activeWorld() {
+  if (place === 'cave') return activeCave;
+  if (place === 'house') return activeHouse;
+  return world;
+}
 
 // The minimap's underground context, or null on the surface. Carries the floor
 // the player is on, the floor the map is currently SHOWING (caveViewFloor, which
@@ -2020,19 +3156,216 @@ function pageCaveMap(dir) {
   caveViewFloor = Math.max(0, Math.min(activeCave.floorCount - 1, caveViewFloor + dir));
 }
 
+// --- Houses: buy, enter, exit, decorate -----------------------------------
+
+// Rebuild the surface exterior dressing: a FOR SALE sign over every unowned lot
+// the local player could buy, and the owner's recolour skin over their own house.
+// Cheap enough to rebuild whenever ownership or colours change.
+function refreshHouseExteriors() {
+  if (houseExteriorGroup) { scene.remove(houseExteriorGroup); houseExteriorGroup = null; }
+  const g = new THREE.Group();
+  for (const lot of houseLots) {
+    if (houseStore.ownsLot(lot.id)) {
+      g.add(buildExteriorSkin(lot, houseStore.colors));
+      // The owner's facade: up to two display items on the front wall.
+      g.add(buildFacadeDisplay(lot, houseStore.facade));
+    } else if (visitedHouses.has(lot.id)) {
+      // A neighbour's house we've seen over the network: show their facade items
+      // so passers-by see the best pieces without entering. Display-only.
+      const snap = visitedHouses.get(lot.id);
+      if (snap && Array.isArray(snap.facade)) g.add(buildFacadeDisplay(lot, snap.facade));
+    } else if (!houseStore.ownsAny()) {
+      // Only advertise FOR SALE while the player owns nothing (one house each).
+      // The board just says "En venta"/"For sale"; the price + buy shows when you
+      // walk to the door and press E (openHouseBuy).
+      g.add(buildForSaleSign(lot, t('houseForSale')));
+    }
+  }
+  houseExteriorGroup = g;
+  scene.add(g);
+  g.visible = place === 'surface';
+}
+
+// The lot the player is standing at the doorstep of, or null.
+function houseAtPlayer() {
+  // 3.2m doorstep radius: the house's own solid (footprint circle) stops the
+  // player ~0.3m short of a normal door and further for wide mansions, so the
+  // detection radius has to be generous enough to fire while you're pressed up
+  // against the front wall by the door. Houses are ring-spaced several metres
+  // apart, so this never picks the wrong house.
+  return houseLotAt(houseLots, player.pos.x, player.pos.z, 3.2);
+}
+
+// Buy the lot the player is at. One house per player; deduct gold by size.
+function buyHouse(lot) {
+  if (houseStore.ownsAny()) { gameUI.toast(t('houseAlreadyOwn'), 'bad'); return; }
+  const price = housePrice(lot);
+  if (inv.gold < price) { gameUI.toast(t('noGold'), 'bad'); return; }
+  inv.spendGold(price);
+  player.gold = inv.gold;
+  houseStore.buy(lot);
+  audio.sfx.levelUp();
+  const cityName = (CITIES.find((c) => c.id === lot.city) || {}).name || '';
+  gameUI.toast(t('houseBought', cityName), 'levelup');
+  recompute();
+  refreshHouseExteriors();
+  persistProgress();
+  broadcastHouse();
+  gameUI.closeContext();
+}
+
+// Enter a house interior (your own, or a visit to someone else's snapshot).
+async function enterHouse(lot, state, opts = {}) {
+  if (houseTransitioning || place !== 'surface') return;
+  houseTransitioning = true;
+  await screenFade(true);
+  // Spawn back just outside the door on exit. The house footprint is now FULLY
+  // solid (buildHouse tiles the whole box with collision circles, reaching to
+  // ~max(w,d)/2 + ~0.5 along the front axis), so spawning AT the doorstep
+  // (lot.doorX/doorZ) drops the player against/inside that solid and they get
+  // stuck. Push the return point OUT along the door's outward normal — the front
+  // face direction (fx, fz), same axis buildHouse uses to place the door — far
+  // enough to clear the footprint plus the player's body radius, and nudge it
+  // further out if that landing spot still reports solid.
+  {
+    const rot = lot.rot || 0;
+    const fx = Math.sin(rot), fz = Math.cos(rot);          // outward door normal
+    const clear = Math.max(lot.w || 5, lot.d || 5) / 2 + 1.5; // footprint half + body
+    let rx = lot.doorX + fx * clear;
+    let rz = lot.doorZ + fz * clear;
+    // If we'd still land in a solid (a neighbouring wall, a fence, a slope), keep
+    // stepping outward along the normal until we find clear ground.
+    for (let extra = 0; extra < 8 && world.solidAt(rx, rz, 0.4); extra++) {
+      rx += fx * 0.6; rz += fz * 0.6;
+    }
+    houseReturn.set(rx, world.heightAt(rx, rz) + 0.2, rz);
+  }
+  combat.clear();
+  mounts.dismount();
+
+  if (activeHouse) activeHouse.dispose();
+  activeHouse = new HouseInterior(scene, lot, state, { readOnly: !!opts.readOnly });
+  activeHouseLot = lot;
+  setSurfaceVisible(false);
+  if (houseExteriorGroup) houseExteriorGroup.visible = false;
+  activeHouse.setVisible(true);
+  savedFog = scene.fog; savedBg = scene.background;
+  scene.fog = null;
+  scene.background = new THREE.Color(0x14110d);
+
+  player.world = activeHouse;
+  combat.world = activeHouse;
+  const entry = activeHouse.entryPoint();
+  player.spawnAt(entry.x, entry.z);
+  player.yaw = entry.yaw;
+  place = 'house';
+  // The room is small; a third-person pull-back fights the walls and shows the
+  // black void outside. Force FIRST person indoors so you always see the lit
+  // room, and remember the outdoor camera mode to restore it on the way out.
+  _camBeforeHouse = firstPerson;
+  firstPerson = true; introCam = 0;
+  audio.setMood('overworld');
+  const title = opts.readOnly
+    ? t('houseOwnerOf', state.owner || t('houseName'))
+    : t('houseYours');
+  gameUI.toast('🏠 ' + title);
+  if (!opts.readOnly) broadcastHouseInside(lot.id, true);
+  await screenFade(false);
+  houseTransitioning = false;
+}
+
+// Walk-out check: at the interior door → leave; on the basement stair → swap floor.
+async function maybeLeaveHouse() {
+  if (houseTransitioning || place !== 'house' || !activeHouse) return;
+  // Basement stair.
+  const stair = activeHouse.stairTrigger();
+  if (stair && activeHouse.activeFloor === 0
+      && Math.hypot(player.pos.x - stair.x, player.pos.z - stair.z) < stair.r) {
+    houseTransitioning = true;
+    await screenFade(true);
+    const land = activeHouse.enterBasement();
+    player.spawnAt(land.x, land.z); player.yaw = land.yaw;
+    await screenFade(false);
+    houseTransitioning = false;
+    return;
+  }
+  // From the basement, the same stair goes back up.
+  if (stair && activeHouse.activeFloor === 1
+      && Math.hypot(player.pos.x - stair.x, player.pos.z - stair.z) < stair.r) {
+    houseTransitioning = true;
+    await screenFade(true);
+    const land = activeHouse.enterGround();
+    player.spawnAt(land.x, land.z); player.yaw = land.yaw;
+    await screenFade(false);
+    houseTransitioning = false;
+    return;
+  }
+  // Exit door (ground floor only). Instead of auto-firing when you brush the
+  // doorway (which felt buggy and could re-trigger), ask "leave?" once while
+  // you're at the door; on Yes, teleport OUTSIDE. The prompt is shown once per
+  // approach (cleared when you step away) so it never spams.
+  if (activeHouse.activeFloor !== 0) { _exitPromptShown = false; return; }
+  const ex = activeHouse.exitTrigger();
+  const atDoor = Math.hypot(player.pos.x - ex.x, player.pos.z - ex.z) < ex.r;
+  if (atDoor && !_exitPromptShown && !houseTransitioning) {
+    _exitPromptShown = true;
+    gameUI.confirmPrompt('🚪 ' + (t('houseLeaveTitle') || 'Salir de la casa'),
+      t('houseLeavePrompt') || '¿Quieres salir?',
+      t('houseLeave') || 'Salir',
+      async () => { if (houseTransitioning) return; houseTransitioning = true; await exitHouse(); houseTransitioning = false; });
+  } else if (!atDoor) {
+    _exitPromptShown = false;   // stepped away from the door: allow the prompt again next time
+  }
+}
+let _exitPromptShown = false;
+
+async function exitHouse() {
+  await screenFade(true);
+  const wasOwn = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+  const leftId = activeHouseLot ? activeHouseLot.id : null;
+  if (activeHouse) { activeHouse.dispose(); activeHouse = null; }
+  setSurfaceVisible(true);
+  if (houseExteriorGroup) houseExteriorGroup.visible = true;
+  if (savedFog !== null) scene.fog = savedFog;
+  if (savedBg) scene.background = savedBg;
+  player.world = world;
+  combat.world = world;
+  place = 'surface';
+  firstPerson = _camBeforeHouse; introCam = 0;   // restore the outdoor camera mode
+  player.spawnAt(houseReturn.x, houseReturn.z);
+  player.yaw = 0;
+  world.update(player.pos.x, player.pos.z, true);
+  audio.setMood('overworld');
+  activeHouseLot = null;
+  if (wasOwn && leftId) broadcastHouseInside(leftId, false);
+  await screenFade(false);
+}
+
+// Re-hang / repaint the live interior after the owner changes colours, light or
+// items, so edits show immediately without leaving the house.
+function refreshActiveHouse() {
+  if (place === 'house' && activeHouse && !activeHouse.readOnly) {
+    activeHouse.state = houseStore;
+    activeHouse.rebuild();
+  }
+}
+
 // Toggle visibility of every surface root so only the cave renders underground.
 function setSurfaceVisible(v) {
   world.setVisible(v);
   if (dungeonBuild.group) dungeonBuild.group.visible = v;
   if (ruinsBuild.group) ruinsBuild.group.visible = v;
   citiesGroup.visible = v;
+  marketDisplay.setVisible(v);   // the 3D goods on the stall counters
   worldNpcs.setVisible?.(v);
   seaFauna.setVisible?.(v);
+  bots.setVisible?.(v);
   daynight.sun.visible = v;
   daynight.hemi.visible = v;
   if (daynight.moonMesh) daynight.moonMesh.visible = v;
   if (daynight.sunMesh) daynight.sunMesh.visible = v;
   if (daynight.stars) daynight.stars.visible = v;
+  daynight.setSkyDressingVisible?.(v);   // clouds + birds: surface only
 }
 
 let savedFog = null, savedBg = null;
@@ -2055,6 +3388,7 @@ async function descendInto(dungeon) {
   // dungeon's own anchor, NOT the player's descend position.
   surfaceReturn.set(dungeon.x, world.heightAt(dungeon.x, dungeon.z + 9) + 0.2, dungeon.z + 9);
   combat.clear();
+  mounts.dismount();   // mounts stay topside — caves are too cramped to ride
 
   activeCave = getCaveFloor(scene, dungeon);   // a CaveSystem, reset to top floor
   setSurfaceVisible(false);
@@ -2162,18 +3496,61 @@ function updateCamera() {
     camera.rotation.x = player.pitch;
     camera.rotation.y = player.yaw;
   } else {
-    const d = 4.4;
+    // Indoors the room is small, so a full third-person pull-back would shove the
+    // camera through a wall (or out the door gap) and show the black void. Start
+    // closer inside a house so it stays in the room.
+    let d = (place === 'house') ? 2.4 : 4.4;
     const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
     // introCam swings the camera from in front of the hero (welcome view, you
     // see your face) to behind as you start moving.
     const side = 1 - 2 * introCam; // +1 behind, -1 front
-    const cx = player.pos.x + Math.sin(player.yaw) * cp * d * side;
-    const cz = player.pos.z + Math.cos(player.yaw) * cp * d * side;
+    // Camera-wall collision: march from the hero out to the desired camera spot
+    // and pull the camera IN if a wall/building solid blocks the line, so backing
+    // into a wall and turning the mouse can't push the camera through it (which
+    // let you see the void/sky beyond). March in small steps; stop just short of
+    // the first solid, keeping a small skin so the near plane never pokes through.
+    const dirX = Math.sin(player.yaw) * cp * side;
+    const dirZ = Math.cos(player.yaw) * cp * side;
+    const w = activeWorld();
+    if (w && w.solidAt) {
+      const SKIN = 0.45;            // keep the camera this far in front of a wall
+      const step = 0.3;
+      let hit = d;
+      for (let dist = step; dist <= d; dist += step) {
+        const sx = player.pos.x + dirX * dist;
+        const sz = player.pos.z + dirZ * dist;
+        if (w.solidAt(sx, sz, 0.2)) { hit = Math.max(0.6, dist - SKIN); break; }
+      }
+      d = Math.min(d, hit);
+    }
+    let cx = player.pos.x + dirX * d;
+    let cz = player.pos.z + dirZ * d;
+    // Inside a house, keep the camera INSIDE the room box (the wall-march can slip
+    // out through the door gap, and looking up/down can push it through the
+    // ceiling/floor — which is what "broke" the view while walking). Clamp X/Z
+    // here and Y below (after cy is computed).
+    let houseBounds = null;
+    if (place === 'house' && activeHouse && activeHouse.cameraBounds) {
+      houseBounds = activeHouse.cameraBounds();
+      cx = Math.min(Math.max(cx, houseBounds.minX), houseBounds.maxX);
+      cz = Math.min(Math.max(cz, houseBounds.minZ), houseBounds.maxZ);
+    }
     // Minecraft-style: raise the camera and aim past the hero's shoulder so the
     // body sits low in frame and the crosshair points at clear ground ahead,
     // not at the character's head.
     let cy = eyeY - sp * d + 0.9 + introCam * 0.4;
-    cy = Math.max(cy, activeWorld().heightAt(cx, cz) + 0.35, WATER_LEVEL + 0.25);
+    // Floor the camera just above the ground so it never dips below the terrain.
+    // ROOT CAUSE of the "third-person house is all black" bug: the old code also
+    // floored cy at WATER_LEVEL + 0.25 (WATER_LEVEL = 0) to keep the camera above
+    // the ocean — but a house interior lives at y = -400, so that surface-only
+    // floor yanked the indoor camera up to y ~= 0.25, roughly 400 m ABOVE the
+    // room, pointing at empty void → black screen. The waterline floor only makes
+    // sense on the surface, so apply it only there.
+    cy = Math.max(cy, activeWorld().heightAt(cx, cz) + 0.35);
+    if (place === 'surface') cy = Math.max(cy, WATER_LEVEL + 0.25);
+    // Keep the indoor camera between the floor and ceiling so it never pokes out
+    // the top/bottom of the room while you walk and look around.
+    if (houseBounds) cy = Math.min(Math.max(cy, houseBounds.minY), houseBounds.maxY);
     camera.position.set(cx, cy, cz);
     const fwd = introCam > 0.5 ? 0 : 2.2; // look ahead once we're behind the hero
     const lookX = player.pos.x - Math.sin(player.yaw) * fwd;
@@ -2276,8 +3653,10 @@ function tick() {
   // Underground, the surface day/night must not run (it would overwrite the
   // cave fog, background and lights every frame) and surface chunks needn't stream.
   if (place === 'surface') {
-    daynight.update(player.pos);
+    daynight.update(player.pos, dt);
     world.update(player.pos.x, player.pos.z);
+  } else if (place === 'house' && activeHouse) {
+    activeHouse.update();
   } else if (activeCave) {
     activeCave.update(player.pos.x, player.pos.z);
   }
@@ -2289,7 +3668,9 @@ function tick() {
 
     if (player.alive) {
       const wasGrounded = player.grounded;
+      applyFollow(controls);                 // auto-walk after a followed peer
       player.update(dt, controls);
+      mounts.update(dt);   // place + animate the ridden beast under the player
       if (wasGrounded && !player.grounded && player.vel.y > 1) audio.sfx.jump();
 
       // The welcome front-view holds, then swings behind only once you actually
@@ -2314,26 +3695,49 @@ function tick() {
       if (controls.consumeToggleLight()) toggleTorch();
 
       const isNight = daynight.isNight();
-      const ev = eventMultipliers(new Date());
+      // Event multipliers (×2 EXP days etc.) change at most once per day, so don't
+      // allocate a Date + multiplier objects every frame — refresh on a timer.
+      _evClock -= dt;
+      if (_evClock <= 0 || !_evCached) { _evCached = eventMultipliers(new Date()); _evClock = 30; }
+      const ev = _evCached;
       // camera.position is the eye for nameplate line-of-sight (last frame's, which
       // is fine — one frame of lag is imperceptible). Works in 1st and 3rd person.
       combat.update(dt, player, isNight, ev, camera.position);
+
+      // Lock onto and red-highlight whoever the crosshair is aiming at, so the
+      // player can see their next hit/shot's victim (even up a slope or in a pit).
+      // When a target is locked the CROSSHAIR itself goes red — that's the player's
+      // promise that the next attack will connect (see _resolveHit's locked path).
+      camera.getWorldDirection(camDir);
+      const aimed = combat.acquireTarget(player, camDir, camera.position);
+      if (_crosshairEl) _crosshairEl.classList.toggle('on-target', !!aimed);
 
       // Only grab a drop the backpack can actually take; otherwise it stays put
       // on the ground (don't re-spawn it underfoot) and we warn at most once a
       // few seconds so standing on a too-heavy item doesn't spam the toast.
       const got = combat.tryPickup(player, (item) => inv.wouldAccept(item, player.level));
       if (got && got.item) {
-        audio.sfx.pickup();
-        gameUI.toast(t('looted', got.item.name), 'loot');
-        if (questLog.onEvent('collect', got.item.baseId).length) onQuestProgress();
-        recompute();
+        // tryPickup only lifts the item off the ground — actually PUT it in the
+        // bag here (this add was missing, so loot vanished on pickup). wouldAccept
+        // already cleared it, so a full/heavy result should be rare; if it does
+        // happen, drop it back so the loot is never lost.
+        const r = inv.addToBackpack(got.item, player.level);
+        if (r !== 'ok') {
+          combat.spawnDrop(player.pos, got.item, { pickupDelay: 1.2 });
+          if (nowSec - lastFullWarn > 3) { lastFullWarn = nowSec; gameUI.toast(t(r === 'heavy' ? 'tooHeavy' : 'full'), 'bad'); }
+        } else {
+          audio.sfx.pickup();
+          gameUI.toast(t('looted', got.item.name), 'loot');
+          if (questLog.onEvent('collect', got.item.baseId).length) onQuestProgress();
+          recompute();
+        }
       } else if (got && nowSec - lastFullWarn > 3) {
         lastFullWarn = nowSec;
         gameUI.toast(t(got.reason === 'heavy' ? 'tooHeavy' : 'full'), 'bad');
       }
 
       if (place === 'surface') { checkDungeon(); maybeDescend(); }
+      else if (place === 'house') maybeLeaveHouse();
       else maybeAscend();
       regenVitals(dt);
       // Burn/poison drain + ice slow. The slow factor feeds player movement.
@@ -2342,7 +3746,10 @@ function tick() {
     }
 
     peers.tick(dt);
-    worldNpcs.tick(dt);
+    worldNpcs.tick(dt, player.pos);
+    if (place === 'surface') {
+      bots.tick(dt, { playerPos: player.pos, creatures: combat.creatures, place, addChat: addChatLine, lang: getLang() });
+    }
     updateDungeons(dt, dungeonChests);
     floatText.update(dt);
     if (place === 'surface') seaFauna.tick(dt, player);
@@ -2358,7 +3765,12 @@ function tick() {
     sendNetState();
 
     updateCamera();
-    minimap.draw(player, peers.list(), combat.creatures, caveMinimapContext());
+    updateInteractHint();
+    updateQuestArrow();
+    updateMarketProximity();
+    updateTempleAuras();
+    const mapBlips = place === 'surface' ? { ...peers.list(), ...bots.list() } : peers.list();
+    minimap.draw(player, mapBlips, combat.creatures, caveMinimapContext());
     gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
 
     const danger = player.alive && player.hp / player.maxHp < 0.3;
@@ -2434,6 +3846,9 @@ function doAttack() {
   // Raycast from the crosshair (camera center) so you hit exactly what you aim at.
   camera.getWorldDirection(camDir);
   const result = combat.attack(player, camDir, camera.position);
+  // Send the druid's loyal pets to pile onto whatever the druid just attacked
+  // ("si el druida ataca a una criatura, su criatura va enseguida a atacarla").
+  if (result && result.creature) combat.focusPetsOn(result.creature);
   // Train the weapon's Tibia use-skill on a connecting (non-miss) hit. Wands
   // train Magic Level via mana spent instead (below).
   if (result && result.creature && !result.miss && !isWand && charStats) {
@@ -2462,7 +3877,26 @@ function doAttack() {
 const aimPoint = new THREE.Vector3();
 function aimPointFor(target) {
   if (target && !target.dead && !target.dying) {
-    aimPoint.set(target.pos.x, target.pos.y + 0.8, target.pos.z);
+    // Aim at the EXACT spot on the target's body the crosshair is on (head,
+    // torso or feet) — the point on its feet→head capsule closest to the camera
+    // ray — so the shot lands precisely where you aim, even up a slope or
+    // overhead, instead of always at a fixed torso height.
+    const s = target.def.variantScale || 1;
+    const y0 = target.pos.y + 0.15 * s, y1 = target.pos.y + 1.45 * s;
+    const ox = camera.position.x, oy = camera.position.y, oz = camera.position.z;
+    const dl = Math.hypot(camDir.x, camDir.y, camDir.z) || 1;
+    const dx = camDir.x / dl, dy = camDir.y / dl, dz = camDir.z / dl;
+    // Closest height on the vertical body segment to the ray (10 samples).
+    let bestD2 = Infinity, bestY = (y0 + y1) / 2;
+    for (let i = 0; i <= 10; i++) {
+      const sy = y0 + (y1 - y0) * (i / 10);
+      let t = (target.pos.x - ox) * dx + (sy - oy) * dy + (target.pos.z - oz) * dz;
+      if (t < 0) t = 0;
+      const gx = ox + dx * t - target.pos.x, gy = oy + dy * t - sy, gz = oz + dz * t - target.pos.z;
+      const d2 = gx * gx + gy * gy + gz * gz;
+      if (d2 < bestD2) { bestD2 = d2; bestY = sy; }
+    }
+    aimPoint.set(target.pos.x, bestY, target.pos.z);
     return;
   }
   // March down the ray; stop at terrain so a downward shot hits the ground where
@@ -2503,6 +3937,28 @@ function flashRangeRing() { if (rangeRingPinned) rangeRingFlash = 0.6; }
 function toggleRangeRing() {
   rangeRingPinned = !rangeRingPinned;
   audio.sfx.click();
+}
+
+// Mount / dismount the active mount (G key, and the mounts panel button). You
+// can't mount underground (caves are too cramped) or while in water.
+function toggleMount() {
+  if (state !== 'play' || !player.alive) return;
+  if (!mounts.activeId || !mounts.ownedList().length) {
+    gameUI.toast('🐴 ' + t('noMounts'), 'info');
+    return;
+  }
+  if (mounts.isMounted()) {
+    mounts.dismount();
+    audio.sfx.click();
+    gameUI.toast('🐾 ' + t('dismounted'), 'info');
+    return;
+  }
+  if (place !== 'surface') { gameUI.toast('🚫 ' + t('cantMountHere'), 'bad'); return; }
+  if (player.inWater) { gameUI.toast('🚫 ' + t('cantMountHere'), 'bad'); return; }
+  mounts.mount();
+  audio.sfx.levelUp();
+  const def = getMount(mounts.activeId);
+  gameUI.toast('🐎 ' + t('mountedOn', def ? (def.name[getLang()] || def.name.es) : ''), 'levelup');
 }
 
 function updateRangeRing(dt) {
@@ -2576,12 +4032,20 @@ function updateWandBolt(dt) {
   // Gently steer toward a live target so the path reads as "homing in", not a
   // straight line that misses once the enemy has moved.
   if (alive) {
-    const want = wandBolt._hand.set(tgt.pos.x - wandBolt.pos.x, (tgt.pos.y + 0.8) - wandBolt.pos.y, tgt.pos.z - wandBolt.pos.z);
+    // Home toward the target's true body centre (scaled to its size), so the
+    // homing stays accurate for tall and short creatures alike.
+    const cy = tgt.pos.y + 0.8 * (tgt.def.variantScale || 1);
+    const want = wandBolt._hand.set(tgt.pos.x - wandBolt.pos.x, cy - wandBolt.pos.y, tgt.pos.z - wandBolt.pos.z);
     if (want.lengthSq() > 1e-4) {
       want.normalize().multiplyScalar(BOLT_SPEED);
       wandBolt.vel.lerp(want, Math.min(1, dt * 8));
     }
-    if (wandBolt.pos.distanceTo(tgt.pos) < 0.8) { wandBolt.active = false; wandBolt.mesh.visible = false; return; }
+    if (wandBolt.pos.distanceTo(tgt.pos) < 0.8) {
+      // Reached the target: pop with a flash + sparks so even the basic wand
+      // shot reads as an impact, not a ball blinking out.
+      skillSystem.impactBurst(wandBolt.pos, wandBolt.mesh.material.color.getHex());
+      wandBolt.active = false; wandBolt.mesh.visible = false; return;
+    }
   }
 
   wandBolt.pos.addScaledVector(wandBolt.vel, dt);
@@ -2673,18 +4137,38 @@ function serializeSave() {
   return {
     level: player.level, exp: player.exp, gold: inv.gold,
     equipment: inv.serialize(), depot: depot.serialize(), quests: questLog.serialize(), stats: charStats.serialize(),
+    mounts: mounts.serialize(),
+    house: houseStore.serialize(),    // owned house: walls, colours, light, bans
+    hotbar: hotbar.serialize(),       // quickslot bar contents (number row)
+    keyboard: keyboardPanel.serialize(), // MapleStory-style key→action binds
+    keymap: controls.keymap.serialize(), // rebound game-action keys (per character)
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+    // Stamp every local save so, on reload, we can tell whether the (async, often
+    // lagging) cloud row is actually fresher than what we last wrote locally.
+    savedAt: Date.now(),
   };
 }
 
 function applyCloudSave(data) {
   if (!data) return;
-  player.exp = data.exp || player.exp;
+  if (data.exp != null) player.exp = data.exp;
   player.level = xpProgress(player.exp).level;
   if (data.equipment) inv.load(data.equipment);
+  // Restore gold AFTER inv.load so the explicit saved value always wins over the
+  // coin-migration fallback inside inv.load. Without this line a reload dropped
+  // all gold — both the localStorage and the cloud load paths run through here,
+  // so omitting it was the "gold/exp lost on refresh" bug.
+  if (data.gold != null) inv.gold = data.gold;
   if (data.depot) depot.load(data.depot);
   if (data.quests) questLog.load(data.quests);
   if (data.stats) charStats.load(data.stats);
+  if (data.mounts) mounts.load(data.mounts);
+  if (data.house) { houseStore.load(data.house); refreshHouseExteriors(); }
+  if (data.hotbar) hotbar.load(data.hotbar, resolveHotbarEntry);
+  // Rebound game-action keys load BEFORE the skill/potion binds so reserved-key
+  // filtering reflects the player's actual movement/jump layout.
+  if (data.keymap) controls.keymap.load(data.keymap);
+  if (data.keyboard) keyboardPanel.load(data.keyboard, resolveHotbarEntry);
   applyVocationStats(true);
   recompute();
 }
@@ -2692,6 +4176,10 @@ function applyCloudSave(data) {
 // Hydrate a returning character from its Supabase row: level/exp, gold, gear,
 // per-city depot and last position (so you resume where you logged off).
 function applyCharacterRow(row) {
+  // Remember how fresh this cloud row is so loadSave() only lets the local copy
+  // win when localStorage is actually newer (e.g. progress made since this row
+  // was written), not stale (e.g. older device).
+  _cloudSavedAt = row && row.updated_at ? (Date.parse(row.updated_at) || 0) : 0;
   player.exp = row.exp || 0;
   player.level = xpProgress(player.exp).level;
   inv.gold = row.gold || 0;
@@ -2700,6 +4188,11 @@ function applyCharacterRow(row) {
   if (row.depot) depot.load(row.depot);
   if (row.stats) charStats.load(row.stats);
   if (row.quests) questLog.load(row.quests);
+  if (row.mounts) mounts.load(row.mounts);
+  if (row.house) { houseStore.load(row.house); refreshHouseExteriors(); }
+  if (row.hotbar) hotbar.load(row.hotbar, resolveHotbarEntry);
+  if (row.keymap) controls.keymap.load(row.keymap);   // rebound game-action keys
+  if (row.keyboard) keyboardPanel.load(row.keyboard, resolveHotbarEntry);
   if (Array.isArray(row.friends)) { friends.clear(); for (const f of row.friends) friends.add(f); }
   applyVocationStats(true);
   if (row.pos && typeof row.pos.x === 'number') {
@@ -2717,6 +4210,12 @@ function saveToAccount() {
     equipment: inv.serialize(), backpack: inv.backpack,
     depot: depot.serialize(), stats: charStats.serialize(),
     quests: questLog.serialize(), friends: [...friends],
+    mounts: mounts.serialize(),
+    house: houseStore.serialize(),
+    // Rebound game-action keys, per character. OPTIONAL column (ADD_keymap_column
+    // .sql); auth.saveCharacter strips it if the DB lacks it, and the local save
+    // keeps it regardless.
+    keymap: controls.keymap.serialize(),
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
   });
 }
@@ -2732,10 +4231,29 @@ function loadProfile() {
 function saveProfile() { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }
 function saveLocal() { localStorage.setItem(SAVE_KEY, JSON.stringify(serializeSave())); }
 
+// Persist progress the moment it changes (gold/XP earned in combat used to only
+// hit the 15s interval, so a quick reload after a kill lost that loot). The
+// localStorage write is synchronous and always lands; the cloud write is
+// debounced so a burst of kills doesn't spam Supabase.
+let _cloudSaveTimer = 0;
+function persistProgress() {
+  if (state !== 'play') return;
+  saveLocal();
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(() => { if (state === 'play') saveToAccount(); }, 2500);
+}
+
 function loadSave() {
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-    if (s) applyCloudSave(s);
+    if (!s) return;
+    // The cloud character row was already applied at character-select
+    // (applyCharacterRow). Only let the LOCAL save override it when local is at
+    // least as fresh — otherwise an older local copy (e.g. after playing on
+    // another device) would clobber newer cloud progress. Saves written before
+    // we stamped savedAt have savedAt=0 and still apply when there's no cloud row.
+    const localAt = s.savedAt || 0;
+    if (localAt >= _cloudSavedAt) applyCloudSave(s);
   } catch (_) { /* corrupt save ignored */ }
 }
 

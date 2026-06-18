@@ -1,7 +1,9 @@
-import { CITIES, cityAt, cityWallOutline, cityGates } from './cities.js';
+import { CITIES, cityAt, cityWallOutline, cityGates, cityMapFeatures } from './cities.js';
 import { t } from './i18n.js';
 
-const RANGE = 90;        // half-width shown by the corner minimap, in meters
+const RANGE = 90;        // default half-width shown by the corner minimap, in meters
+const CORNER_MIN = 24;   // most zoomed-in the corner map goes (read house detail)
+const CORNER_MAX = 360;  // most zoomed-out the corner map goes
 const BIG_RANGE = 320;   // default half-width for the expanded map
 const BIG_MIN = 60;      // most zoomed-in the big map goes
 const BIG_MAX = 1400;    // most zoomed-out
@@ -30,6 +32,8 @@ export class Minimap {
     // the map's center; null means "follow the player".
     this.bigCenter = null;
     this.bigRange = BIG_RANGE;
+    // The corner minimap's half-width, zoomable with the mouse wheel over it.
+    this.cornerRange = RANGE;
 
     // Points of interest drawn as emoji on the map: { x, z, icon }.
     this.pois = opts.pois || [];
@@ -56,6 +60,11 @@ export class Minimap {
     this.bigRange = Math.max(BIG_MIN, Math.min(BIG_MAX, this.bigRange * factor));
   }
 
+  // Zoom the CORNER minimap in/out with the mouse wheel over it.
+  zoomCorner(factor) {
+    this.cornerRange = Math.max(CORNER_MIN, Math.min(CORNER_MAX, this.cornerRange * factor));
+  }
+
   // Re-center the expanded map on the player (used by a "recenter" control).
   recenter() { this.bigCenter = null; }
 
@@ -77,7 +86,7 @@ export class Minimap {
       return;
     }
 
-    this._render(this.ctx, this.size, pp.x, pp.z, RANGE, player, peers, creatures, true);
+    this._render(this.ctx, this.size, pp.x, pp.z, this.cornerRange, player, peers, creatures, true);
 
     if (this.coords) this.coords.textContent = fmtCoords(pp);
 
@@ -153,20 +162,70 @@ export class Minimap {
     if (cave.viewFloor < cave.floorCount - 1) { ctx.fillStyle = '#ff9a3a'; ctx.fillText('▼', 4, s - 18); }
   }
 
+  // Build (or reuse) the offscreen terrain layer for the given view. Cached and
+  // rebuilt only when the quantized center cell, range, or size changes — so a
+  // standing/slow-moving player pays the noise cost roughly once, not per frame.
+  _terrainLayer(s, cx, cz, range, legend) {
+    const step = legend ? 6 : 8;
+    // Quantize the cache center to a block of `step` world-pixels (coarse, so the
+    // cache survives normal walking), and remember the quantized center. The live
+    // _render() blits this with a sub-pixel offset (see drawImage in _render) to
+    // keep it pixel-aligned with the city/dot transforms, so coarse quantization
+    // doesn't cause visible drift. Rebuilt only when you cross a block or zoom.
+    const worldPerPx = range / (s / 2);
+    const block = worldPerPx * step;
+    const qx = Math.round(cx / block);
+    const qz = Math.round(cz / block);
+    this._terrCx = qx * block; this._terrCz = qz * block;   // cached center (for the offset)
+    const key = `${s}|${range.toFixed(1)}|${step}|${qx}|${qz}`;
+    if (this._terrKey === key && this._terrCanvas) return this._terrCanvas;
+
+    // Render with a `pad`-pixel border on every side so the live blit can shift
+    // the layer by up to ±one block without exposing an empty edge.
+    const pad = step * 2;
+    this._terrPad = pad;
+    const cs = s + pad * 2;
+    if (!this._terrCanvas || this._terrCanvas.width !== cs) {
+      this._terrCanvas = (typeof OffscreenCanvas !== 'undefined')
+        ? new OffscreenCanvas(cs, cs)
+        : Object.assign(document.createElement('canvas'), { width: cs, height: cs });
+      this._terrCtx = this._terrCanvas.getContext('2d');
+    }
+    const tctx = this._terrCtx;
+    const half = s / 2;
+    const ccx = this._terrCx, ccz = this._terrCz;
+    // Fill the padded canvas; map pixel (px,py) in the FINAL view sits at
+    // (px+pad, py+pad) in this canvas, and runs from -pad..s+pad.
+    for (let py = -pad; py < s + pad; py += step) {
+      for (let px = -pad; px < s + pad; px += step) {
+        const wx = ccx + ((px - half) / half) * range;
+        const wz = ccz + ((py - half) / half) * range;
+        tctx.fillStyle = terrainColor(this.world, wx, wz);
+        tctx.fillRect(px + pad, py + pad, step, step);
+      }
+    }
+    this._terrKey = key;
+    return this._terrCanvas;
+  }
+
   // Render one frame into ctx, centered on world point (cx, cz) at the given range.
   _render(ctx, s, cx, cz, range, player, peers, creatures, legend) {
     const half = s / 2;
     ctx.clearRect(0, 0, s, s);
 
-    const step = legend ? 6 : 8;
-    for (let py = 0; py < s; py += step) {
-      for (let px = 0; px < s; px += step) {
-        const wx = cx + ((px - half) / half) * range;
-        const wz = cz + ((py - half) / half) * range;
-        ctx.fillStyle = terrainColor(this.world, wx, wz);
-        ctx.fillRect(px, py, step, step);
-      }
-    }
+    // TERRAIN LAYER (the expensive part — ~625 cells × ~7 fbm-noise evals each).
+    // It only depends on (centerCell, range, size), so we render it ONCE to an
+    // offscreen canvas and blit it every frame, rebuilding only when the player
+    // crosses a block or zoom changes. This removes thousands of noise evals/frame
+    // (the dominant minimap cost) — dots/POIs are still drawn fresh below.
+    // The cache is centered on a quantized point; blit it shifted by the live-vs-
+    // cached center delta (in map pixels) so it stays aligned with the dots.
+    const terr = this._terrainLayer(s, cx, cz, range, legend);
+    const perPxT = half / range;
+    const ddx = (this._terrCx - cx) * perPxT, ddz = (this._terrCz - cz) * perPxT;
+    const pad = this._terrPad || 0;
+    // The padded layer's (pad,pad) is view-origin (0,0); shift by the live delta.
+    ctx.drawImage(terr, Math.round(-pad + ddx), Math.round(-pad + ddz));
 
     // City walls: draw each city's perimeter (rectangle for the grid capital, a
     // circle for round towns) plus a center marker, so the map shows the outline
@@ -174,6 +233,36 @@ export class Minimap {
     const perPx = half / range;            // map pixels per world meter
     for (const c of CITIES) {
       const center = this.toMap(c, cx, cz, half, range);
+      // Tibia-style interior: draw the city's streets and house blocks when we're
+      // zoomed in enough to read them (skip when the city is a far-off speck, both
+      // to keep it legible and cheap). Roads are pale cobble, houses are roof-red
+      // blocks with a dark outline.
+      const cityHalfPx = (cityWallOutline(c).radius || 120) * perPx;
+      if (cityHalfPx > 26) {
+        const feat = cityMapFeatures(c);
+        ctx.save();
+        // Streets first (under the houses).
+        ctx.fillStyle = 'rgba(196,180,150,0.85)';
+        for (const r of feat.roads) {
+          const p = this.toMap(r, cx, cz, half, range);
+          if (r.round) { ctx.beginPath(); ctx.arc(p.x, p.y, (r.w / 2) * perPx, 0, Math.PI * 2); ctx.fill(); continue; }
+          ctx.save(); ctx.translate(p.x, p.y); if (r.rot) ctx.rotate(r.rot + Math.PI / 2);
+          ctx.fillRect(-(r.w * perPx) / 2, -(r.d * perPx) / 2, r.w * perPx, r.d * perPx);
+          ctx.restore();
+        }
+        // House blocks.
+        ctx.fillStyle = 'rgba(150,70,52,0.95)';
+        ctx.strokeStyle = 'rgba(40,24,18,0.8)';
+        ctx.lineWidth = 0.7;
+        for (const b of feat.buildings) {
+          const p = this.toMap(b, cx, cz, half, range);
+          const w = b.w * perPx, d = b.d * perPx;
+          if (w < 1.5) continue;                  // too small to bother
+          ctx.fillRect(p.x - w / 2, p.y - d / 2, w, d);
+          if (w > 4) ctx.strokeRect(p.x - w / 2, p.y - d / 2, w, d);
+        }
+        ctx.restore();
+      }
       const o = cityWallOutline(c);
       ctx.save();
       ctx.strokeStyle = 'rgba(120,90,40,0.95)';
@@ -226,7 +315,19 @@ export class Minimap {
       const r = legend ? 4 : 5;
       for (const poi of this.pois) {
         const p = this.worldToMap(poi, cx, cz, half, range);
-        if (p) drawPoiIcon(ctx, p.x, p.y, r, poi.icon);
+        if (!p) continue;
+        // The quest destination ('📍') draws a touch larger with a pulse ring so
+        // it stands out from the static city/dungeon POIs.
+        if (poi.icon === '📍') {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,210,77,.85)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2); ctx.stroke();
+          ctx.restore();
+          drawPoiIcon(ctx, p.x, p.y, r + 1, poi.icon);
+        } else {
+          drawPoiIcon(ctx, p.x, p.y, r, poi.icon);
+        }
       }
     }
 
@@ -331,7 +432,7 @@ function fmtCoords(p) {
 // markers read sharply at any zoom instead of relying on emoji font rendering.
 // Falls back to a neutral dot for any unmapped icon.
 const POI_STYLE = {
-  '🏦': { color: '#f1c40f', shape: 'square' },   // bank
+  '🏦': { color: '#f1c40f', shape: 'dollar' },   // bank ($)
   '🛒': { color: '#e67e22', shape: 'square' },   // market
   '⚗️': { color: '#9b59ff', shape: 'flask' },    // apothecary
   '🍲': { color: '#c0392b', shape: 'circle' },   // food
@@ -351,6 +452,7 @@ const POI_STYLE = {
   '🗼': { color: '#e0e0e0', shape: 'tower' },    // lighthouse / ice tower
   '🗿': { color: '#9aa0a6', shape: 'tower' },    // obelisk
   '🔺': { color: '#e0a050', shape: 'triangle' }, // pyramid
+  '📍': { color: '#ffd24d', shape: 'diamond' },  // QUEST destination (bright gold)
 };
 
 function drawPoiIcon(ctx, x, y, r, icon) {
@@ -378,6 +480,15 @@ function drawPoiIcon(ctx, x, y, r, icon) {
     ctx.beginPath(); ctx.moveTo(x - r * 0.5, y - r); ctx.lineTo(x - r * 0.5, y - r * 0.2);
     ctx.lineTo(x - r, y + r); ctx.lineTo(x + r, y + r); ctx.lineTo(x + r * 0.5, y - r * 0.2);
     ctx.lineTo(x + r * 0.5, y - r); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); return;
+  }
+  if (st.shape === 'dollar') {
+    // A gold coin with a $ — clearly reads as the bank on the map.
+    ctx.beginPath(); ctx.arc(x, y, r + 1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#3a2c00';
+    ctx.font = `bold ${Math.round((r + 1) * 2.1)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('$', x, y + 0.5);
+    ctx.restore(); return;
   }
   if (st.shape === 'temple') {
     // a little pediment: triangle roof over a base

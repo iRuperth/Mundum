@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Monedas — Mundum</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1d2228; color: #e7ecf2; font: 14px system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p.sub { color: #9fb0c2; margin: 0 0 20px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #cdd7e2; margin: 22px 0 8px; border-bottom: 1px solid #333b44; padding-bottom: 4px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .cell { width: 72px; text-align: center; }
+  .ico { width: 64px; height: 64px; background: #2a313a; border: 1px solid #3a434d; border-radius: 8px;
+         display: flex; align-items: center; justify-content: center; image-rendering: pixelated; }
+  .ico svg { width: 56px; height: 56px; }
+  .cap { font-size: 12px; color: #9fb0c2; margin-top: 4px; }
+  .big .ico { box-shadow: 0 0 0 2px #5a90c8 inset; }
+  .swatch { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:middle; margin-right:6px; }
+</style>
+</head>
+<body>
+<h1>💰 Monedas apiladas — estilo Tibia</h1>
+<p class="sub">1–4 se ven de frente. El <b>5</b> es el cuadro de 4 con una al centro. De <b>6</b> en adelante se apilan en pirámide (5/4/3/2/1), tope visual en <b>15</b>. Cada fila usa el color real de su moneda. Así se ven en el inventario.</p>
+<div id="out"></div>
+
+<script type="module">
+import { iconFor } from '../src/itemIcons.js';
+import { COINS, instanceFromCoin } from '../src/data/items.js';
+
+const out = document.getElementById('out');
+const counts = [1,2,3,4,5,6,7,8,9,10,15];
+
+for (const coin of COINS) {
+  const h2 = document.createElement('h2');
+  const sw = '#' + (coin.color & 0xffffff).toString(16).padStart(6,'0');
+  h2.innerHTML = `<span class="swatch" style="background:${sw}"></span>${coin.name.es} (${coin.name.en})`;
+  out.appendChild(h2);
+
+  const row = document.createElement('div'); row.className = 'row';
+  for (const n of counts) {
+    const item = instanceFromCoin(coin, n, 'es');
+    const cell = document.createElement('div');
+    cell.className = 'cell' + (n === 15 ? ' big' : '');
+    cell.innerHTML = `<div class="ico">${iconFor(item)}</div><div class="cap">${n === 15 ? '15+ (montón)' : n}</div>`;
+    row.appendChild(cell);
+  }
+  out.appendChild(row);
+}
+</script>
+</body>
+</html>

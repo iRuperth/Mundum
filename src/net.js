@@ -14,7 +14,6 @@ import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 const CHANNEL = 'world';
 const STATE_HZ = 8; // max position broadcasts per second
 const STATE_MIN_INTERVAL = 1000 / STATE_HZ;
-const SAVE_DEBOUNCE = 4000; // ms between cloud saves
 
 // Treat empty / example placeholder credentials as "no backend configured".
 function credsLookReal(url, key) {
@@ -47,15 +46,14 @@ export class Net {
       gmAnnounce: null,  // a banner message shown to everyone
       gmSummon: null,    // teleport me to a world position
       gmKick: null,      // I have been banned: leave the world
+      disconnect: null,  // the realtime channel dropped after connecting
+      houseSync: null,   // a player published their house state (colours/items)
+      houseInside: null, // a player entered/left their own house
     };
 
     // outgoing position throttle
     this._lastSentAt = 0;
     this._lastSent = null;
-
-    // debounced cloud save
-    this._saveTimer = null;
-    this._pendingSave = null;
   }
 
   // lifecycle
@@ -82,7 +80,12 @@ export class Net {
       this.user = sess.session ? sess.session.user : sess.user;
       if (!this.user) throw new Error('no anon user');
 
-      await this._upsertCharacter(profile);
+      // Presence/identity for other players travels over the realtime channel
+      // (track + broadcast), NOT a DB row. We must NOT upsert into the account
+      // `characters` table from this ANONYMOUS session — that wrote a bogus row
+      // keyed by the anon id (and on the multi-character schema it fails the
+      // user_id NOT NULL constraint, disabling online entirely). Persistence of
+      // gold/exp/items is handled exclusively by the account system (auth.js).
       await this._joinChannel();
 
       this._online = true;
@@ -100,7 +103,6 @@ export class Net {
   }
 
   async disconnect() {
-    this._flushSave();
     await this._teardown();
     this._online = false;
   }
@@ -114,20 +116,6 @@ export class Net {
   }
 
   // Write the minimal character row so the player's name shows up for others.
-  async _upsertCharacter(profile) {
-    const row = {
-      id: this.user.id,
-      name: (profile.name || 'Adventurer').slice(0, 24),
-      sex: profile.sex || 'male',
-      hair: profile.hair || 'short',
-      colors: profile.colors || {},
-      level: profile.level || 1,
-      updated_at: new Date().toISOString(),
-    };
-    const { error } = await this.client.from('characters').upsert(row);
-    if (error) throw error;
-  }
-
   async _joinChannel() {
     const id = this.user.id;
     this.channel = this.client.channel(CHANNEL, {
@@ -142,6 +130,8 @@ export class Net {
       .on('broadcast', { event: 'gm_announce' }, ({ payload }) => this._onGmAnnounce(payload))
       .on('broadcast', { event: 'gm_summon' }, ({ payload }) => this._onGmSummon(payload))
       .on('broadcast', { event: 'gm_kick' }, ({ payload }) => this._onGmKick(payload))
+      .on('broadcast', { event: 'house_sync' }, ({ payload }) => this._onHouseSync(payload))
+      .on('broadcast', { event: 'house_inside' }, ({ payload }) => this._onHouseInside(payload))
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
         if (key === id) return;
         const meta = (newPresences && newPresences[0]) || {};
@@ -154,18 +144,36 @@ export class Net {
       });
 
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('channel timeout')), 10000);
+      // The status callback fires repeatedly over the channel's lifetime (a later
+      // CHANNEL_ERROR on a network blip, a re-SUBSCRIBED after auto-rejoin...).
+      // Latch it so the connect promise settles exactly once — otherwise a second
+      // settle after we've already resolved becomes an unhandled rejection.
+      let settled = false;
+      const timer = setTimeout(() => { if (!settled) { settled = true; reject(new Error('channel timeout')); } }, 10000);
       this.channel.subscribe((status) => {
+        // A channel error / timeout / close matters for the WHOLE lifetime, not
+        // just the connect handshake: if it arrives after we're subscribed, the
+        // socket is dead, so flip _online off (and notify) — otherwise the game
+        // keeps thinking it's connected while messages silently drop.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (settled) {
+            if (this._online) { this._online = false; if (this._cb.disconnect) this._cb.disconnect(status); }
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('channel ' + status));
+          return;
+        }
+        if (settled) return;
         if (status === 'SUBSCRIBED') {
+          settled = true;
           clearTimeout(timer);
           this.channel.track({
             id,
             name: (this.profile && this.profile.name) || 'Adventurer',
             level: (this.profile && this.profile.level) || 1,
           }).then(resolve, resolve);
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          clearTimeout(timer);
-          reject(new Error('channel ' + status));
         }
       });
     });
@@ -212,6 +220,18 @@ export class Net {
     if (this._cb.gmKick) this._cb.gmKick(payload);
   }
 
+  // House broadcasts. house_sync carries a player's public house snapshot so
+  // others can render a visit; house_inside flags when an owner is home. Houses
+  // are display-only now — selling moved to the city free market.
+  _onHouseSync(payload) {
+    if (!payload || payload.from === this.user.id) return;
+    if (this._cb.houseSync) this._cb.houseSync(payload.from, payload);
+  }
+  _onHouseInside(payload) {
+    if (!payload || payload.from === this.user.id) return;
+    if (this._cb.houseInside) this._cb.houseInside(payload.from, payload);
+  }
+
   // The local player's own auth id (used to map peers / identify self). Null
   // while offline.
   userId() {
@@ -246,20 +266,24 @@ export class Net {
   onPeerUpdate(cb) { this._cb.peerUpdate = cb; }
   onPeerJoin(cb) { this._cb.peerJoin = cb; }
   onPeerLeave(cb) { this._cb.peerLeave = cb; }
+  onDisconnect(cb) { this._cb.disconnect = cb; }
 
   // chat
 
   sendChat(text) {
-    if (!this._online || !this.channel) return;
     const clean = String(text || '').slice(0, 200).trim();
     if (!clean) return;
     const payload = {
-      from: this.user.id,
+      from: this.user ? this.user.id : 'local',
       name: (this.profile && this.profile.name) || 'Adventurer',
       text: clean,
     };
-    this.channel.send({ type: 'broadcast', event: 'chat', payload });
-    // Echo locally since broadcast self is off.
+    // Broadcast to others when online (self-broadcast is off in the channel
+    // config), then ALWAYS echo locally here — online or offline — so the caller
+    // must NOT echo again (that was the double-message bug).
+    if (this._online && this.channel) {
+      this.channel.send({ type: 'broadcast', event: 'chat', payload });
+    }
     if (this._cb.chat) this._cb.chat(payload);
   }
 
@@ -361,6 +385,33 @@ export class Net {
     return names;
   }
 
+  // houses
+  //
+  // A player's house (colours, light, the items on display and the ban list) is
+  // broadcast so others can walk to the door and visit the real room. Houses are
+  // display-only — selling moved to the city free market (see auth.js market_*
+  // methods). All ephemeral over Realtime — durable persistence is the owner's
+  // own account save.
+
+  // Publish my house's public state to everyone (call on edit / item changes).
+  houseSync(state) {
+    if (!this._online || !this.channel) return;
+    const last = this._lastHouseSync;
+    // Keep the latest snapshot so a late-joining peer can be answered on join.
+    this._lastHouseSync = state;
+    this.channel.send({ type: 'broadcast', event: 'house_sync', payload: { from: this.user.id, ...state } });
+    void last;
+  }
+
+  // Flag that I just entered / left my own house (so visitors know it's occupied).
+  houseInside(lotId, inside) {
+    if (!this._online || !this.channel) return;
+    this.channel.send({ type: 'broadcast', event: 'house_inside', payload: { from: this.user.id, lotId, inside: !!inside } });
+  }
+
+  onHouseSync(cb) { this._cb.houseSync = cb; }
+  onHouseInside(cb) { this._cb.houseInside = cb; }
+
   // trade
   //
   // Negotiation (who offers what) is ephemeral over broadcast between the two
@@ -426,53 +477,11 @@ export class Net {
     });
   }
 
-  // cloud save
-
-  // Debounced durable write of the full character row.
-  saveCharacter(state) {
-    if (!this._online) return;
-    this._pendingSave = state;
-    if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => {
-      this._saveTimer = null;
-      this._flushSave();
-    }, SAVE_DEBOUNCE);
-  }
-
-  async _flushSave() {
-    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
-    const state = this._pendingSave;
-    this._pendingSave = null;
-    if (!this._online || !state) return;
-
-    const row = {
-      id: this.user.id,
-      level: state.level,
-      exp: state.exp,
-      gold: state.gold,
-      equipment: state.equipment || {},
-      backpack: state.backpack || [],
-      depot: state.depot || [],
-      pos: state.pos || (state.x != null ? { x: state.x, y: state.y, z: state.z } : {}),
-      updated_at: new Date().toISOString(),
-    };
-    if (state.name != null) row.name = String(state.name).slice(0, 24);
-    if (state.colors != null) row.colors = state.colors;
-
-    const { error } = await this.client.from('characters').update(row).eq('id', this.user.id);
-    if (error) console.warn('[net] saveCharacter:', error.message);
-  }
-
-  async loadCharacter() {
-    if (!this._online) return null;
-    const { data, error } = await this.client
-      .from('characters')
-      .select('*')
-      .eq('id', this.user.id)
-      .maybeSingle();
-    if (error) { console.warn('[net] loadCharacter:', error.message); return null; }
-    return data || null;
-  }
+  // Persistence (gold/exp/items) is owned entirely by the account system in
+  // auth.js, keyed by the character row id under the logged-in user. The old
+  // net-side saveCharacter/loadCharacter wrote/read the `characters` table from
+  // this ANONYMOUS realtime session keyed by the anon id — the wrong row — so
+  // they were removed to stop them corrupting real progress.
 }
 
 // Factory mirror of the class for callers that prefer it.

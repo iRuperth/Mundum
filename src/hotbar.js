@@ -11,16 +11,39 @@ function entryIcon(entry) {
 }
 
 // A 10-slot action bar for skills and potions. Slots are assigned via a menu
-// (right click on desktop, long press on touch) and triggered by the number
-// keys 1-9, 0 or by tapping the slot. Cooldowns are tracked per skill id.
+// (right click on desktop, long press on touch) and triggered by their bound
+// KEY (configurable, MapleStory-style) or by tapping the slot. Cooldowns are
+// tracked per skill id.
 const SLOTS = 10;
 const LONG_PRESS_MS = 450;
+
+// Default key bound to each slot: 1..9 then 0 (the classic layout). Each slot's
+// key can be rebound to any keyboard key via the keybind config mode.
+const DEFAULT_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'];
+
+// A short human label for a KeyboardEvent.code, for the little key badge on each
+// slot. Falls back to the raw code so nothing is ever blank.
+export function keyLabel(code) {
+  if (!code) return '';
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return code.slice(6) || 'Num';
+  if (code.startsWith('Key')) return code.slice(3);
+  const map = {
+    Space: '␣', Enter: '⏎', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+    Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'",
+    Comma: ',', Period: '.', Slash: '/', Backslash: '\\', Backquote: '`',
+    ShiftLeft: '⇧', ShiftRight: '⇧', ControlLeft: '⌃', ControlRight: '⌃', AltLeft: '⌥', AltRight: '⌥',
+    Tab: '⇥', Backspace: '⌫',
+  };
+  return map[code] || code;
+}
 
 export class Hotbar {
   constructor(root, hooks) {
     this.root = root;
     this.hooks = hooks; // { getOptions(), activate(entry), getCooldown(entry), getMana() }
     this.slots = new Array(SLOTS).fill(null); // each: { kind:'skill'|'potion', ...data }
+    this.keys = DEFAULT_KEYS.slice();          // number-row key per slot (1..0)
     this.cells = [];
     this._build();
   }
@@ -30,9 +53,10 @@ export class Hotbar {
     for (let i = 0; i < SLOTS; i++) {
       const cell = document.createElement('div');
       cell.className = 'hb-slot empty';
+      cell.style.touchAction = 'none'; // let the drag-out gesture own the pointer
       const key = document.createElement('span');
       key.className = 'hb-key';
-      key.textContent = i === 9 ? '0' : String(i + 1);
+      key.textContent = keyLabel(this.keys[i]);
       const cd = document.createElement('div'); cd.className = 'hb-cd';
       const cdText = document.createElement('div'); cdText.className = 'hb-cd-text';
       const icon = document.createElement('span'); icon.className = 'hb-ico';
@@ -41,6 +65,7 @@ export class Hotbar {
       cell.addEventListener('click', () => this.activate(i));
       cell.addEventListener('contextmenu', (e) => { e.preventDefault(); this.openAssign(i, e); });
       this._bindLongPress(cell, i);
+      this._bindDragOut(cell, i);
 
       // Accept items dragged from the backpack (desktop HTML5 drag).
       cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drop-hover'); });
@@ -68,6 +93,51 @@ export class Hotbar {
     cell.addEventListener('touchmove', cancel);
   }
 
+  // Drag a filled slot OFF the bar to remove it (mouse + touch). A small ghost
+  // follows the pointer; releasing anywhere outside #hotbar clears the slot. A
+  // tap that never crosses the drag threshold still activates the slot (the
+  // click handler is left untouched). This is the drag counterpart to the
+  // assign menu's "empty" option, so spells can be removed by dragging too.
+  _bindDragOut(cell, i) {
+    cell.addEventListener('pointerdown', (e) => {
+      if ((e.button !== undefined && e.button !== 0) || !this.slots[i]) return;
+      const startX = e.clientX, startY = e.clientY, pointerId = e.pointerId;
+      let ghost = null, dragging = false;
+      const onMove = (ev) => {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
+          dragging = true;
+          try { cell.setPointerCapture(pointerId); } catch (_) { /* ignore */ }
+          ghost = document.createElement('div');
+          ghost.className = 'drag-ghost shown';
+          ghost.innerHTML = entryIcon(this.slots[i]);
+          document.body.appendChild(ghost);
+          cell.classList.add('drag-source');
+        }
+        if (ghost) ghost.style.transform = `translate3d(${ev.clientX}px, ${ev.clientY}px, 0) translate(-50%, -50%)`;
+      };
+      const onUp = (ev) => {
+        cell.removeEventListener('pointermove', onMove);
+        cell.removeEventListener('pointerup', onUp);
+        cell.removeEventListener('pointercancel', onUp);
+        try { cell.releasePointerCapture(pointerId); } catch (_) { /* ignore */ }
+        if (ghost) ghost.remove();
+        cell.classList.remove('drag-source');
+        if (!dragging) return;
+        // Suppress the click that follows a real drag so removal doesn't also fire the slot.
+        const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+        cell.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => cell.removeEventListener('click', swallow, { capture: true }), 0);
+        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+        // Dropped back on the bar (any slot) → keep; dropped off the bar → remove.
+        if (!over || !over.closest || !over.closest('#hotbar')) this.setSlot(i, null);
+      };
+      cell.addEventListener('pointermove', onMove);
+      cell.addEventListener('pointerup', onUp);
+      cell.addEventListener('pointercancel', onUp);
+    });
+  }
+
   setSlot(i, entry) { this.slots[i] = entry; this.render(); }
 
   // Put a dragged item into slot i. The action bar holds usable items: potions/
@@ -90,10 +160,20 @@ export class Hotbar {
     this.hooks.activate(entry);
   }
 
-  // Trigger a slot from a number key (0 maps to slot index 9).
+  // Trigger a slot from a number key (0 maps to slot index 9). Kept for any
+  // legacy caller; the main path is handleKey(code) below.
   activateKey(digit) {
     const i = digit === 0 ? 9 : digit - 1;
     if (i >= 0 && i < SLOTS) this.activate(i);
+  }
+
+  // Fire the slot bound to a raw KeyboardEvent.code (the number row by default).
+  // Returns true if the key matched a slot. Custom key→action binds live in the
+  // Keyboard panel, not here.
+  handleKey(code) {
+    const i = this.keys.indexOf(code);
+    if (i >= 0) { this.activate(i); return true; }
+    return false;
   }
 
   // Build the assignment menu listing the player's skills and potions.
@@ -116,7 +196,9 @@ export class Hotbar {
     add(t('empty') || '—', null);
     for (const sk of opts.skills) add(sk.name, { ...sk, skillKind: sk.kind, kind: 'skill' });
     for (const po of opts.potions) {
-      const entry = { ...po, kind: 'potion' };
+      // Preserve the entry's own kind so a torch ('light') still toggles instead
+      // of being treated as a potion.
+      const entry = { ...po, kind: po.kind || 'potion' };
       entry.iconHtml = iconFor(entry);
       add(po.name, entry);
     }
@@ -157,15 +239,25 @@ export class Hotbar {
     }
   }
 
+  // Save both the slot contents AND the per-slot keybinds so each player's custom
+  // layout (what's in each slot + which key fires it) survives a reload.
   serialize() {
-    return this.slots.map((e) => e ? { kind: e.kind, id: e.id, baseId: e.baseId } : null);
+    return {
+      slots: this.slots.map((e) => e ? { kind: e.kind, id: e.id, baseId: e.baseId } : null),
+      keys: this.keys.slice(),
+    };
   }
 
+  // Accepts the new {slots,keys} shape, or a legacy bare slots array.
   load(data, resolve) {
-    if (!Array.isArray(data)) return;
-    for (let i = 0; i < SLOTS && i < data.length; i++) {
-      this.slots[i] = data[i] ? resolve(data[i]) : null;
+    const slots = Array.isArray(data) ? data : (data && data.slots);
+    const keys = (data && !Array.isArray(data) && Array.isArray(data.keys)) ? data.keys : null;
+    if (Array.isArray(slots)) {
+      for (let i = 0; i < SLOTS && i < slots.length; i++) {
+        this.slots[i] = slots[i] ? resolve(slots[i]) : null;
+      }
     }
+    if (keys) for (let i = 0; i < SLOTS && i < keys.length; i++) this.keys[i] = keys[i] || this.keys[i];
     this.render();
   }
 }

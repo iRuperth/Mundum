@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Catálogo de Items — Mundum</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<style>
+  :root { --bg:#1d2228; --panel:#252b33; --line:#3a434d; --ink:#e7ecf2; --dim:#9fb0c2; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:#20262d; border-bottom:1px solid var(--line); padding:12px 18px; }
+  h1 { margin:0 0 6px; font-size:18px; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .controls input[type=search] { flex:1; min-width:200px; padding:7px 10px; border:1px solid var(--line); background:#2e353e; color:var(--ink); border-radius:6px; font-size:14px; }
+  .tab { padding:6px 12px; border:1px solid var(--line); background:#2e353e; color:var(--ink); border-radius:6px; cursor:pointer; font-size:13px; }
+  .tab.on { background:#3b6ea5; border-color:#5a90c8; }
+  main { padding:14px 18px 60px; max-width:1200px; margin:0 auto; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:22px 0 10px; border-bottom:1px solid var(--line); padding-bottom:5px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; display:flex; gap:10px; align-items:flex-start; }
+  .card .ico { width:44px; height:44px; flex:none; background:#1a1f25; border-radius:8px; display:flex; align-items:center; justify-content:center; }
+  .card .ico svg { width:38px; height:38px; image-rendering:pixelated; }
+  .card .nm { font-weight:600; font-size:13px; line-height:1.25; }
+  .card .st { color:var(--dim); font-size:11px; margin-top:3px; }
+  .card .val { color:#f1c40f; font-size:11px; margin-top:2px; }
+  .badge { font-size:10px; padding:0 5px; border-radius:8px; background:#333c46; color:var(--dim); }
+  .tier-shop { color:#9fe89f; } .tier-epic { color:#c89bff; } .tier-legendary-tier { color:#ffcf5a; }
+  .count { color:var(--dim); font-weight:400; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Catálogo de Items — <span class="count" id="total"></span></h1>
+  <div class="controls" id="tabs"></div>
+  <div class="controls" style="margin-top:8px"><input type="search" id="q" placeholder="Buscar item…" /></div>
+</header>
+<main id="main"></main>
+
+<script type="module">
+import { WEAPONS, ARMORS, CONTAINERS, POTIONS, LIGHTS, COINS } from '../src/data/items.js';
+import { TROPHIES } from '../src/data/trophies.js';
+import { MATERIALS } from '../src/data/materials.js';
+import { iconFor } from '../src/itemIcons.js';
+
+const nm = (n) => (n && typeof n === 'object') ? (n.es || n.en) : n;
+
+// Normalize every catalog into a common card shape, tagging the item kind/type
+// so iconFor draws the right picture (it infers from baseId/type/slot/kind).
+function asCard(raw, cat, extra = {}) {
+  return {
+    cat,
+    item: { ...raw, baseId: raw.id, ...extra },   // iconFor reads baseId
+    name: nm(raw.name),
+    value: raw.value || 0,
+    tier: raw.shopTier || null,
+    stats: extra.stats || '',
+  };
+}
+
+const r = (a, b) => (a === b ? `${a}` : `${a}–${b}`);
+const SECTIONS = [
+  { key:'weapon', label:'Armas',
+    items: WEAPONS.filter(w => w.type !== 'shield').map(w => asCard(w, 'weapon', {
+      stats: `⚔ ${r(w.atkMin||0, w.atkMax||0)}${w.element&&w.element!=='none'?' · '+w.element:''}${w.twoHanded?' · 2 manos':''} · ★${w.levelReq||1}` })) },
+  { key:'shield', label:'Escudos',
+    items: WEAPONS.filter(w => w.type === 'shield').map(w => asCard(w, 'shield', {
+      stats: `🛡 ${w.defense||0} · ★${w.levelReq||1}` })) },
+  { key:'armor', label:'Armaduras',
+    items: ARMORS.map(a => asCard(a, 'armor', {
+      stats: `🛡 ${a.defense||0}${a.speedBonus?' · 👟+'+a.speedBonus:''} · ★${a.levelReq||1}` })) },
+  { key:'container', label:'Mochilas y bolsas',
+    items: CONTAINERS.map(c => asCard(c, 'container', { stats: `🎒 ${c.capacity} huecos` })) },
+  { key:'potion', label:'Pociones y comida',
+    items: POTIONS.map(p => asCard(p, 'potion', {
+      kind:'potion',
+      stats: (p.restorePct ? `✚ +${Math.round(p.restorePct*100)}%` : `✚ +${p.restore||0}`) + ` ${p.restoreType||''}` })) },
+  { key:'light', label:'Luces y gemas',
+    items: LIGHTS.map(l => asCard(l, 'light', { kind:'light',
+      stats: `${l.passive?'aura':'antorcha'} · radio ${l.radius}` })) },
+  { key:'coin', label:'Monedas',
+    items: COINS.map(c => asCard(c, 'coin', { kind:'coin', stats: `vale ${c.value}` })) },
+  { key:'trophy', label:'Trofeos / restos',
+    items: TROPHIES.map(t => asCard(t, 'trophy', { kind:'trophy' })) },
+  { key:'material', label:'Materiales',
+    items: MATERIALS.map(m => asCard(m, 'material', { kind:'material' })) },
+];
+
+const total = SECTIONS.reduce((n, s) => n + s.items.length, 0);
+document.getElementById('total').textContent = `${total} items`;
+
+const main = document.getElementById('main');
+function render(filterCat, term) {
+  main.innerHTML = '';
+  for (const sec of SECTIONS) {
+    if (filterCat && filterCat !== sec.key) continue;
+    const list = sec.items.filter(c => !term || (c.name + ' ' + c.item.baseId).toLowerCase().includes(term));
+    if (!list.length) continue;
+    const h = document.createElement('h2');
+    h.innerHTML = `${sec.label} <span class="count">· ${list.length}</span>`;
+    main.appendChild(h);
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const c of list) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const tier = c.tier ? ` <span class="badge tier-${c.tier}">${c.tier.replace('-tier','')}</span>` : '';
+      card.innerHTML =
+        `<div class="ico">${iconFor(c.item)}</div>` +
+        `<div><div class="nm">${c.name}${tier}</div>` +
+        (c.stats ? `<div class="st">${c.stats}</div>` : '') +
+        (c.value ? `<div class="val">${c.value} 💰</div>` : '') +
+        `</div>`;
+      grid.appendChild(card);
+    }
+    main.appendChild(grid);
+  }
+}
+
+// Tabs (All + each section).
+const tabsEl = document.getElementById('tabs');
+let activeCat = '';
+const tabDefs = [{ key:'', label:'Todos' }, ...SECTIONS.map(s => ({ key:s.key, label:s.label }))];
+const tabBtns = [];
+for (const td of tabDefs) {
+  const b = document.createElement('button');
+  b.className = 'tab' + (td.key === '' ? ' on' : '');
+  b.textContent = td.label;
+  b.addEventListener('click', () => {
+    activeCat = td.key;
+    tabBtns.forEach(x => x.classList.toggle('on', x === b));
+    render(activeCat, document.getElementById('q').value.trim().toLowerCase());
+  });
+  tabBtns.push(b); tabsEl.appendChild(b);
+}
+
+document.getElementById('q').addEventListener('input', (e) =>
+  render(activeCat, e.target.value.trim().toLowerCase()));
+
+render('', '');
+</script>
+</body>
+</html>

@@ -42,22 +42,69 @@ export function buildCharacter(profile) {
 
   const female = sex === 'female';
 
-  // torso
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(female ? 0.215 : 0.24, 0.34, 6, 16), mats.shirt);
+  // TORSO — a smooth tapered trunk: a capsule for the main mass, narrowed at the
+  // waist and broadened at the chest with two soft "shoulder" caps so the upper
+  // body reads as one organic shape (not a ball). `body` stays the named anchor
+  // (breathe() and equipVisuals' bag attach to it); the extra meshes are children
+  // so they ride with it and worn armor still overlays cleanly on chestArmor.
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(female ? 0.2 : 0.225, 0.3, 8, 18), mats.shirt);
   body.position.y = 0.95;
   body.scale.set(female ? 0.95 : 1, 1, female ? 0.92 : 1);
   model.add(body);
+  // Chest swell: a slightly wider rounded mass high on the torso so the shoulders
+  // are broader than the waist (a tapered figure, not a tube).
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.225 : 0.25, 16, 14), mats.shirt);
+  chest.scale.set(1, 0.78, female ? 0.88 : 0.92);
+  chest.position.y = 0.2;
+  body.add(chest);
+  // Waist taper: a smaller mass low on the torso that overlaps the pelvis below so
+  // the trunk flows into the hips with no seam.
+  const waist = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.185 : 0.2, 14, 12), mats.shirt);
+  waist.scale.set(female ? 1.04 : 1, 0.85, 0.92);
+  waist.position.y = -0.18;
+  body.add(waist);
+
+  // NECK — a short tapered column bridging the torso and the head so the head
+  // doesn't float above a gap.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.11, 0.12, 14), mats.skin);
+  neck.position.y = 1.27;
+  model.add(neck);
 
   // chest equip anchor (armor overlay shows here)
   const chestArmor = new THREE.Group();
   chestArmor.position.y = 0.95;
   model.add(chestArmor);
 
-  // hips with pants color
-  const hips = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.235 : 0.225, 14, 12), mats.pants);
-  hips.scale.set(female ? 1.05 : 1, 0.7, 0.9);
+  // PELVIS / lower body — a single tapered mass in the pants colour that overlaps
+  // the waist above and the two thighs below, so the legs grow OUT of one body
+  // instead of being a ball with two tubes stuck on. Slightly wider at the hips,
+  // narrowing toward the crotch where the thighs meet close together.
+  const hips = new THREE.Group();
   hips.position.y = 0.62;
   model.add(hips);
+  // Pelvis: a hip block wide at the top (meets the waist) that stays WIDE as it
+  // comes down so it physically covers the top of BOTH legs — then the thighs
+  // grow straight out of its underside. Tall enough to bridge waist→thighs with
+  // no gap, slim front-to-back so it's not a round diaper ball.
+  const pelvis = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.215 : 0.205, 16, 14), mats.pants);
+  pelvis.scale.set(female ? 1.12 : 1.05, 0.86, 0.9);   // wide, fuller height, slim depth
+  pelvis.position.y = -0.02;                           // dropped so its wide belly sits over the leg-tops
+  hips.add(pelvis);
+  // Crotch bridge: a wide, short rounded mass spanning BOTH thigh tops (not a
+  // thin spike), so the inner thighs visibly join the hip — fills the V so the
+  // legs read as connected to the body, not hanging below it.
+  const crotch = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.2 : 0.195, 14, 12), mats.pants);
+  crotch.scale.set(1.0, 0.6, 0.82);                    // wide, low, slim
+  crotch.position.y = -0.12;
+  hips.add(crotch);
+  // A small inner-thigh fillet on each side smooths the join from the hip down
+  // into each leg (kills the pinch/gap at the very top of the thigh).
+  for (const s of [-1, 1]) {
+    const fillet = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), mats.pants);
+    fillet.scale.set(0.9, 1.0, 0.85);
+    fillet.position.set((female ? 0.1 : 0.108) * s, -0.13, 0);
+    hips.add(fillet);
+  }
 
   // head
   const head = new THREE.Group();
@@ -83,19 +130,31 @@ export function buildCharacter(profile) {
 
   // arms (shoulder pivot for animation). The shoulder sits closer in for the
   // narrower female torso so the arms don't float away from the body.
-  const shoulderX = female ? 0.275 : 0.315;
+  const shoulderX = female ? 0.265 : 0.3;
   function makeArm(side) {
     const pivot = new THREE.Group();
     pivot.position.set(shoulderX * side, 1.18, 0);
-    const sleeve = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), mats.shirt);
-    sleeve.position.y = -0.02;
+    // Shoulder cap: a rounded deltoid that sits proud of the pivot and overlaps the
+    // torso, so the arm grows from a soft shoulder instead of a hard socket. Pushed
+    // a touch inward (toward the body) so it tucks against the chest.
+    const sleeve = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 12), mats.shirt);
+    sleeve.scale.set(1, 0.95, 1);
+    sleeve.position.set(-0.02 * side, 0.0, 0);
     pivot.add(sleeve);
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.26, 5, 12), mats.skin);
-    arm.position.y = -0.2;
+    // Upper arm sleeve overlapping the deltoid — keeps the shirt flowing onto the
+    // arm rather than stopping at a seam.
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.078, 0.1, 6, 12), mats.shirt);
+    upper.position.y = -0.1;
+    pivot.add(upper);
+    // Forearm (skin) capsule, overlapping the sleeve above; rounded ends read as a
+    // soft elbow→wrist, not a stacked cylinder.
+    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.24, 6, 12), mats.skin);
+    arm.position.y = -0.22;
     pivot.add(arm);
     const hand = new THREE.Group();
     hand.position.y = -0.4;
-    const palm = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), mats.skin);
+    const palm = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), mats.skin);
+    palm.scale.set(1, 0.95, 0.85);
     hand.add(palm);
     pivot.add(hand);
     model.add(pivot);
@@ -107,21 +166,61 @@ export function buildCharacter(profile) {
   // first-person viewmodel, which is also on the right.
   const armL = makeArm(1), armR = makeArm(-1);
 
-  // legs (hip pivot)
+  // LEGS (hip pivot) — the two legs stand a natural shoulder-ish width apart with
+  // a small gap between them (proportional to the body), so the lower body reads
+  // as a standing person's legs, not two tubes fused into one. Each leg is centred
+  // on its own pivot's local X so the X-centred greave/boot overlays (equipDetail)
+  // still line up per leg. Pivot stays at world y=0.52 and the knee/shin/boot Y
+  // bands are unchanged so every leg overlay keeps its position.
   function makeLeg(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(0.105 * side, 0.52, 0);
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.26, 5, 12), mats.pants);
-    leg.position.y = -0.2;
+    // X = thigh radius (0.092) + a small gap, so the inner edges nearly meet at
+    // the hip but there's a visible parting between the legs below.
+    pivot.position.set((female ? 0.10 : 0.108) * side, 0.52, 0);
+    // Thigh: a capsule whose rounded TOP overlaps the pelvis above (no gap at the
+    // hip) and tapers down to the knee. A touch fatter at the top than the shin.
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.092, 0.14, 6, 12), mats.pants);
+    thigh.position.y = -0.13;
+    pivot.add(thigh);
+    // Knee: a small rounded mass bridging thigh and shin so the joint is soft, not
+    // two cylinders abutting. Sits in the same band the greave knee-cops expect.
+    const knee = new THREE.Mesh(new THREE.SphereGeometry(0.082, 12, 10), mats.pants);
+    knee.scale.set(1, 0.9, 1);
+    knee.position.y = -0.27;
+    pivot.add(knee);
+    // Shin: a capsule from the knee down toward the boot, overlapping both so the
+    // whole limb reads as one continuous leg.
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.14, 6, 12), mats.pants);
+    leg.position.y = -0.36;
     pivot.add(leg);
+    // A proper BOOT silhouette (Tibia-style) instead of one squashed blob: an
+    // ankle SHAFT rising up the leg, a FOOT running forward, a rounded TOE cap and
+    // a thin SOLE. All share the boots material so a worn boot recolours the whole
+    // thing; overlays (wings, cuffs…) still attach to the `boot` group.
     const boot = new THREE.Group();
-    boot.position.set(0, -0.42, 0.04);
-    const foot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), mats.boots);
-    foot.scale.set(1, 0.6, 1.35);
+    boot.position.set(0, -0.42, 0.0);
+    // Shaft: the vertical cuff that wraps the ankle/lower shin.
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.085, 0.18, 12), mats.boots);
+    shaft.position.set(0, 0.06, 0.0);
+    boot.add(shaft);
+    // Foot: the horizontal body of the boot, stretched forward toward the toe.
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(0.082, 10, 8), mats.boots);
+    foot.scale.set(1.0, 0.8, 1.75);
+    foot.position.set(0, -0.035, 0.08);
     boot.add(foot);
+    // Toe: a rounded cap so the front reads as a boot tip, not a stub.
+    const toe = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), mats.boots);
+    toe.scale.set(0.92, 0.82, 1.0);
+    toe.position.set(0, -0.04, 0.18);
+    boot.add(toe);
+    // Sole: a thin slab under the foot, hugging the boot footprint (not a wide
+    // plinth) for a grounded heel/sole line.
+    const sole = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.03, 0.3), mats.boots);
+    sole.position.set(0, -0.092, 0.08);
+    boot.add(sole);
     pivot.add(boot);
     model.add(pivot);
-    return { pivot, boot };
+    return { pivot, boot, foot };
   }
   const legL = makeLeg(-1), legR = makeLeg(1);
 
@@ -205,7 +304,31 @@ export function buildCharacter(profile) {
   let weaponType = null;
   let isBow = false;
   let bowMesh = null; // the bow group, exposing userData.setDraw for the string
-  function setWeaponPose(type, bow) { weaponType = type; isBow = !!bow; }
+  let heldArrow = null; // a nocked arrow carried in the off (left) hand while walking
+  // A small arrow held in the bow-user's off hand. Hidden while drawing (it
+  // "loads" into the bow), shown while walking/idle so the archer always reads as
+  // carrying ammo.
+  function buildHeldArrow() {
+    const g = new THREE.Group();
+    const shaftMat = new THREE.MeshLambertMaterial({ color: 0x8a5a2b });
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xc4c9cf, metalness: 0.6, roughness: 0.4 });
+    const fletchMat = new THREE.MeshLambertMaterial({ color: 0xe23b3b });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.4, 5), shaftMat);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 5), headMat);
+    head.position.y = 0.23;
+    const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.06, 0.03), fletchMat);
+    fletch.position.set(0, -0.15, 0.018);
+    g.add(shaft, head, fletch);
+    // Lie the arrow roughly horizontal, pointing forward, as if pinched in the hand.
+    g.rotation.x = Math.PI / 2;
+    g.position.set(0, -0.42, 0.05);
+    return g;
+  }
+  function setWeaponPose(type, bow) {
+    weaponType = type; isBow = !!bow;
+    if (isBow && !heldArrow) { heldArrow = buildHeldArrow(); armL.hand.add(heldArrow); }
+    else if (!isBow && heldArrow) { armL.hand.remove(heldArrow); heldArrow = null; }
+  }
   function setBowMesh(mesh) { bowMesh = mesh; if (bowMesh && bowMesh.userData.setDraw) bowMesh.userData.setDraw(0); }
 
   // Idle breathing: a small, fast rise/fall of the chest and head that only
@@ -227,7 +350,28 @@ export function buildCharacter(profile) {
     chestArmor.scale.y = 1 + b * 0.02;
   }
 
+  // While mounted, the hero sits on the saddle instead of walking. Set by the
+  // player when the mount system reports it's riding (see player.update).
+  let seated = false;
+  function setSeated(on) { seated = !!on; }
+
   function animate(phase, intensity, grounded, dt = 0) {
+    // SEATED (mounted) pose wins over everything: a static straddle, no gait. The
+    // model faces +Z; legL sits at -X, legR at +X. rotation.x<0 swings a leg
+    // FORWARD (+Z), so a small negative lifts the thighs; rotation.z splays the
+    // feet OUTWARD down the mount's flanks (legL needs -z, legR needs +z). Arms
+    // come forward as if holding the reins.
+    if (seated) {
+      breathe(dt, true);
+      legL.pivot.rotation.set(-0.95, 0, -0.42);
+      legR.pivot.rotation.set(-0.95, 0, 0.42);
+      armL.pivot.rotation.set(-0.7, 0, 0.18);
+      armR.pivot.rotation.set(-0.7, 0, -0.18);
+      armL.pivot.rotation.y = 0;
+      armR.pivot.rotation.y = 0;
+      if (cape) { cape.rotation.x = -0.2; cape.rotation.z = 0; }
+      return;
+    }
     const sw = Math.sin(phase) * 0.75 * Math.min(1, intensity);
     // GM cape: drift backward and sway side to side as the hero moves; settle
     // upright when standing still.
@@ -300,8 +444,10 @@ export function buildCharacter(profile) {
 
   function updateAttack(dt) {
     if (swingT <= 0) {
-      // Idle: keep the bow string relaxed so it isn't stuck drawn.
+      // Idle: keep the bow string relaxed so it isn't stuck drawn, and show the
+      // arrow held in the off hand (it only hides while actually drawing).
       if (bowMesh && bowMesh.userData.setDraw) bowMesh.userData.setDraw(0);
+      if (heldArrow) heldArrow.visible = true;
       return;
     }
     swingT = Math.max(0, swingT - dt);
@@ -312,6 +458,9 @@ export function buildCharacter(profile) {
       // draw ramps up over the first 55%, releases sharply after.
       const draw = p < 0.55 ? p / 0.55 : Math.max(0, 1 - (p - 0.55) / 0.18);
       if (bowMesh && bowMesh.userData.setDraw) bowMesh.userData.setDraw(draw);
+      // The hand-held arrow "loads" into the bow as the draw builds, so hide it
+      // once the draw is underway; it reappears when the shot is released/idle.
+      if (heldArrow) heldArrow.visible = draw < 0.15;
       // Bow arm (R) RISES from its lowered walking spot up to a forward aim as the
       // draw builds; string hand (L) comes up and pulls back toward the cheek.
       armR.pivot.rotation.set(-draw * 1.45, 0, -0.12 - draw * 0.06);
@@ -346,6 +495,7 @@ export function buildCharacter(profile) {
     mats,
     setColors,
     animate,
+    setSeated,
     triggerAttack,
     updateAttack,
     attackProgress,

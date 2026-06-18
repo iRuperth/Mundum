@@ -42,12 +42,15 @@ export const NPCS = [
     },
   },
   {
-    id: 'rivertown_merchant', name: 'Merchant Bea', city: 'rivertown', role: 'merchant',
-    model: 'woman', color: 0xd2a04b, offset: { x: 5, z: 5 },
+    id: 'rivertown_merchant', name: 'Merchant Bea', city: 'rivertown', role: 'vendor',
+    model: 'woman', color: 0xd2a04b, district: 'market',
     greeting: { es: 'Buenas ofertas para aventureros!', en: 'Great deals for adventurers!' },
+    // The general store in the Market Hall: buys and sells everything basic, so
+    // the big market building always has a shopkeeper with a Buy option.
+    shop: { buyMult: 1, sellMult: 0.5, sells: { all: true }, buys: { all: true } },
     lines: {
-      es: ['La tienda esta justo al este de la plaza.', 'Guarda tus tesoros en el deposito.', 'El oro siempre encuentra buen uso.'],
-      en: ['The shop is just east of the plaza.', 'Store your treasures in the depot.', 'Gold always finds good use.'],
+      es: ['Tengo de todo un poco, echa un vistazo.', 'Guarda tus tesoros en el deposito.', 'El oro siempre encuentra buen uso.'],
+      en: ['A bit of everything here, take a look.', 'Store your treasures in the depot.', 'Gold always finds good use.'],
     },
   },
 
@@ -152,6 +155,21 @@ export const NPCS = [
     lines: {
       es: ['¿Deseas residenciarte en esta ciudad? Renacerás aquí.', 'Los residentes de Greenhollow siempre tienen un hogar al que volver.'],
       en: ['Would you like to settle in this city? You will respawn here.', 'Residents of Greenhollow always have a home to return to.'],
+    },
+  },
+  // Stable Master: sells the two starter mounts (horse + wolf) and points the
+  // way to the mount-quest givers. role:'stable' opens the mount shop UI (it has
+  // no item `shop`, so it skips the normal vendor path). district:'stable' homes
+  // him INSIDE The Stable building (a corner barn) so he stays put there instead
+  // of roaming the streets.
+  {
+    id: 'rivertown_stablemaster', name: 'Stable Master Brent', city: 'rivertown', role: 'stable',
+    district: 'stable',
+    model: 'merchant', color: 0x7a5a30, offset: { x: 12, z: -10 },
+    greeting: { es: '¿Buscas montura? Tengo las mejores bestias domadas.', en: 'Looking for a mount? I have the finest tamed beasts.' },
+    lines: {
+      es: ['Un caballo o un lobo, para empezar. Las bestias raras se ganan en gestas.', 'Una montura te hace un 30% más veloz y saltas más alto.', 'Pulsa G para montar y desmontar.'],
+      en: ['A horse or a wolf, to start. The rare beasts are earned through deeds.', 'A mount makes you 30% faster and you jump higher.', 'Press G to mount and dismount.'],
     },
   },
   // North Keep spur: the guard captain who watches the northern gate.
@@ -1063,11 +1081,14 @@ for (let i = 0; i < REMAINS_CITIES.length; i++) {
   const city = REMAINS_CITIES[i];
   NPCS.push({
     id: `${city}_remains_buyer`, name: REMAINS_NAMES[city] || 'Remains Buyer', city, role: 'vendor',
-    model: 'merchant', color: 0x7a6a4a, district: 'food',
-    offset: { x: 14 + (i % 3) * 3, z: -14 - (i % 2) * 3 },
-    // Buys ONLY trophies, pays the trophy's value × sellMult (small money).
-    shop: { buyMult: 1, sellMult: 0.5, sells: {}, buys: { kinds: ['trophy'] } },
-    greeting: { es: 'Compro restos de bestias. Trae colas, cuernos, escamas...', en: 'I buy beast remains. Bring tails, horns, scales...' },
+    // Stands at his OWN stall (no district building) so he never shares the food
+    // shop with the cook — placed off to the side of the plaza by his offset.
+    model: 'merchant', color: 0x7a6a4a,
+    offset: { x: 16 + (i % 3) * 3, z: 12 + (i % 2) * 3 },
+    // Buys trophies AND crafting materials (silk, hides, scales, fangs, essences…),
+    // paying value × sellMult — a steady grind-and-sell income loop.
+    shop: { buyMult: 1, sellMult: 0.5, sells: {}, buys: { kinds: ['trophy', 'material'] } },
+    greeting: { es: 'Compro restos y materiales de bestias. Trae colas, sedas, cuernos, escamas...', en: 'I buy beast remains and materials. Bring tails, silk, horns, scales...' },
     lines: {
       es: ['Todo resto tiene su precio, por humilde que sea.', 'Los cazadores listos venden hasta las colas de rata.'],
       en: ['Every scrap has a price, however humble.', 'Smart hunters sell even rat tails.'],
@@ -1090,6 +1111,79 @@ NPCS.push({
     en: ['Brakka thûm gûl-gûl. Zarrak!', 'Mog... mog uzdûk thar. Nazg brakk?', 'Wagh! Thrak-thrak ozûl.'],
   },
 });
+
+// ===========================================================================
+// RUMORS / TIPS — clickable {q,a} hints attached to NPCs. When you talk to an
+// NPC, below their greeting you can "ask around" and they reveal lore + a vague
+// pointer to where a quest/treasure might be (never coordinates). Curated per
+// city and spread across that city's NPCs so different folk know different tales.
+// ===========================================================================
+const CITY_RUMORS = {
+  rivertown: [
+    { q: { es: '¿Algún tesoro cerca?', en: 'Any treasure nearby?' },
+      a: { es: 'Dicen que los troles al oeste de Oakvale guardan un pendiente que le robaron a la reina de los orcos. Por eso esos dos están en guerra…', en: 'They say the trolls west of Oakvale keep a pendant stolen from the orc queen. That\'s why those two are at war…' } },
+    { q: { es: '¿Qué hay en las cuevas?', en: 'What\'s in the caves?' },
+      a: { es: 'La cueva de ratas al noreste es buena para empezar. Más allá, las arañas del nido al suroeste muerden de verdad.', en: 'The rat cave to the north-east is good to start. Beyond that, the spiders of the nest to the south-west really bite.' } },
+  ],
+  oakvale: [
+    { q: { es: '¿Dónde hay buen equipo?', en: 'Where\'s good gear?' },
+      a: { es: 'Los elfos del bosque al norte fabrican arcos perfectos. No te los regalarán. Y dicen que una guadaña de planta duerme entre los treants… solo de noche se deja coger.', en: 'The elves of the forest to the north craft perfect bows. They won\'t gift them. And a plant scythe sleeps among the treants… it lets itself be taken only at night.' } },
+    { q: { es: '¿Rumores del bosque?', en: 'Forest rumors?' },
+      a: { es: 'El Treant Anciano del bosque profundo solo confía en quien le trae corteza viva. Quien se gana su Bellota entra en una arboleda secreta, llena de armadura de guardián.', en: 'The Ancient Treant of the deep forest trusts only those who bring living bark. Earn its Acorn and a secret grove opens, full of warden armor.' } },
+  ],
+  stonehaven: [
+    { q: { es: '¿Qué esconden las montañas?', en: 'What do the mountains hide?' },
+      a: { es: 'El Geomante enano de las minas al sureste blande un hacha que parte la roca. Pocos vuelven con ella. Y los caballeros caídos del sur llevan anillos de maestría.', en: 'The dwarf Geomancer of the mines to the south-east wields a stone-splitting axe. Few return with it. And the fallen knights of the south carry mastery rings.' } },
+    { q: { es: '¿Algo sobre los muertos?', en: 'Anything about the dead?' },
+      a: { es: 'En la cripta al sureste, una hoja que bebe almas duerme tras un sello. El lorekeeper sabe forjar una Linterna de Tumba para pasar entre los muertos… pero solo abre de noche.', en: 'In the crypt to the south-east, a soul-drinking blade sleeps behind a seal. The lorekeeper can forge a Grave Lantern to pass the dead… but it only opens at night.' } },
+    { q: { es: '¿El Señor de la Guerra orco?', en: 'The orc Warlord?' },
+      a: { es: 'El Señor de la Guerra del territorio al este porta una espada legendaria a dos manos. Reúne polvo de orco suficiente y podrás forzar su guarida.', en: 'The Warlord of the eastern territory bears a legendary two-handed sword. Gather enough orc dust and you can force his lair.' } },
+  ],
+  dragonreach: [
+    { q: { es: '¿Cómo consigo armadura dracónica?', en: 'How do I get draconic armor?' },
+      a: { es: 'El herrero forja el conjunto entero del dragón, pero necesita escamas y polvo de las montañas al sur. Empieza por el casco y sigue la saga.', en: 'The smith forges the whole dragon set, but needs scales and dust from the southern mountains. Start with the helmet and follow the saga.' } },
+    { q: { es: '¿Y el Abismo?', en: 'And the Abyss?' },
+      a: { es: 'Al suroeste hierve el Abismo. Un sabueso de tres cabezas guarda su boca; solo lo calma un Hueso de Demonio. Reúne polvo de demonio para que Flamekeeper Ren te lo talle.', en: 'To the south-west the Abyss boils. A three-headed hound guards its mouth; only a Demon Bone calms it. Gather demon dust so Flamekeeper Ren can carve you one.' } },
+    { q: { es: '¿Un fénix, en serio?', en: 'A phoenix, really?' },
+      a: { es: 'Renace entre las llamas del Abismo. Quien le arranque una Pluma de Fénix hallará su arco, su escudo y su amuleto en un altar oculto.', en: 'It is reborn among the flames of the Abyss. Whoever plucks a Phoenix Feather will find its bow, shield and amulet on a hidden altar.' } },
+  ],
+  westharbor: [
+    { q: { es: '¿Rumores del mar?', en: 'Rumors of the sea?' },
+      a: { es: 'En el pantano lejano al suroeste, una hidra tragó una hoja con forma de serpiente. Y un arco de tendón de dragón espera a quien cace en las montañas del sur.', en: 'In the far swamp to the south-west, a hydra swallowed a serpent-shaped blade. And a dragon-sinew bow awaits one who hunts in the southern mountains.' } },
+  ],
+  frostpeak: [
+    { q: { es: '¿Qué hay bajo el hielo?', en: 'What\'s under the ice?' },
+      a: { es: 'La Guarida Glacial al extremo norte está sellada por hielo eterno. Funde un Corazón de Escarcha con polvo helado y romperás el sello: dentro está la armadura glacial completa.', en: 'The Glacial Lair in the far north is sealed by eternal ice. Cast a Frost Heart from frost dust to break the seal: the full glacial set lies within.' } },
+    { q: { es: '¿Armas de hielo?', en: 'Ice weapons?' },
+      a: { es: 'Un estoque que nunca se derrite lo guarda un duelista congelado al norte. Y Frostmourne, la hoja maldita, solo despierta de noche en la guarida.', en: 'A rapier that never melts is kept by a frozen duelist to the north. And Frostmourne, the cursed blade, only wakes at night in the lair.' } },
+  ],
+  sandport: [
+    { q: { es: '¿Secretos del desierto?', en: 'Desert secrets?' },
+      a: { es: 'Las tumbas al sureste solo se abren bajo el sol de mediodía. Forja un Escarabajo Solar con polvo del desierto para entrar y reclamar el oro maldito.', en: 'The tombs to the south-east open only under the noon sun. Forge a Sun Scarab from desert dust to enter and claim the cursed gold.' } },
+    { q: { es: '¿Las Botas de Hermes?', en: 'The Boots of Hermes?' },
+      a: { es: 'Un genio Efreet del desierto al este las esconde. Solo de día, bajo el sol abrasador, se le pueden arrebatar.', en: 'An Efreet genie of the eastern desert hides them. Only by day, under the scorching sun, can they be taken.' } },
+  ],
+};
+
+// Attach each city's rumor pool to its NPCs, spread so different NPCs surface
+// different tips. Deterministic by index (no Math.random at module load).
+(function attachRumors() {
+  const byCity = {};
+  for (const n of NPCS) { if (!n.city) continue; (byCity[n.city] ||= []).push(n); }
+  for (const city in CITY_RUMORS) {
+    const pool = CITY_RUMORS[city];
+    const cityNpcs = byCity[city] || [];
+    if (!cityNpcs.length || !pool.length) continue;
+    cityNpcs.forEach((n, ni) => {
+      const picks = [];
+      for (let k = 0; k < Math.min(2, pool.length); k++) picks.push(pool[(ni + k) % pool.length]);
+      n.rumors = {
+        es: picks.map((r) => ({ q: r.q.es, a: r.a.es })),
+        en: picks.map((r) => ({ q: r.q.en, a: r.a.en })),
+      };
+    });
+  }
+})();
 
 const NPC_MAP = new Map(NPCS.map((n) => [n.id, n]));
 

@@ -35,15 +35,20 @@ export function weaponTypeToSkill(type) {
   }
 }
 
-// Per-vocation advance constants `b` (lower = faster) and base cost `A`, from
-// classic Tibia. Cost to go from skill L → L+1 is A · b^(L − offset).
-const SKILL_BASE = { fist: 50, sword: 50, axe: 50, club: 50, distance: 30, shielding: 100, magic: 1600 };
+// Per-vocation advance constants `b` (lower = faster) and base cost `A`. Cost to
+// go from skill L → L+1 is A · b^(L − offset). These keep Tibia's SHAPE (each
+// level harder than the last, knights slow at magic, mages fast) but are tuned
+// FASTER than classic Tibia — roughly a third of the grind — so a kid sees magic
+// level / weapon skills climb every session instead of over weeks. (Tibia's real
+// values were magic A=1600 b=1.1, weapons A=50 b=1.1; we lower the base costs and
+// soften the exponents while preserving the per-class ordering.)
+const SKILL_BASE = { fist: 30, sword: 30, axe: 30, club: 30, distance: 20, shielding: 60, magic: 500 };
 const SKILL_OFFSET = { magic: 0, fist: 10, sword: 10, axe: 10, club: 10, distance: 10, shielding: 10 };
 const VOC_CONST = {
-  knight:  { magic: 3.0, sword: 1.1, axe: 1.1, club: 1.1, distance: 1.4, shielding: 1.1, fist: 1.1 },
-  paladin: { magic: 1.4, sword: 1.2, axe: 1.2, club: 1.2, distance: 1.1, shielding: 1.1, fist: 1.2 }, // Archer
-  mage:    { magic: 1.1, sword: 2.0, axe: 2.0, club: 2.0, distance: 2.0, shielding: 1.5, fist: 2.0 },
-  druid:   { magic: 1.1, sword: 1.8, axe: 1.8, club: 1.8, distance: 1.8, shielding: 1.5, fist: 1.8 },
+  knight:  { magic: 2.2, sword: 1.075, axe: 1.075, club: 1.075, distance: 1.3, shielding: 1.075, fist: 1.075 },
+  paladin: { magic: 1.3, sword: 1.14, axe: 1.14, club: 1.14, distance: 1.075, shielding: 1.075, fist: 1.14 }, // Archer
+  mage:    { magic: 1.085, sword: 1.7, axe: 1.7, club: 1.7, distance: 1.7, shielding: 1.35, fist: 1.7 },
+  druid:   { magic: 1.085, sword: 1.55, axe: 1.55, club: 1.55, distance: 1.55, shielding: 1.35, fist: 1.55 },
 };
 
 // Starting skill level per skill. Tibia starts weapons at 10, magic at 0; we
@@ -117,8 +122,10 @@ export class CharacterStats {
   bonusMana() { return 0; }
 
   // Magic level boosts spell/power damage modestly (used by main.js casting):
-  // each magic level adds ~1.5% so a mage clearly out-nukes a knight's spells.
-  spellPowerMul() { return 1 + this.useSkill('magic') * 0.015; }
+  // each magic level adds ~0.8% so a mage still clearly out-nukes a knight's
+  // spells without the magic term ballooning skill damage on the compressed
+  // scale (skills are now "support" — see professions.skillPower).
+  spellPowerMul() { return 1 + this.useSkill('magic') * 0.008; }
 
   // ---- active skill tree ---------------------------------------------------
   grantForLevels(fromLevel, toLevel) {
