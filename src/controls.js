@@ -102,6 +102,17 @@ export class Controls {
       // In touch mode, route ANY pointer (real touch, or a mouse when mobile
       // mode is forced on a desktop browser) through the joystick / look-drag.
       if (!this.enabled || !this.isTouch) return;
+      // Only start a gesture when the touch actually landed on the game canvas —
+      // not on a UI panel/HUD element sitting over the left "joystick zone" (the
+      // side panel, chat, a window). elementFromPoint sees the topmost element
+      // even when this listener is on the canvas, so a tap meant for a panel
+      // button won't also spawn a phantom joystick under the thumb.
+      const top = document.elementFromPoint(e.clientX, e.clientY);
+      if (top && top !== canvas && top.id !== 'game') {
+        // It's over some UI — let that UI handle it; don't grab it for movement.
+        const onHud = top.closest && top.closest('#controls-ui');
+        if (!onHud) return;   // (the on-screen buttons live in #controls-ui and have their own handlers)
+      }
       if (e.clientX < innerWidth * 0.45 && this._stick.id === null) {
         this._stick.id = e.pointerId;
         this._stick.ox = e.clientX;
