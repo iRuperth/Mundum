@@ -1233,6 +1233,30 @@ document.getElementById('hud-mute').addEventListener('click', (e) => {
   e.target.textContent = muted ? '♪̸' : '♪';   // simple symbol, no emoji
 });
 
+// Button box: header toggles minimize/expand (starts minimized); the bottom
+// handle drags to resize the visible rows; the grid scrolls with the wheel.
+(() => {
+  const box = document.getElementById('panel-btns');
+  const toggle = document.getElementById('panel-btns-toggle');
+  const grid = document.getElementById('panel-btns-grid');
+  const handle = document.getElementById('panel-btns-resize');
+  if (!box || !toggle || !grid || !handle) return;
+  toggle.addEventListener('click', (e) => { e.stopPropagation(); box.classList.toggle('collapsed'); });
+  // Drag the handle to set the grid's visible height (clamped to 2…all rows).
+  let dragY = 0, startH = 0, dragging = false;
+  const onMove = (ev) => {
+    if (!dragging) return;
+    const h = Math.max(76, Math.min(grid.scrollHeight, startH + (ev.clientY - dragY)));
+    grid.style.maxHeight = h + 'px';
+  };
+  const onUp = () => { dragging = false; window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+  handle.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    dragging = true; dragY = ev.clientY; startH = grid.getBoundingClientRect().height;
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
+  });
+})();
+
 // Left panel toggle (empty by default; drag windows here from the right).
 const leftToggle = document.getElementById('panel-toggle-left');
 if (leftToggle) leftToggle.addEventListener('click', () => {
