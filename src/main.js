@@ -979,8 +979,12 @@ const combat = new CombatSystem(scene, world, {
     shakeAmount = Math.min(0.5, shakeAmount + 0.18);
     if (player.hp <= 0) onPlayerDeath();
   },
-  onCreatureHit: (c, dmg, mult, miss) => {
+  onCreatureHit: (c, dmg, mult, miss, statusKind) => {
     if (miss) { spawnFloatText(c.pos, 'MISS', '#cfd3d8'); return; }
+    // DOT ticks (burn/poison from a sorcerer's fire or druid's venom) float in
+    // their element colour and don't replay the hit sound — they're a bleed.
+    if (statusKind === 'burn') { spawnFloatText(c.pos, `${dmg}`, '#ff7a33'); return; }
+    if (statusKind === 'poison') { spawnFloatText(c.pos, `${dmg}`, '#7bd33a'); return; }
     audio.sfx.creatureHit();
     if (mult > 1) { spawnFloatText(c.pos, `${dmg}!`, '#7bed6f'); shakeAmount = Math.min(0.5, shakeAmount + 0.1); }
     else if (mult === 0) spawnFloatText(c.pos, '0', '#9aa0a6');
@@ -3246,7 +3250,11 @@ function tick() {
       if (controls.consumeToggleLight()) toggleTorch();
 
       const isNight = daynight.isNight();
-      const ev = eventMultipliers(new Date());
+      // Event multipliers (×2 EXP days etc.) change at most once per day, so don't
+      // allocate a Date + multiplier objects every frame — refresh on a timer.
+      _evClock -= dt;
+      if (_evClock <= 0 || !_evCached) { _evCached = eventMultipliers(new Date()); _evClock = 30; }
+      const ev = _evCached;
       // camera.position is the eye for nameplate line-of-sight (last frame's, which
       // is fine — one frame of lag is imperceptible). Works in 1st and 3rd person.
       combat.update(dt, player, isNight, ev, camera.position);
@@ -3257,7 +3265,7 @@ function tick() {
       // promise that the next attack will connect (see _resolveHit's locked path).
       camera.getWorldDirection(camDir);
       const aimed = combat.acquireTarget(player, camDir, camera.position);
-      document.getElementById('crosshair').classList.toggle('on-target', !!aimed);
+      if (_crosshairEl) _crosshairEl.classList.toggle('on-target', !!aimed);
 
       // Only grab a drop the backpack can actually take; otherwise it stays put
       // on the ground (don't re-spawn it underfoot) and we warn at most once a
