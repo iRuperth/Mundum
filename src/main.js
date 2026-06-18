@@ -512,15 +512,33 @@ function recomputeCombatStats() {
 // so the cadence stays accurate regardless of frame rate.
 let regenHpAcc = 0;
 let regenManaAcc = 0;
+// How much faster HP regenerates while at a temple, and how close counts as "at"
+// the temple (a hair beyond the ~4.2m marble floor so standing on it always
+// qualifies). The temple's green aura signals this healing zone in the world.
+const TEMPLE_HEAL_MUL = 10;
+const TEMPLE_HEAL_RADIUS = 6;
+// True when the player is standing on/by a city temple (surface only). Temples
+// sit at the city centre (cityProps[].temple).
+function atTemple() {
+  if (place !== 'surface') return false;
+  for (const p of cityProps) {
+    const tp = p.temple;
+    if (tp && Math.hypot(tp.x - player.pos.x, tp.z - player.pos.z) < TEMPLE_HEAL_RADIUS) return true;
+  }
+  return false;
+}
 function regenVitals(dt) {
   if (!player.alive) return;
   const r = professionRegen(player.profession);
   regenHpAcc += dt;
   regenManaAcc += dt;
-  if (player.hp < player.maxHp && regenHpAcc >= r.hp.every) {
-    const ticks = Math.floor(regenHpAcc / r.hp.every);
+  // Standing on/by a temple heals HP 10× faster — a clear sanctuary that mends
+  // you while you rest there.
+  const hpEvery = atTemple() ? r.hp.every / TEMPLE_HEAL_MUL : r.hp.every;
+  if (player.hp < player.maxHp && regenHpAcc >= hpEvery) {
+    const ticks = Math.floor(regenHpAcc / hpEvery);
     player.hp = Math.min(player.maxHp, player.hp + ticks * r.hp.amount);
-    regenHpAcc -= ticks * r.hp.every;
+    regenHpAcc -= ticks * hpEvery;
   } else if (player.hp >= player.maxHp) {
     regenHpAcc = 0;
   }
