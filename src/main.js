@@ -47,12 +47,29 @@ const SEED = 20260612;
 const PROFILE_KEY = 'mundum.profile';
 const SAVE_KEY = 'mundum.save';
 
+// Build marker — confirms in the console that the LATEST code is loaded (not a
+// stale browser cache). If you don't see this line after a reload, the browser
+// served an old cached module: open DevTools → Network → tick "Disable cache".
+console.log('%cMundum build 2026-06-18 · free market stalls + house facade display', 'color:#5dd6ff;font-weight:700');
+
 // Whether the device looks touch-driven. The player can override this with a
 // manual "mobile mode" toggle (stored in localStorage) so the on-screen
 // joystick/buttons can be forced ON in a desktop browser — handy for testing
 // the phone layout — or OFF on a touch laptop. `auto` follows the device.
 const TOUCH_MODE_KEY = 'mundum.touchMode';
-const deviceIsTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+// Auto-detect touch as the PRIMARY input: a coarse pointer (finger) with no fine
+// pointer (mouse/trackpad). This keeps phones/tablets in touch mode but does NOT
+// false-positive a touchscreen LAPTOP/2-in-1 the user drives with a mouse. The
+// `ontouchstart` fallback only kicks in when matchMedia can't decide.
+const deviceIsTouch = (() => {
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const fine = matchMedia('(pointer: fine)').matches;
+  if (coarse && !fine) return true;            // phone / tablet: finger only
+  if (!coarse && fine) return false;           // desktop / laptop with a mouse
+  // Ambiguous (hybrid reports both, or neither): fall back to touch support, but
+  // a real mousemove later flips the auto pref to desktop (see below).
+  return ('ontouchstart' in window) && !matchMedia('(any-pointer: fine)').matches;
+})();
 function touchModePref() {
   try { return localStorage.getItem(TOUCH_MODE_KEY) || 'auto'; } catch (_) { return 'auto'; }
 }
@@ -630,6 +647,8 @@ const ui = {
   btnRange: document.getElementById('btn-range'),
   btnAttack: document.getElementById('btn-attack'),
   btnBag: document.getElementById('btn-bag'),
+  btnInteract: document.getElementById('btn-interact'),
+  btnChat: document.getElementById('btn-chat'),
   creation: document.getElementById('creation'),
   nameInput: document.getElementById('name-input'),
   swatchRows: document.getElementById('swatch-rows'),
@@ -1029,7 +1048,11 @@ function enterWithCharacter(character) {
 
 addEventListener('pointerdown', () => audio.unlock(), { once: true });
 addEventListener('keydown', () => audio.unlock(), { once: true });
-addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyE' && !controls.chatting) tryInteract(); });
+addEventListener('keydown', (e) => { if (state === 'play' && controls.keymap.isAction('interact', e.code) && !controls.chatting) tryInteract(); });
+// Touch interact + chat buttons (no E / Enter key on a phone). The interact
+// button is shown only when something is in range (see updateInteractHint).
+if (ui.btnInteract) ui.btnInteract.addEventListener('click', (e) => { e.stopPropagation(); if (state === 'play') tryInteract(); });
+if (ui.btnChat) ui.btnChat.addEventListener('click', (e) => { e.stopPropagation(); if (state === 'play') openChat(); });
 addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyK' && !controls.chatting) skillPanel.toggle(); });
 // Underground: page the minimap up/down a floor to peek at what's above/below
 // (PageUp/PageDown, or the bracket keys). Other floors never reveal creatures.
@@ -2200,11 +2223,18 @@ function spawnFloatText(pos, text, color) {
 }
 
 function tryInteract() {
+  // Inside a house, E acts on the nearest showcase slot (place / take / buy).
+  if (place === 'house' && activeHouse) { interactHouseSlot(); return; }
+
   const npc = worldNpcs.npcAt(player.pos.x, player.pos.z);
   if (npc) { openNpcDialog(npc); return; }
 
   const chest = chestAt(dungeonChests, player.pos.x, player.pos.z);
   if (chest && !chest.opened) { openDungeonChest(chest); return; }
+
+  // At a house door: buy it, manage your own, or visit someone else's.
+  const lot = houseAtPlayer();
+  if (lot) { houseDoorAction(lot); return; }
 
   const node = interactableAt(cityProps, player.pos.x, player.pos.z);
   if (!node) return;
@@ -2212,6 +2242,451 @@ function tryInteract() {
   if (node.kind === 'shop') gameUI.openShop(node.city);
   else if (node.kind === 'depot') gameUI.openDepot(node.city);
   else if (node.kind === 'portal') gameUI.openTeleport(node.city, (dest) => teleportTo(dest));
+  else if (node.kind === 'stall') openMarketStall({ stallId: node.stallId, city: node.city.id });
+  else if (node.kind === 'healStatue') useHealStatue();
+}
+
+// Talk to a gate healing statue: tops HP up to HEAL_STATUE_HP_PCT and mana up to
+// HEAL_STATUE_MANA_PCT of the maximum (never lowers them), unlimited times — but
+// only for low-level travellers (level <= HEAL_STATUE_MAX_LEVEL). Higher levels
+// are gently turned away.
+const HEAL_STATUE_MAX_LEVEL = 20;
+const HEAL_STATUE_HP_PCT = 0.80;
+const HEAL_STATUE_MANA_PCT = 0.50;
+function useHealStatue() {
+  if (!player.alive) return;
+  if (player.level > HEAL_STATUE_MAX_LEVEL) {
+    gameUI.toast(t('healStatueTooHigh', HEAL_STATUE_MAX_LEVEL), 'bad');
+    return;
+  }
+  const hpTarget = Math.round(player.maxHp * HEAL_STATUE_HP_PCT);
+  const manaTarget = Math.round(player.maxMana * HEAL_STATUE_MANA_PCT);
+  const before = { hp: player.hp, mana: player.mana };
+  player.hp = Math.max(player.hp, Math.min(player.maxHp, hpTarget));
+  player.mana = Math.max(player.mana, Math.min(player.maxMana, manaTarget));
+  if (player.hp === before.hp && player.mana === before.mana) {
+    gameUI.toast(t('healStatueFull'), 'info');
+    return;
+  }
+  audio.sfx.levelUp?.();
+  gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
+  gameUI.toast('✨ ' + t('healStatueHealed'), 'levelup');
+}
+
+// Doorstep action: your own house → manage menu; an unowned lot → buy dialog;
+// a lot someone else owns (online) → ask to enter their house.
+function houseDoorAction(lot) {
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (houseStore.ownsLot(lot.id)) { openHouseManage(lot); return; }
+  const visited = visitedHouses.get(lot.id);
+  if (visited && visited.owner) { askVisitHouse(lot, visited); return; }
+  if (houseStore.ownsAny()) { gameUI.toast(t('houseAlreadyOwn'), 'info'); return; }
+  openHouseBuy(lot);
+}
+
+// E on a showcase slot inside a house. Owner: place from backpack onto an empty
+// slot, or open the slot's options (sell-flag / take). Visitor: buy if for sale.
+function interactHouseSlot() {
+  // Pick the wall slot the player is AIMING at (crosshair = screen centre), so the
+  // item lands exactly where they point — not at a slot chosen by proximity.
+  _peerRay.setFromCamera(_peerCenter, camera);
+  const hit = activeHouse.slotAtAim
+    ? activeHouse.slotAtAim(_peerRay, player.pos.x, player.pos.z)
+    : activeHouse.nearestSlot(player.pos.x, player.pos.z, 2.4);
+  if (!hit) return;
+  if (document.pointerLockElement) document.exitPointerLock();
+  const owner = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+  if (owner) gameUI.openHouseSlot(hit.wallId, hit.index);
+  else gameUI.openHouseVisitorSlot(activeHouse, hit.wallId, hit.index);
+}
+
+// The buy dialog for an unowned lot.
+function openHouseBuy(lot) {
+  gameUI.openHouseBuy(lot, inv.gold, { buy: () => buyHouse(lot) });
+}
+
+// The owner's management menu (colours, light, ban list, walls, sell house).
+function openHouseManage(lot) {
+  gameUI.openHouseManage(lot, houseStore, {
+    enter: () => enterHouse(lot, houseStore, { readOnly: false }),
+    setColor: (key, hex) => { houseStore.setColor(key, hex); onHouseChanged(); },
+    setLight: (temp) => { houseStore.setLight(temp); onHouseChanged(); },
+    ban: (name) => { houseStore.ban(name); onHouseChanged(); gameUI.toast(t('houseBanned', name)); },
+    unban: (name) => { houseStore.unban(name); onHouseChanged(); gameUI.toast(t('houseUnbanned', name)); },
+    toggleClosed: (v) => { houseStore.closed = !!v; onHouseChanged(); },
+    sellHouse: () => sellHouse(lot),
+    // Facade display: show / clear one of the two front-wall slots. Display-only
+    // (the item is copied for show, never removed from the backpack).
+    setFacade: (index, bpIndex) => {
+      const item = inv.backpack[bpIndex];
+      if (item && item.kind !== 'coin') houseStore.setFacade(index, item);
+      onHouseChanged();
+    },
+    clearFacade: (index) => { houseStore.clearFacade(index); onHouseChanged(); },
+  });
+}
+
+// Ask a visitor whether to enter someone's house, honouring the ban list.
+function askVisitHouse(lot, snapshot) {
+  const myName = (profile && profile.name) || 'Adventurer';
+  if (snapshot.closed || (Array.isArray(snapshot.bans) && snapshot.bans.includes(myName.toLowerCase()))) {
+    gameUI.toast(t(snapshot.closed ? 'houseClosedToVisitors' : 'houseBannedYou'), 'bad');
+    return;
+  }
+  gameUI.confirmVisitHouse(snapshot.owner, () => {
+    enterHouse(lot, snapshot, { readOnly: true });
+  });
+}
+
+// Sell the owned house: refund half, drop the displayed items, clear ownership.
+function sellHouse(lot) {
+  const refund = Math.floor(housePrice(lot) / 2);
+  houseStore.sell();
+  inv.addGold(refund); player.gold = inv.gold;
+  audio.sfx.pickup();
+  gameUI.toast(t('houseSold', mmCoins(refund)), 'levelup');
+  recompute();
+  refreshHouseExteriors();
+  persistProgress();
+  broadcastHouse();
+  gameUI.closeContext();
+}
+
+// Called after any house edit (colour, light, item, ban): repaint the live
+// interior, the surface skin, save and sync.
+function onHouseChanged() {
+  refreshActiveHouse();
+  refreshHouseExteriors();
+  persistProgress();
+  broadcastHouse();
+}
+
+// --- Showcase item operations (owner) -------------------------------------
+
+// Place backpack item #bpIndex onto wall `wallId` at slot `index`. Removes it
+// from the backpack and hangs it. Returns true on success.
+function houseHangItem(wallId, index, bpIndex) {
+  const item = inv.backpack[bpIndex];
+  if (!item) return false;
+  const used = houseStore.place(wallId, item, index);
+  if (used < 0) { gameUI.toast(t('houseWallFull'), 'bad'); return false; }
+  inv.removeFromBackpack(bpIndex);
+  audio.sfx.click();
+  recompute();
+  onHouseChanged();
+  return true;
+}
+
+// Take an item off the wall back into the backpack (owner only).
+function houseTakeItem(wallId, index) {
+  const item = houseStore.slot(wallId, index);
+  if (!item) return false;
+  const r = inv.addToBackpack(item.item, player.level);
+  if (r !== 'ok') { gameUI.toast(t(r === 'heavy' ? 'tooHeavy' : 'full'), 'bad'); return false; }
+  houseStore.take(wallId, index);
+  audio.sfx.pickup();
+  recompute();
+  onHouseChanged();
+  return true;
+}
+
+// ---- Free market (city stalls) --------------------------------------------
+//
+// The DB (auth.js market_* methods, backed by ADD_market.sql) is the single
+// source of truth for stall contents. The buy/claim RPCs mutate the character's
+// gold COLUMN and backpack jsonb server-side; the local inv.gold is derived from
+// coin stacks, so after any DB-side gold change we re-read the character row and
+// re-hydrate gold + backpack (reconcileFromCloud). The seller may be offline at
+// sale time — the gold + "sold" message wait in market_payouts and are claimed
+// on the seller's next login (claimMarketPayouts).
+
+// Cached owning auth user id (whose uid owns the character row). Avoids awaiting
+// currentUser() on every stall open / ownership test.
+let _marketUid = null;
+async function marketMyUid() {
+  if (_marketUid) return _marketUid;
+  const u = await auth.currentUser();
+  _marketUid = u ? u.id : null;
+  return _marketUid;
+}
+
+// Re-read the signed-in character and re-apply ONLY the gold + backpack (never
+// the position — a buy must not teleport the buyer). The single reconciliation
+// point after any DB-side gold/item mutation (buy + payout claim).
+async function reconcileFromCloud() {
+  if (!authCharacterId || !auth.isAvailable()) return;
+  const row = await auth.loadCharacter(authCharacterId);
+  if (!row) return;
+  inv.gold = row.gold || 0;
+  if (Array.isArray(row.backpack)) inv.backpack = row.backpack;
+  recompute();
+}
+
+// Fetch a city's listings and rebuild the 3D goods on its stall counters, so
+// every occupied stall shows its items from a distance. Returns the listings so
+// callers (openMarketStall) can reuse the same fetch. No-op offline.
+async function refreshMarketDisplay(cityId) {
+  if (!cityId || !auth.isAvailable()) return [];
+  const all = await auth.listListings(cityId);
+  // Sign label per stall, e.g. "Tienda de Mara" / "Mara's shop".
+  marketDisplay.refreshCity(cityId, all, cityGroundY.get(cityId) || 0,
+    (sellerName) => (sellerName ? t('marketShopSign', sellerName) : ''),
+    t('marketFreeSign'));
+  return all;
+}
+
+// Open a stall: fetch the city's listings (also refreshing the 3D goods), decide
+// whether this stall is mine / free, show the browse window. Online-only; offline
+// shows a toast and never throws.
+async function openMarketStall(stall) {
+  if (!auth.isAvailable()) { gameUI.toast(t('marketOffline'), 'bad'); return; }
+  if (document.pointerLockElement) document.exitPointerLock();
+  const all = await refreshMarketDisplay(stall.city);
+  const here = all.filter((r) => r.stall_id === stall.stallId);
+  const myUid = await marketMyUid();
+  // This stall is "mine" when it's empty (I can claim it) or every listing is mine.
+  const free = here.length === 0;
+  const mine = free || here.every((r) => r.seller_id === myUid);
+  gameUI.openMarketStall(stall, here, mine, {
+    free,
+    place: (s, bp, price) => marketPlace(s, bp, price),
+    take: (id) => marketTake(id, stall),
+    buy: (id, item, price) => marketBuy(id, item, price, stall),
+    refresh: (s) => openMarketStall(s),
+  });
+}
+
+// Put one backpack item on sale at a stall (next free slot). A seller may run
+// only ONE stall at a time, so this rejects placing in a stall held by someone
+// else AND placing while the seller already has listings in a different stall.
+// Caps at STALL_CAP per stall.
+async function marketPlace(stall, bpIndex, price) {
+  const item = inv.backpack[bpIndex];
+  if (!item || item.kind === 'coin') return;
+  const myUid = await marketMyUid();
+  const all = await auth.listListings(stall.city);
+  const here = all.filter((r) => r.stall_id === stall.stallId);
+  if (here.length && here.some((r) => r.seller_id !== myUid)) { gameUI.toast(t('marketStallTaken'), 'bad'); return; }
+  if (here.length >= STALL_CAP) { gameUI.toast(t('marketStallFull'), 'bad'); return; }
+  // One stall per seller: refuse if I already sell in a different stall (this
+  // city or any other — listMyStall spans cities).
+  const mine = await auth.listMyStall();
+  if (mine.some((r) => !(r.city === stall.city && r.stall_id === stall.stallId))) {
+    gameUI.toast(t('marketOneStall'), 'bad'); return;
+  }
+  const r = await auth.placeListing(stall.stallId, stall.city, here.length, item, price, profile.name);
+  if (!r.ok) { gameUI.toast(t('marketOffline'), 'bad'); return; }
+  inv.removeFromBackpack(bpIndex);   // the item now lives in the DB listing
+  audio.sfx.click();
+  recompute();                       // persists the now-shorter backpack
+  openMarketStall(stall);            // re-opens the window AND refreshes the 3D goods
+}
+
+// Unsell: pull the item back out of the DB listing and into the backpack. If the
+// bag is full the item is re-listed so nothing is ever lost.
+async function marketTake(listingId, stall) {
+  const r = await auth.takeListing(listingId);
+  if (!r.ok || !r.item) { gameUI.toast(t('marketOffline'), 'bad'); return; }
+  const add = inv.addToBackpack(r.item, player.level);
+  if (add !== 'ok') {
+    await auth.placeListing(stall.stallId, stall.city, 0, r.item, r.item.value || 0, profile.name);
+    gameUI.toast(t(add === 'heavy' ? 'tooHeavy' : 'full'), 'bad');
+    openMarketStall(stall);
+    return;
+  }
+  audio.sfx.pickup();
+  recompute();
+  gameUI.toast(t('marketTaken'), 'info');
+  openMarketStall(stall);
+}
+
+// Buy a listing through the atomic RPC, then reconcile gold + backpack from the
+// DB (the RPC mutated them server-side, bypassing the local coin pile).
+async function marketBuy(listingId, item, price, stall) {
+  const r = await auth.buyListing(listingId);
+  if (!r.ok) {
+    const key = ({ gold: 'marketNotEnoughGold', gone: 'marketGone', self: 'marketNoSelf',
+                   nochar: 'marketOffline', offline: 'marketOffline', 'no-market': 'marketOffline' })[r.reason] || 'marketOffline';
+    gameUI.toast(t(key), 'bad');
+    if (r.reason === 'gone') openMarketStall(stall);   // refresh: the item left
+    return;
+  }
+  await reconcileFromCloud();        // re-hydrate the authoritative gold + bag
+  audio.sfx.pickup();
+  const name = (item && item.name) ? (typeof item.name === 'string' ? item.name : (item.name[getLang()] || item.name.es)) : '';
+  gameUI.toast(t('marketBought', name), 'loot');
+  openMarketStall(stall);
+}
+
+// On login: credit any sales made while we were away and toast each one. The
+// claim RPC already added the gold to the character row, so reconcile the local
+// pile from the DB rather than adding coins twice.
+async function claimMarketPayouts() {
+  if (!auth.isAvailable() || !authCharacterId) return;
+  const rows = await auth.claimPayouts();
+  if (!rows.length) return;
+  await reconcileFromCloud();
+  for (const r of rows) {
+    gameUI.toast(t('marketItemSold', r.item_name, r.buyer_name) + ' (+' + mmCoins(r.gold) + ')', 'loot');
+  }
+}
+
+// --- House networking bridges ---------------------------------------------
+// These are no-ops offline. Implemented against net.js (broadcast house state,
+// who's inside, and item purchases) so other connected players see the room.
+
+function broadcastHouse() {
+  if (!net.isOnline()) return;
+  const lot = houseStore.owned ? houseLotById.get(houseStore.owned.lotId) : null;
+  net.houseSync(houseStore.owned ? houseStore.publicState(lot, (profile && profile.name) || 'Adventurer') : { lotId: null });
+}
+
+function broadcastHouseInside(lotId, inside) {
+  if (!net.isOnline()) return;
+  net.houseInside(lotId, inside);
+}
+
+// The centred "Press E to…" hint shown near a house door or showcase slot.
+let _lastHint = '';
+function updateInteractHint() {
+  let hint = '';
+  if (state === 'play' && player.alive) {
+    if (place === 'house' && activeHouse) {
+      if (activeHouse.nearestSlot(player.pos.x, player.pos.z, 2.4)) {
+        const owner = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+        // Houses are display-only: the owner places items, a visitor just looks.
+        hint = owner ? '🖼️ ' + t('housePlaceItem') : '🖼️ ' + t('houseOnlyOwner');
+      }
+    } else if (place === 'surface') {
+      const lot = houseAtPlayer();
+      if (lot) {
+        if (houseStore.ownsLot(lot.id)) hint = '🏠 ' + t('houseManage');
+        else {
+          const visited = visitedHouses.get(lot.id);
+          if (visited && visited.owner) hint = '🚪 ' + t('houseEnterPrompt', visited.owner);
+          else if (!houseStore.ownsAny()) hint = '🏠 ' + t('houseBuyPrompt');
+        }
+      } else {
+        const node = interactableAt(cityProps, player.pos.x, player.pos.z);
+        if (node && node.kind === 'stall') hint = '🛒 ' + t('marketStallHint');
+        else if (node && node.kind === 'healStatue') hint = '✨ ' + t('healStatueHint');
+      }
+    }
+  }
+  if (hint !== _lastHint) {
+    _lastHint = hint;
+    ui.interactHint.textContent = hint;
+    ui.interactHint.classList.toggle('hidden', !hint);
+  }
+  // Show the touch INTERACT button whenever anything is in range (NPCs, doors,
+  // shops, depot, portals, stalls, chests, house slots) — touch players have no E.
+  if (ui.btnInteract) {
+    const near = controls.isTouch && state === 'play' && player.alive && interactableNearby();
+    ui.btnInteract.classList.toggle('hidden', !near);
+  }
+}
+
+// True if tryInteract() would do something right now (mirrors its checks). Drives
+// the touch interact button's visibility so it only appears when it's useful.
+function interactableNearby() {
+  if (place === 'house' && activeHouse) return !!activeHouse.nearestSlot(player.pos.x, player.pos.z, 2.4);
+  if (worldNpcs.npcAt(player.pos.x, player.pos.z)) return true;
+  const chest = chestAt(dungeonChests, player.pos.x, player.pos.z);
+  if (chest && !chest.opened) return true;
+  if (houseAtPlayer()) return true;
+  return !!interactableAt(cityProps, player.pos.x, player.pos.z);
+}
+
+// Quest WAYPOINT ARROW: a screen-space pointer toward the current quest
+// destination (_waypoint, set by refreshWaypoint). It hugs the screen edge,
+// rotates to point at the target, and shows the place name + distance. Hidden
+// when the toggle is off, when there's no quest target, when off the surface, or
+// when the player is basically on top of the destination.
+const _qArrowEl = document.getElementById('quest-arrow');
+const _qArrowGlyph = _qArrowEl ? _qArrowEl.querySelector('.qa-arrow') : null;
+const _qArrowLabel = _qArrowEl ? _qArrowEl.querySelector('.qa-label') : null;
+function updateQuestArrow() {
+  if (!_qArrowEl) return;
+  const off = !showQuestArrow || state !== 'play' || place !== 'surface' || !_waypoint || !player.alive;
+  if (off) { if (!_qArrowEl.classList.contains('hidden')) _qArrowEl.classList.add('hidden'); return; }
+
+  const dx = _waypoint.x - player.pos.x, dz = _waypoint.z - player.pos.z;
+  const dist = Math.hypot(dx, dz);
+  // Arrived: within ~14m, don't clutter — you can see the place/NPC.
+  if (dist < 14) { if (!_qArrowEl.classList.contains('hidden')) _qArrowEl.classList.add('hidden'); return; }
+
+  const W = innerWidth, H = innerHeight, cx = W / 2, cy = H / 2;
+  // Direction in WORLD space, rotated into camera/screen space by the camera's
+  // yaw. This is robust whether the target is in front or behind (the old
+  // screen-projection mirror jittered when the target sat near the center while
+  // behind, because the mirror loses sign there). atan2(forward, right) gives a
+  // screen angle where straight-ahead = up.
+  camera.getWorldDirection(camDir);
+  const camYaw = Math.atan2(camDir.x, camDir.z);      // heading the camera faces
+  const tgtYaw = Math.atan2(dx, dz);                  // heading to the target
+  let rel = tgtYaw - camYaw;                          // 0 = dead ahead
+  while (rel > Math.PI) rel -= Math.PI * 2;
+  while (rel < -Math.PI) rel += Math.PI * 2;
+  // Screen unit vector: ahead → up (-y), right of view → +x.
+  let ax = Math.sin(rel), ay = -Math.cos(rel);
+  const margin = 64;
+  // Scale the unit direction out to the viewport box (whichever edge it hits first).
+  const tx = (cx - margin) / (Math.abs(ax) || 1e-3);
+  const ty = (cy - margin) / (Math.abs(ay) || 1e-3);
+  const t = Math.min(tx, ty);
+  const ex = cx + ax * t, ey = cy + ay * t;
+
+  _qArrowEl.style.left = ex + 'px';
+  _qArrowEl.style.top = ey + 'px';
+  if (_qArrowGlyph) _qArrowGlyph.style.transform = `rotate(${Math.atan2(ay, ax)}rad)`;
+  if (_qArrowLabel) {
+    const name = _waypoint.name || '';
+    const verb = _waypoint.turnIn ? (getLang() === 'en' ? 'Turn in' : 'Entregar') : '';
+    _qArrowLabel.textContent = `${verb ? verb + ' · ' : ''}${name} · ${Math.round(dist)}m`;
+  }
+  _qArrowEl.classList.toggle('qa-turnin', !!_waypoint.turnIn);
+  if (_qArrowEl.classList.contains('hidden')) _qArrowEl.classList.remove('hidden');
+}
+
+// Keep the 3D stall goods in sync with the DB as the player moves around: when
+// they come within MARKET_VIEW_R of a city's market, (re)fetch that city's
+// listings and rebuild the counter plaques. Refreshes once on arrival, then at
+// most every MARKET_REFRESH_MS so newly-listed items by other players appear
+// without re-walking. Throttled hard so it never spams the network per frame.
+const MARKET_VIEW_R = 60;        // how near a city before we render its goods
+const MARKET_REFRESH_MS = 20000; // re-poll the visible city's listings this often
+let _marketCityId = null;
+let _marketNextPoll = 0;
+function updateMarketProximity() {
+  if (place !== 'surface' || !auth.isAvailable()) return;
+  const c = nearestCity(player.pos.x, player.pos.z);
+  const near = c && Math.hypot(c.x - player.pos.x, c.z - player.pos.z) < MARKET_VIEW_R;
+  if (!near) { _marketCityId = null; return; }
+  const now = performance.now();
+  if (c.id !== _marketCityId) {
+    _marketCityId = c.id;
+    _marketNextPoll = now + MARKET_REFRESH_MS;
+    refreshMarketDisplay(c.id);     // fire-and-forget; rebuilds the counter goods
+  } else if (now >= _marketNextPoll) {
+    _marketNextPoll = now + MARKET_REFRESH_MS;
+    refreshMarketDisplay(c.id);
+  }
+}
+
+// Gently breathe the temple healing auras (opacity pulse on the translucent disc
+// + dome) and slowly turn the whole aura so the motes drift — a living "this is
+// healing you" glow. Cheap: only the few aura groups, only on the surface.
+function updateTempleAuras() {
+  if (place !== 'surface' || !templeAuras.length) return;
+  const pulse = 0.78 + 0.22 * Math.sin(nowSec * 2.0);   // 0.56..1.0
+  for (const aura of templeAuras) {
+    aura.rotation.y = nowSec * 0.25;
+    for (const child of aura.children) {
+      const m = child.material;
+      if (m && m.transparent && m._baseOpacity == null) m._baseOpacity = m.opacity;
+      if (m && m.transparent) m.opacity = m._baseOpacity * pulse;
+    }
+  }
 }
 
 function openNpcDialog(npc) {
