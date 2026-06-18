@@ -48,6 +48,21 @@ function rarityClass(item) {
 // un-mirrored, also matching the model.
 const HANDED_WEAPON_TYPES = new Set(['sword', 'axe', 'mace', 'lance', 'bow', 'wand']);
 
+// What a right-click menu may offer for an item:
+//  • EQUIPABLE — gear that goes on the paperdoll (weapons, shields, armor pieces,
+//    amulets, rings). Bags are NOT listed here: clicking a bag just opens it.
+//  • USABLE — consumables/tools fired with "use": potions and lights (the torch).
+// Everything always offers Drop + its info; equip/use appear only when valid.
+function isEquipable(item) {
+  if (!item) return false;
+  if (HANDED_WEAPON_TYPES.has(item.type) || item.type === 'weapon' || item.type === 'shield') return true;
+  if (item.type === 'armor') return true;   // armor/legs/boots/helmet/amulet/ring carry slot
+  return false;
+}
+function isUsable(item) {
+  return !!item && (item.kind === 'potion' || item.kind === 'light');
+}
+
 function itemIcon(item, slot) {
   // Procedural pixel-art SVG, unique per item (type/tier/element/rarity/colour).
   // Returns an inline <svg> string; safe to drop into innerHTML like the old
@@ -97,11 +112,10 @@ export class UI {
     refs.panelToggle.addEventListener('click', () => this.togglePanel());
     refs.paperdoll.querySelectorAll('.slot').forEach((el) => {
       const slot = el.getAttribute('data-slot');
-      el.addEventListener('click', () => this.onSlotClick(slot));
-      el.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onSlotClick(slot); });
-      // Double-clicking a slot "uses" what's in it: the fire slot lights/puts out
-      // the equipped torch; the bag slot opens the backpack window.
-      el.addEventListener('dblclick', (e) => { e.preventDefault(); this.onSlotUse(slot); });
+      // LEFT click = the equipped item's INFO; RIGHT click = its action (unequip,
+      // or open the bag / toggle the torch).
+      el.addEventListener('click', () => this.onSlotInfo(slot));
+      el.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onSlotUse(slot); });
       // Drag an equipped item off into a bag (bound once; the item is read lazily
       // at drag-start so it always reflects what's currently in the slot).
       this._makeSlotDraggable(el, slot);
@@ -270,20 +284,14 @@ export class UI {
         if (item.type === 'container') cell.classList.add('is-bag');
         if (item.kind === 'coin') cell.classList.add('is-coin');
         cell.innerHTML = cellInner(item);
-        // Tibia-style: LEFT click opens a bag; RIGHT click is the action menu;
-        // double click uses/equips quickly.
-        cell.addEventListener('click', () => {
-          if (item.type === 'container' && !isNested) { this.openBackpack(i); return; }
-        });
-        cell.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onBackpackItemAction(item, i, isNested ? ref : null); });
-        cell.addEventListener('dblclick', (e) => {
+        // Interaction model (the user's design):
+        //   LEFT click  → show the item's INFO (name, stats, weight…).
+        //   RIGHT click → the ACTION directly: use food/potion/torch, convert a
+        //                 coin (100→1), equip gear, or open a bag. No menu.
+        cell.addEventListener('click', (e) => { e.preventDefault(); this.openItemInfo(item); });
+        cell.addEventListener('contextmenu', (e) => {
           e.preventDefault();
-          // A bag opens on double click too (matching single click); nested-bag
-          // cells only support opening, not the use/equip actions below.
-          if (item.type === 'container') { if (!isNested) this.openBackpack(i); return; }
-          if (isNested) return;
-          if (item.kind === 'potion') { this.hooks.usePotion(i); }
-          else if (item.kind !== 'coin') { this.hooks.equip(i); } // torch → fire slot
+          this.doItemAction(item, i, isNested ? ref : null);
         });
         this.attachTooltip(cell, item);
         this._makeDraggable(cell, item, { c: containerKey, i });
@@ -488,33 +496,21 @@ export class UI {
     });
   }
 
-  // Action menu for an item clicked inside the backpack window.
-  onBackpackItemAction(item, index, bagIndex) {
-    // A bag has no useful menu — just open it so you see what's inside, instead
-    // of a card that only offers drop/close. (Drag it to the world to drop it.)
-    if (item.type === 'container' && bagIndex == null) { this.openBackpack(index); return; }
-    const actions = [];
-    // Each action runs its hook, which calls recompute() → renderAll() and
-    // re-renders every open window by bag identity, so we don't reopen by a
-    // (now-stale) numeric index here.
-    if (bagIndex != null) {
-      // Inside a nested bag: take it out.
-      actions.push({ label: t('unequip'), fn: () => this.hooks.takeFromBag(bagIndex, index) });
-    } else {
-      if (item.kind === 'potion') {
-        actions.push({ label: t('use'), fn: () => this.hooks.usePotion(index) });
-        actions.push({ label: '⌨ ' + t('toHotbar'), fn: () => { this.hooks.assignHotbar(item); this.closeContext(); } });
-      } else if (item.type !== 'container') {
-        actions.push({ label: t('equip'), fn: () => this.hooks.equip(index) });
-      }
-      // Offer to stash into the first nested bag, if any.
-      const bagIdx = this.inv.backpack.findIndex((it, j) => it && it.type === 'container' && j !== index);
-      if (bagIdx >= 0 && item.type !== 'container') {
-        actions.push({ label: '🎒 ' + this.inv.backpack[bagIdx].name, fn: () => this.hooks.moveIntoBag(index, bagIdx) });
-      }
+  // RIGHT click = the item's ACTION, done immediately (no menu): open a bag, use
+  // a consumable/torch, convert a coin (100→1 up; if it can't go up, break it
+  // 1→100 down), or equip gear. `bagIndex` set = the item lives inside a nested
+  // bag (so we take it out / use it via the nested-bag hooks).
+  doItemAction(item, index, bagIndex) {
+    if (item.type === 'container') { if (bagIndex == null) this.openBackpack(index); return; }
+    if (item.kind === 'coin') {
+      if ((item.count || 0) >= 100 && (item.tier || 0) < 4) this.hooks.convertCoin(item.baseId);
+      else if ((item.tier || 0) > 0) this.hooks.convertCoinDown(item.baseId);   // top tier with <100: break one down
+      this.renderAll();
+      return;
     }
-    actions.push({ label: t('drop'), fn: () => this._dropWithPrompt(item, index, bagIndex) });
-    this.openContext(item, actions);
+    if (bagIndex != null) { this.hooks.takeFromBag(bagIndex, index); return; }
+    if (isUsable(item)) { if (item.kind === 'light') this.hooks.equip(index); else this.hooks.usePotion(index); return; }
+    if (isEquipable(item)) { this.hooks.equip(index); return; }
   }
 
   renderAll() {
@@ -523,48 +519,76 @@ export class UI {
     this.setCapacity(this.level);
   }
 
+  // LEFT click = show the item's INFO: a small Tibia-style card with the name and
+  // its stats/weight (text only, no icons), plus a Drop button. No use/equip.
+  openItemInfo(item) {
+    if (!item) return;
+    // Resolve where this item lives so the action buttons can act on it. It's
+    // either a top-level backpack cell, or inside a nested bag (contents). On
+    // touch there's no right-click, so these buttons are the ONLY way to equip a
+    // weapon, drink a potion, light a torch, or open a bag with a finger.
+    const top = this.inv.backpack.indexOf(item);
+    let index = top, bagIndex = null;
+    if (top < 0) {
+      for (let b = 0; b < this.inv.backpack.length; b++) {
+        const bag = this.inv.backpack[b];
+        if (bag && Array.isArray(bag.contents)) {
+          const ci = bag.contents.indexOf(item);
+          if (ci >= 0) { index = ci; bagIndex = b; break; }
+        }
+      }
+    }
+
+    const actions = [];
+    // Primary action button (Equip / Use / Open) — context-appropriate label.
+    if (item.type === 'container' && bagIndex == null) {
+      actions.push({ label: '🎒 ' + (t('open') || 'Abrir'), primary: true,
+        fn: () => { this.doItemAction(item, index, bagIndex); this.closeContext(); } });
+    } else if (bagIndex != null) {
+      actions.push({ label: '🎒 ' + (t('takeOut') || 'Sacar'), primary: true,
+        fn: () => { this.doItemAction(item, index, bagIndex); this.closeContext(); } });
+    } else if (isUsable(item)) {
+      const lbl = item.kind === 'light' ? ('🔦 ' + (t('equip') || 'Equipar')) : ('🧪 ' + (t('use') || 'Usar'));
+      actions.push({ label: lbl, primary: true,
+        fn: () => { this.doItemAction(item, index, bagIndex); this.closeContext(); } });
+    } else if (isEquipable(item)) {
+      actions.push({ label: '⚔️ ' + (t('equip') || 'Equipar'), primary: true,
+        fn: () => { this.doItemAction(item, index, bagIndex); this.closeContext(); } });
+    } else if (item.kind === 'coin') {
+      actions.push({ label: '🪙 ' + (t('convert') || 'Convertir'),
+        fn: () => { this.doItemAction(item, index, bagIndex); } });
+    }
+    // Drop is always available.
+    actions.push({ label: '🗑️ ' + t('drop'), fn: () => {
+      const i = (top >= 0) ? top : this.inv.backpack.indexOf(item);
+      if (i >= 0) this._dropWithPrompt(item, i);
+      else if (bagIndex != null) { this.doItemAction(item, index, bagIndex); }   // out of bag first
+    } });
+
+    this.openContext(item, actions, { info: true });
+  }
+
+  // Old left-click entry point, kept as an alias so any caller still works: it
+  // now shows info rather than acting.
   onBackpackClick(i) {
     const item = this.inv.backpack[i];
-    if (!item) return;
-    // Coins: offer "convert 100 → 1 of next tier" (and nothing to equip/use).
-    if (item.kind === 'coin') {
-      const actions = [];
-      if (item.count >= 100 && (item.tier || 0) < 4) {
-        actions.push({ label: '🔼 ' + t('convertCoin'), fn: () => { this.hooks.convertCoin(item.baseId); this.renderAll(); } });
-      }
-      actions.push({ label: t('drop'), fn: () => this._dropWithPrompt(item, i) });
-      this.openContext(item, actions);
-      return;
-    }
-    // Potions get a "Use" action instead of "Equip".
-    const primary = item.kind === 'potion'
-      ? { label: t('use'), fn: () => this.hooks.usePotion(i) }
-      : { label: t('equip'), fn: () => this.hooks.equip(i) };
-    const actions = [primary];
-    if (item.kind === 'potion') actions.push({ label: '⌨ ' + t('toHotbar'), fn: () => this.hooks.assignHotbar(item) });
-    actions.push({ label: t('drop'), fn: () => this._dropWithPrompt(item, i) });
-    this.openContext(item, actions);
+    if (item) this.openItemInfo(item);
   }
 
-  onSlotClick(slot) {
+  // LEFT click on an equip slot = show the item's INFO (no action).
+  onSlotInfo(slot) {
     const item = this.inv.equip[slot];
-    if (!item) return;
-    // Left-clicking the equipped bag opens (or re-focuses) the main backpack
-    // window, Tibia-style. Other slots show the unequip menu.
-    if (slot === 'bag') { this.openBackpack('main'); return; }
-    this.openContext(item, [
-      { label: t('unequip'), fn: () => this.hooks.unequip(slot) },
-    ]);
+    if (item) this.openItemInfo(item);
   }
 
-  // Double-clicking an equip slot uses what's in it. The fire slot toggles the
-  // equipped torch (light on/off); the bag slot opens the backpack. Other slots
-  // have no "use" action.
+  // RIGHT click on an equip slot = its action: open the bag, light/douse the
+  // torch in the fire slot, otherwise unequip it.
   onSlotUse(slot) {
     const item = this.inv.equip[slot];
     if (!item) return;
     if (slot === 'bag') { this.openBackpack('main'); return; }
-    if (item.kind === 'light' && !item.passive) this.hooks.toggleTorch?.();
+    if (item.kind === 'light' && !item.passive) { this.hooks.toggleTorch?.(); return; }
+    this.hooks.unequip(slot);
   }
 
   attachTooltip(el, item) {
