@@ -1,3 +1,11 @@
+-- ############################################################################
+-- DEPRECATED — DO NOT DEPLOY THIS FILE.
+-- This is the legacy v1 schema. It lacks game_config / market / mounts / houses
+-- and its `bans` policies are world-writable (any player can ban/unban anyone).
+-- Deploy supabase/schema_all.sql instead (it has the corrected GM-only bans RLS
+-- and every newer table). Kept only for historical reference.
+-- ############################################################################
+--
 -- Mundum backend schema (Supabase / Postgres)
 --
 -- SETUP, step by step:
