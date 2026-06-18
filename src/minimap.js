@@ -265,7 +265,19 @@ export class Minimap {
       const r = legend ? 4 : 5;
       for (const poi of this.pois) {
         const p = this.worldToMap(poi, cx, cz, half, range);
-        if (p) drawPoiIcon(ctx, p.x, p.y, r, poi.icon);
+        if (!p) continue;
+        // The quest destination ('📍') draws a touch larger with a pulse ring so
+        // it stands out from the static city/dungeon POIs.
+        if (poi.icon === '📍') {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,210,77,.85)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2); ctx.stroke();
+          ctx.restore();
+          drawPoiIcon(ctx, p.x, p.y, r + 1, poi.icon);
+        } else {
+          drawPoiIcon(ctx, p.x, p.y, r, poi.icon);
+        }
       }
     }
 
@@ -390,6 +402,7 @@ const POI_STYLE = {
   '🗼': { color: '#e0e0e0', shape: 'tower' },    // lighthouse / ice tower
   '🗿': { color: '#9aa0a6', shape: 'tower' },    // obelisk
   '🔺': { color: '#e0a050', shape: 'triangle' }, // pyramid
+  '📍': { color: '#ffd24d', shape: 'diamond' },  // QUEST destination (bright gold)
 };
 
 function drawPoiIcon(ctx, x, y, r, icon) {
