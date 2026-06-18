@@ -257,10 +257,38 @@ body:not(.touch) #stick-base { display: none !important; }
 /* Small Tibia-style square button box, pinned at the BOTTOM of the right panel
    (margin-top:auto pushes it down below the windows). A wrapping grid of little
    square buttons — replaces the big floating round buttons. */
+/* Collapsible/resizable button box. Header (toggle) is always visible; the grid
+   below shows when expanded. The grid is 2 columns and, by default, ~4 rows tall
+   with the rest reachable by mouse-wheel scroll; drag the bottom handle to resize. */
 #panel-btns {
-  margin-top: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-  padding: 6px; border-radius: 8px;
+  margin-top: auto; border-radius: 8px;
   background: rgba(12,16,34,.6); border: 1px solid rgba(255,255,255,.12);
+  display: flex; flex-direction: column; overflow: hidden;
+  --pb-btn: 38px;            /* one button cell (incl. gap) — drives the 4-row default */
+}
+#panel-btns-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 5px 8px; cursor: pointer; border: 0; border-radius: 7px;
+  background: transparent; color: #cdd6e6; font: 700 13px system-ui, sans-serif;
+}
+#panel-btns-toggle:hover { background: rgba(255,255,255,.10); }
+#panel-btns-toggle .pb-chevron { transition: transform .15s; }
+#panel-btns:not(.collapsed) #panel-btns-toggle .pb-chevron { transform: rotate(90deg); }
+#panel-btns-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px;
+  padding: 4px 6px 2px; overflow-y: auto; overscroll-behavior: contain;
+  /* Default visible height = 4 rows (set as inline style by JS / fallback here). */
+  max-height: calc(var(--pb-btn) * 4);
+}
+/* Minimized: only the header shows. */
+#panel-btns.collapsed #panel-btns-grid,
+#panel-btns.collapsed #panel-btns-resize { display: none; }
+/* Bottom resize handle (a grippy bar) — only when expanded. */
+#panel-btns-resize {
+  height: 9px; cursor: ns-resize; flex: 0 0 auto;
+  background:
+    linear-gradient(rgba(255,255,255,.18), rgba(255,255,255,.18)) center/22px 2px no-repeat;
+  border-top: 1px solid rgba(255,255,255,.10);
 }
 .panel-btn {
   aspect-ratio: 1; min-width: 0; border-radius: 6px; cursor: pointer;
@@ -622,6 +650,9 @@ body.touch #minimap-box { right: 162px; }
 /* Per-item stat line under a shop/vendor row. */
 .shop-stats { font-size: 11px; opacity: .8; margin: 2px 0 0 26px; line-height: 1.35; }
 .shop-stats .st { margin-right: 8px; white-space: nowrap; }
+/* Market-stall item stats: the full Tibia-style detail block under each listing
+   so a buyer can judge an item before buying. */
+.market-item-stats { font-size: 11px; opacity: .78; margin: 2px 0 4px 26px; line-height: 1.4; }
 .ctx-sub, .ctx-gold { font-size: 12px; opacity: .85; margin-bottom: 10px; }
 .ctx-body { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
 .ctx-actions { display: flex; gap: 8px; flex-wrap: wrap; }
