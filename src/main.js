@@ -738,6 +738,7 @@ const ui = {
   clockIcon: document.getElementById('clock-icon'),
   clockTime: document.getElementById('clock-time'),
   hudEvent: document.getElementById('hud-event'),
+  interactHint: document.getElementById('interact-hint'),
 };
 
 const panelRefs = {
@@ -785,6 +786,7 @@ const gameUI = new UI(panelRefs, inv, depot, {
     audio.sfx.click?.();
   },
   convertCoin: (id) => { const ok = inv.convertCoin(id); if (ok) { audio.sfx.pickup(); recompute(); } return ok; },
+  convertCoinDown: (id) => { const ok = inv.convertCoinDown(id); if (ok) { audio.sfx.pickup(); recompute(); } return ok; },
   buy: (def, refresh, price) => doBuy(def, refresh, price),
   sell: (i, npc, refresh) => doSell(i, npc, refresh),
   depositItem: (city, i) => {
@@ -919,12 +921,6 @@ const activateEntry = (entry) => {
   else if (entry.kind === 'potion') useHotbarPotion(entry);
   else if (entry.kind === 'light') toggleTorch();
 };
-const keyboardPanel = new KeyboardPanel({
-  getOptions: () => hotbarOptions(),
-  activate: (entry) => activateEntry(entry),
-  onChange: () => { saveLocal(); },
-});
-
 const controls = new Controls(canvas, ui, {
   onToggleCamera: () => { firstPerson = !firstPerson; introCam = 0; },
   onHotbarKeyCode: (code) => {
@@ -2974,6 +2970,16 @@ function maybeFirstQuestHint() {
 }
 
 function completeQuest(qid) {
+  // Spend any `collect` items the quest asked the player to BRING (dusts, fangs,
+  // etc.) — handing them over on turn-in, the imaginative "barter" step. The KEY
+  // gate (requiresItems) is deliberately NOT consumed: you brandish it to pass,
+  // and keep it. Read the quest before complete() clears it from the log.
+  const qdef = getQuest(qid);
+  if (qdef && questLog.readyToComplete().includes(qid)) {
+    for (const o of (qdef.objectives || [])) {
+      if (o.type === 'collect' && o.target) inv.removeById(o.target, o.count || 1);
+    }
+  }
   const res = questLog.complete(qid);
   if (!res) return;
   const r = res.rewards;
@@ -3740,7 +3746,7 @@ function tick() {
     }
 
     peers.tick(dt);
-    worldNpcs.tick(dt);
+    worldNpcs.tick(dt, player.pos);
     if (place === 'surface') {
       bots.tick(dt, { playerPos: player.pos, creatures: combat.creatures, place, addChat: addChatLine, lang: getLang() });
     }
