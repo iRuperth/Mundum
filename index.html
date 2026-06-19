@@ -136,11 +136,18 @@
 </div>
 
 <div id="map-overlay" class="hidden">
+  <div id="map-legend"></div>
   <canvas id="bigmap" width="600" height="600"></canvas>
   <div id="bigmap-coords"></div>
-  <div id="bigmap-hint">Drag to move · scroll / pinch to zoom</div>
+  <div id="bigmap-hint">Drag to move · scroll / pinch / +- to zoom</div>
+  <div id="bigmap-zoom">
+    <button id="bigmap-zoomin" title="Zoom in">+</button>
+    <button id="bigmap-zoomout" title="Zoom out">−</button>
+  </div>
+  <button id="bigmap-mark" title="Mark this spot">🚩</button>
   <button id="bigmap-recenter" title="Recenter on player">⌖</button>
   <button id="bigmap-close" title="Close">✕</button>
+  <div id="map-marks"></div>
 </div>
 
 <div id="context-card" class="hidden"></div>
