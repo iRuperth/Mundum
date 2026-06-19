@@ -3,6 +3,7 @@ import { World, WATER_LEVEL } from './world.js';
 import { Player, EYE_HEIGHT } from './player.js';
 import { Controls } from './controls.js';
 import { DayNight } from './daynight.js';
+import { Weather } from './weather.js';
 import { HAIR_STYLES } from './character.js';
 import { initLang, getLang, setLang, applyStaticDom, t } from './i18n.js';
 import { Inventory, DepotStore, instanceFromContainer, instanceFromArmor, instanceFromQuiver } from './inventory.js';
@@ -22,7 +23,7 @@ import { Net } from './net.js';
 import { buildGMPanel, showAnnounceBanner } from './gm.js';
 import { audio } from './audio.js';
 import { makeStarterWand, getContainer, getWeapon, getArmor, getQuiver, rollWeaponInstance, instanceFromPotion, potionRestore, getLight, instanceFromLight } from './data/items.js';
-import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt, spellDamageMul, isDamageSkill } from './data/professions.js';
+import { professionStats, professionRegen, professionLevelGain, getProfession, skillsForLevel, skillsOf, getSkill, skillMana, weaponAttackSpeed, passiveCombatBonuses, jobTitle, jobAdvancementAt, spellDamageMul, isDamageSkill, allSkills } from './data/professions.js';
 import { SkillSystem } from './skills.js';
 import { skillIcon } from './skillIcons.js';
 import { Hotbar } from './hotbar.js';
@@ -40,6 +41,7 @@ import { MountSystem } from './mountSystem.js';
 import { getMount, shopMounts, MOUNTS, mountForQuest } from './data/mounts.js';
 import { buildDungeonEntrances, dungeonEntranceAt, dungeonDescendAt, dungeonOutsideAt, chestAt, openChestVisual, update as updateDungeons, DUNGEONS } from './dungeons.js';
 import { getCaveFloor } from './caves.js';
+import { CaveMap, CAVE_SIGHT } from './caveMap.js';
 import { buildRuins, ruinAt } from './ruins.js';
 import { SeaFauna } from './seafauna.js';
 import { resolveItem } from './inventory.js';
@@ -344,7 +346,10 @@ initLang();
 
 const world = new World(scene, SEED, isTouch ? 3 : 4);
 const daynight = new DayNight(scene);
-daynight.forceDay = true; // keep the world in daytime for now
+// Day/night follows the device's real clock now: night when it's night, day when
+// it's day. (Was pinned to midday via forceDay.)
+const weather = new Weather(scene, world);
+window.weather = weather;   // handy for testing from the console: weather.setState('storm')
 placeCities(world);
 const citiesBuild = buildCities(scene, world);
 const cityProps = citiesBuild.props;
@@ -358,6 +363,13 @@ citiesGroup.traverse((o) => { if (o.userData && o.userData.templeAura) templeAur
 const houseLots = citiesBuild.houses || [];
 const houseLotById = new Map(houseLots.map((h) => [h.id, h]));
 const houseStore = new HouseStore();
+// Per-character CAVE EXPLORATION memory (fog of war) — the underground map fills
+// in as you walk and is saved, so each player keeps their own map history.
+const caveMap = new CaveMap();
+// Player-placed NAMED MAP MARKS (Tibia-style "I was here, I'll come back"). Each:
+// { id, name, place:'surface'|'cave', x, z, dungeonId?, floor? }. Saved per char.
+let mapMarks = [];
+let _markSeq = 1;
 // Free market: cache each city's stall ring (positions built in cities.js) so
 // interacting can find the stall the player stands at. The stall CONTENTS live
 // in Supabase (auth.js market_* methods), never here.
@@ -836,11 +848,12 @@ const minimap = new Minimap(minimapCanvas, world, document.getElementById('city-
   big: document.getElementById('bigmap'),
   bigCoords: document.getElementById('bigmap-coords'),
   overlay: mapOverlay,
+  legend: document.getElementById('map-legend'),
   pois: mapPois,
 });
 
 // Tap the minimap to open the full-screen map; tap the backdrop or ✕ to close.
-minimapCanvas.addEventListener('click', () => minimap.toggle(true));
+minimapCanvas.addEventListener('click', () => { minimap.toggle(true); renderMapMarksList(); });
 // Mouse wheel over the corner minimap zooms it (down = out, up = in), so you can
 // pull back for the lay of the land or zoom in to read a city's streets/houses.
 minimapCanvas.addEventListener('wheel', (e) => {
@@ -849,6 +862,45 @@ minimapCanvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 document.getElementById('bigmap-close').addEventListener('click', () => minimap.toggle(false));
 mapOverlay.addEventListener('click', (e) => { if (e.target === mapOverlay) minimap.toggle(false); });
+
+// --- Named map marks (Tibia-style "I was here") -----------------------------
+// The 🚩 button drops a named mark at the player's current spot; the right-side
+// list lets you jump back to one or delete it. The list rebuilds when the map
+// opens and whenever marks change.
+const mapMarksEl = document.getElementById('map-marks');
+document.getElementById('bigmap-mark').addEventListener('click', () => {
+  let name = '';
+  try { name = window.prompt(t('mapMarkPrompt'), t('mapMarkDefault')) ?? ''; }
+  catch (_) { name = t('mapMarkDefault'); }
+  if (name === null) return;                 // cancelled
+  addMapMark(name);
+  renderMapMarksList();
+});
+function renderMapMarksList() {
+  if (!mapMarksEl) return;
+  mapMarksEl.innerHTML = '';
+  // Show the marks relevant to where you are: in a cave, this dungeon's marks;
+  // on the surface, the surface marks.
+  const here = place === 'cave' && currentDungeon
+    ? mapMarks.filter((m) => m.place === 'cave' && m.dungeonId === currentDungeon.id)
+    : mapMarks.filter((m) => m.place === 'surface');
+  for (const m of here) {
+    const row = document.createElement('div');
+    row.className = 'mark-row';
+    const flag = document.createElement('span'); flag.textContent = '🚩';
+    const nm = document.createElement('span'); nm.className = 'mark-name';
+    nm.textContent = m.floor != null ? `${m.name} · ${t('floor')} ${m.floor + 1}` : m.name;
+    const del = document.createElement('span'); del.className = 'mark-del'; del.textContent = '✕';
+    row.appendChild(flag); row.appendChild(nm); row.appendChild(del);
+    // Click a row → center the big map on that mark (surface only; cave map always
+    // follows the player). Click ✕ → delete.
+    row.addEventListener('click', (e) => {
+      if (e.target === del) { removeMapMark(m.id); renderMapMarksList(); return; }
+      if (m.place === 'surface') { minimap.bigCenter = { x: m.x, z: m.z }; }
+    });
+    mapMarksEl.appendChild(row);
+  }
+}
 // Unified Escape handler: close whichever overlay is open (most-recent intent
 // first). Keeps every menu closable with Escape, not just the map.
 addEventListener('keydown', (e) => {
@@ -860,7 +912,9 @@ addEventListener('keydown', (e) => {
   if (minimap.expanded) { minimap.toggle(false); return; }
 });
 // M toggles the full-screen map (open if closed, close if open).
-addEventListener('keydown', (e) => { if (state === 'play' && e.code === 'KeyM' && !controls.chatting) minimap.toggle(); });
+addEventListener('keydown', (e) => {
+  if (state === 'play' && e.code === 'KeyM' && !controls.chatting) { minimap.toggle(); if (minimap.expanded) renderMapMarksList(); }
+});
 
 // --- Expanded map: drag to pan, wheel / pinch to zoom, button to recenter ---
 const bigmap = document.getElementById('bigmap');
@@ -893,6 +947,24 @@ bigmap.addEventListener('pointerup', endMapPtr);
 bigmap.addEventListener('pointercancel', endMapPtr);
 bigmap.addEventListener('wheel', (e) => { e.preventDefault(); minimap.zoom(e.deltaY > 0 ? 1.12 : 0.89); }, { passive: false });
 if (bigRecenter) bigRecenter.addEventListener('click', () => minimap.recenter());
+// +/- buttons zoom the big map (so you don't need a wheel or two fingers).
+const bigZoomIn = document.getElementById('bigmap-zoomin');
+const bigZoomOut = document.getElementById('bigmap-zoomout');
+if (bigZoomIn) bigZoomIn.addEventListener('click', () => minimap.zoom(0.7));
+if (bigZoomOut) bigZoomOut.addEventListener('click', () => minimap.zoom(1.43));
+// Double-tap / double-click on the map zooms IN at that point (and recenters
+// there), the familiar "tap to zoom" gesture on a single-finger touch screen.
+bigmap.addEventListener('dblclick', (e) => {
+  e.preventDefault();
+  const r = bigmap.getBoundingClientRect();
+  const scale = bigmap.width / r.width;
+  // Convert the tapped screen point to a world point so we zoom toward it.
+  const mx = (e.clientX - r.left) * scale, my = (e.clientY - r.top) * scale;
+  const c = minimap.bigCenter || { x: player.pos.x, z: player.pos.z };
+  const perPx = (minimap.bigRange * 2) / bigmap.width;
+  minimap.bigCenter = { x: c.x + (mx - bigmap.width / 2) * perPx, z: c.z + (my - bigmap.height / 2) * perPx };
+  minimap.zoom(0.7);
+});
 
 function twoFingerDist() {
   const pts = [...mapPtrs.values()];
@@ -2012,9 +2084,11 @@ function castSkill(skill) {
   // Passives apply automatically (attack speed/range) and are never cast — guard
   // against a stale hotbar entry from an older save.
   if (def.kind === 'passive') return;
-  const skillLv = charStats.skillLevel(def.id);
+  // The GM may cast ANY power without learning it (and at an effective skill
+  // level of 1 for scaling); normal players must have spent a point in it.
+  const skillLv = player.gm ? Math.max(1, charStats.skillLevel(def.id)) : charStats.skillLevel(def.id);
   // You must have spent at least one skill point in it (MapleStory-style).
-  if (skillLv < 1) { gameUI.toast(t('skillLocked'), 'bad'); return; }
+  if (!player.gm && skillLv < 1) { gameUI.toast(t('skillLocked'), 'bad'); return; }
   const cd = cooldowns[def.id];
   if (cd && nowSec < cd.until) return; // still cooling down
   // SUMMONS share ONE 60-second cooldown across every summon skill, so a druid
@@ -2026,8 +2100,10 @@ function castSkill(skill) {
     const sc = cooldowns.__summon;
     if (sc && nowSec < sc.until) return;
   }
-  const manaCost = skillMana(def, skillLv);
-  if (manaCost > player.mana) { gameUI.toast(t('noMana'), 'bad'); return; }
+  // The GM casts for free — no mana cost, no mana check (cast with or without
+  // mana, at any level). Normal players pay and must have enough.
+  const manaCost = player.gm ? 0 : skillMana(def, skillLv);
+  if (!player.gm && manaCost > player.mana) { gameUI.toast(t('noMana'), 'bad'); return; }
 
   player.mana -= manaCost;
   // Spending mana on a spell trains Magic Level (Tibia-style).
@@ -2158,11 +2234,17 @@ function useHotbarPotion(entry) {
 // What the player can put on the hotbar right now: LEARNED skills (≥1 point) +
 // held consumables (potions/fruit) + a carried torch.
 function hotbarOptions() {
-  const skills = skillsForLevel(player.profession, player.level)
-    .filter((s) => s.kind !== 'passive') // passives apply automatically, never cast
-    // Only skills the player has actually LEARNED (spent a point on) are castable,
-    // so an unlearned power like Energy Bolt never shows up to assign.
-    .filter((s) => charStats && charStats.skillLevel(s.id) >= 1)
+  // The GM wields EVERY power in the game (all professions), with no level or
+  // learned-point gate — so the spell list shows the full book. Normal players
+  // see only their own profession's skills that they've reached AND learned.
+  const source = player.gm
+    ? allSkills().filter((s) => s.kind !== 'passive')
+    : skillsForLevel(player.profession, player.level)
+        .filter((s) => s.kind !== 'passive') // passives apply automatically, never cast
+        // Only skills the player has actually LEARNED (spent a point on) are
+        // castable, so an unlearned power like Energy Bolt never shows up.
+        .filter((s) => charStats && charStats.skillLevel(s.id) >= 1);
+  const skills = source
     .map((s) => ({
       id: s.id, name: (s.name && (s.name[getLang()] || s.name.es)) || s.id,
       icon: SKILL_ICON[s.kind] || '✨', iconHtml: skillIcon(s), manaCost: s.manaCost || 0,
@@ -3140,13 +3222,75 @@ function caveMinimapContext() {
   if (place !== 'cave' || !activeCave) return null;
   const fi = activeCave.activeFloorIndex;
   const vf = Math.max(0, Math.min(activeCave.floorCount - 1, caveViewFloor));
+  const dungeonId = currentDungeon ? currentDungeon.id : '?';
+  // Marks placed on the floor being VIEWED (so they show on the right schematic).
+  const marks = mapMarks.filter((m) => m.place === 'cave' && m.dungeonId === dungeonId && m.floor === vf);
   return {
     floorIndex: fi,
     floorCount: activeCave.floorCount,
     viewFloor: vf,
     stairs: activeCave.stairMarkersForFloor(vf),
+    // The real cave shape for the VIEWED floor + the fog-of-war reveal mask, so
+    // the minimap draws structure (rock vs floor) only where the player has been.
+    structure: activeCave.floorStructure(vf),
+    revealed: (x, z) => caveMap.isRevealed(dungeonId, vf, x, z),
+    marks,
     label: currentDungeon && currentDungeon.name ? (currentDungeon.name[getLang()] || currentDungeon.name.es) : '',
   };
+}
+
+// Restore the saved cave-exploration map + named waypoints from a save/cloud row.
+function loadMapMemory(src) {
+  if (!src) return;
+  if (src.caveMap) caveMap.load(src.caveMap);
+  if (Array.isArray(src.mapMarks)) {
+    mapMarks = src.mapMarks.filter((m) => m && typeof m.x === 'number' && typeof m.z === 'number');
+    // Keep the id sequence ahead of anything loaded so new marks never collide.
+    _markSeq = mapMarks.reduce((mx, m) => Math.max(mx, (m.id | 0) + 1), 1);
+  }
+  refreshSurfaceMarkPois();
+}
+
+// Drop a NAMED map mark at the player's current spot (Tibia-style "I was here").
+// On the surface it's a world point; in a cave it's tied to the dungeon + floor
+// so it only shows on that floor's schematic. Saves immediately.
+function addMapMark(name) {
+  const label = String(name || '').trim().slice(0, 40) || t('mapMarkDefault');
+  const mark = { id: _markSeq++, name: label, place: place === 'cave' ? 'cave' : 'surface',
+    x: Math.round(player.pos.x), z: Math.round(player.pos.z) };
+  if (place === 'cave' && currentDungeon && activeCave) {
+    mark.dungeonId = currentDungeon.id;
+    mark.floor = activeCave.activeFloorIndex;
+  }
+  mapMarks.push(mark);
+  refreshSurfaceMarkPois();
+  saveLocal(); saveToAccount();
+  gameUI.toast('📍 ' + t('mapMarkSaved', label), 'info');
+  return mark;
+}
+
+// Remove a mark by id and re-sync the surface POI mirror.
+function removeMapMark(id) {
+  const i = mapMarks.findIndex((m) => m.id === id);
+  if (i < 0) return;
+  mapMarks.splice(i, 1);
+  refreshSurfaceMarkPois();
+  saveLocal(); saveToAccount();
+}
+
+// Mirror SURFACE marks onto the minimap's POI list as little flag icons, so they
+// show on the overworld map the same way cities/dungeons do. (Cave marks are
+// drawn inside _renderCave from the cave context, not via this list.)
+let _markPois = [];
+function refreshSurfaceMarkPois() {
+  if (!minimap || !Array.isArray(minimap.pois)) return;
+  for (const p of _markPois) { const i = minimap.pois.indexOf(p); if (i >= 0) minimap.pois.splice(i, 1); }
+  _markPois = [];
+  for (const m of mapMarks) {
+    if (m.place !== 'surface') continue;
+    const poi = { x: m.x, z: m.z, icon: '🚩', label: m.name };
+    _markPois.push(poi); minimap.pois.push(poi);
+  }
 }
 
 // Page the cave minimap up/down a floor (only underground). Bound to the floor
@@ -3184,6 +3328,23 @@ function refreshHouseExteriors() {
   houseExteriorGroup = g;
   scene.add(g);
   g.visible = place === 'surface';
+  refreshHousePoi();
+}
+
+// Mirror the player's owned house onto the minimap as a single 🏠 marker, so it's
+// easy to find your way home. Mirrors refreshWaypoint's quest-POI pattern: drop
+// the old marker, add a fresh one at the owned lot. Called from
+// refreshHouseExteriors so it stays in sync on buy / sell / load.
+let _housePoi = null;
+function refreshHousePoi() {
+  if (typeof minimap === 'undefined' || !minimap || !Array.isArray(minimap.pois)) return;
+  if (_housePoi) { const i = minimap.pois.indexOf(_housePoi); if (i >= 0) minimap.pois.splice(i, 1); }
+  _housePoi = null;
+  const lot = houseStore.owned ? houseLotById.get(houseStore.owned.lotId) : null;
+  if (lot) {
+    _housePoi = { x: lot.x, z: lot.z, icon: '🏠', label: t('houseYours') };
+    minimap.pois.push(_housePoi);
+  }
 }
 
 // The lot the player is standing at the doorstep of, or null.
@@ -3353,6 +3514,7 @@ function refreshActiveHouse() {
 // Toggle visibility of every surface root so only the cave renders underground.
 function setSurfaceVisible(v) {
   world.setVisible(v);
+  weather.setActive(v);          // pause rain/snow/fog underground & indoors
   if (dungeonBuild.group) dungeonBuild.group.visible = v;
   if (ruinsBuild.group) ruinsBuild.group.visible = v;
   citiesGroup.visible = v;
@@ -3654,11 +3816,17 @@ function tick() {
   // cave fog, background and lights every frame) and surface chunks needn't stream.
   if (place === 'surface') {
     daynight.update(player.pos, dt);
+    weather.update(player.pos, dt, daynight);   // rain/storm/snow/fog, after day-night
     world.update(player.pos.x, player.pos.z);
   } else if (place === 'house' && activeHouse) {
     activeHouse.update();
   } else if (activeCave) {
     activeCave.update(player.pos.x, player.pos.z);
+    // Reveal the cave map around the player as they explore (fog of war). The
+    // periodic autosave (every 15s) + beforeunload persist the revealed cells.
+    if (currentDungeon) {
+      caveMap.reveal(currentDungeon.id, activeCave.activeFloorIndex, player.pos.x, player.pos.z, CAVE_SIGHT);
+    }
   }
 
   if (state === 'play') {
@@ -4139,6 +4307,8 @@ function serializeSave() {
     equipment: inv.serialize(), depot: depot.serialize(), quests: questLog.serialize(), stats: charStats.serialize(),
     mounts: mounts.serialize(),
     house: houseStore.serialize(),    // owned house: walls, colours, light, bans
+    caveMap: caveMap.serialize(),     // explored cave cells (fog of war), per dungeon+floor
+    mapMarks,                         // player-placed named map waypoints
     hotbar: hotbar.serialize(),       // quickslot bar contents (number row)
     keyboard: keyboardPanel.serialize(), // MapleStory-style key→action binds
     keymap: controls.keymap.serialize(), // rebound game-action keys (per character)
@@ -4164,6 +4334,7 @@ function applyCloudSave(data) {
   if (data.stats) charStats.load(data.stats);
   if (data.mounts) mounts.load(data.mounts);
   if (data.house) { houseStore.load(data.house); refreshHouseExteriors(); }
+  loadMapMemory(data);
   if (data.hotbar) hotbar.load(data.hotbar, resolveHotbarEntry);
   // Rebound game-action keys load BEFORE the skill/potion binds so reserved-key
   // filtering reflects the player's actual movement/jump layout.
@@ -4190,6 +4361,7 @@ function applyCharacterRow(row) {
   if (row.quests) questLog.load(row.quests);
   if (row.mounts) mounts.load(row.mounts);
   if (row.house) { houseStore.load(row.house); refreshHouseExteriors(); }
+  loadMapMemory(row);
   if (row.hotbar) hotbar.load(row.hotbar, resolveHotbarEntry);
   if (row.keymap) controls.keymap.load(row.keymap);   // rebound game-action keys
   if (row.keyboard) keyboardPanel.load(row.keyboard, resolveHotbarEntry);
@@ -4212,6 +4384,8 @@ function saveToAccount() {
     quests: questLog.serialize(), friends: [...friends],
     mounts: mounts.serialize(),
     house: houseStore.serialize(),
+    caveMap: caveMap.serialize(),    // explored cave map (fog of war)
+    mapMarks,                        // named map waypoints
     // Rebound game-action keys, per character. OPTIONAL column (ADD_keymap_column
     // .sql); auth.saveCharacter strips it if the DB lacks it, and the local save
     // keeps it regardless.

@@ -455,6 +455,9 @@ body.touch .win-head { padding-top: 4px; padding-bottom: 4px; }
   /* Nudged down a touch so the #coords label (which floats 18px above the ring)
      clears the top edge of the screen instead of being cut off. */
   top: calc(24px + env(safe-area-inset-top)); right: 200px;
+  /* Slide with the right panel: when it collapses, the minimap follows it toward
+     the screen edge (see body.right-collapsed below). Match the panel's .25s. */
+  transition: right .25s;
   width: 132px; height: 132px; border-radius: 50%;
   border: 2px solid rgba(255,255,255,.28);
   box-shadow: 0 4px 14px rgba(0,0,0,.5), inset 0 0 0 2px rgba(8,12,30,.6);
@@ -485,6 +488,12 @@ body.touch .win-head { padding-top: 4px; padding-bottom: 4px; }
 }
 body.touch #minimap-box { right: 162px; }
 @media (max-width: 520px) { #minimap-box { width: 104px; height: 104px; right: 150px; } }
+/* When the right panel is collapsed it slides off-screen leaving an 18px tab
+   (28px on touch); the minimap follows it over to the edge so it isn't stranded
+   in the middle of the screen. JS toggles body.right-collapsed (see ui.js). */
+body.right-collapsed #minimap-box { right: 24px; }
+body.touch.right-collapsed #minimap-box { right: 34px; }
+@media (max-width: 520px) { body.right-collapsed #minimap-box { right: 24px; } }
 
 /* Expanded map overlay (click the minimap to open) */
 #map-overlay {
@@ -492,6 +501,32 @@ body.touch #minimap-box { right: 162px; }
   display: flex; align-items: center; justify-content: center;
   background: rgba(4,7,18,.82); backdrop-filter: blur(4px);
 }
+/* Legend docked on the left of the expanded map: one row per marker type, each
+   with the SAME glyph the map draws (rendered via drawPoiIcon) next to a label. */
+#map-legend {
+  position: absolute; top: 50%; left: calc(14px + env(safe-area-inset-left));
+  transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: 86vmin; overflow-y: auto;
+  padding: 12px 14px;
+  background: rgba(8,12,30,.72); border: 1px solid rgba(255,255,255,.18);
+  border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  /* Purely informational — must NOT intercept drag/zoom on the map underneath it
+     (that's why the map felt "frozen": the legend box overlapped the canvas). */
+  pointer-events: none;
+}
+#map-legend h4 {
+  margin: 0 0 4px; font-size: 13px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; text-transform: uppercase;
+}
+#map-legend .legend-row {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12.5px; color: rgba(255,255,255,.92); white-space: nowrap;
+}
+#map-legend .legend-row canvas { flex: 0 0 auto; }
+/* On a narrow / portrait phone the legend would crowd the map — hide it there
+   (the corner minimap legend still covers the basics). */
+@media (max-width: 560px) { #map-legend { display: none; } }
 #bigmap {
   width: min(86vmin, 760px); height: min(86vmin, 760px);
   border-radius: 12px; border: 1px solid rgba(255,255,255,.25);
@@ -499,6 +534,19 @@ body.touch #minimap-box { right: 162px; }
   cursor: grab; touch-action: none;
 }
 #bigmap:active { cursor: grabbing; }
+/* Stacked +/- zoom buttons, bottom-right of the map overlay, so zoom works with a
+   plain tap (not just wheel/pinch). */
+#bigmap-zoom {
+  position: absolute; right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 8px;
+}
+#bigmap-zoom button {
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.3); background: rgba(8,12,30,.7);
+  color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
+}
+#bigmap-zoom button:active { background: rgba(20,28,52,.9); }
 #bigmap-hint {
   position: absolute; bottom: calc(14px + env(safe-area-inset-bottom)); left: 50%;
   transform: translateX(-50%);
@@ -511,6 +559,37 @@ body.touch #minimap-box { right: 162px; }
   border: 1px solid rgba(255,255,255,.3); background: rgba(8,12,30,.7);
   color: #fff; font-size: 22px; cursor: pointer;
 }
+#bigmap-mark {
+  position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 112px;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.3); background: rgba(8,12,30,.7);
+  font-size: 18px; cursor: pointer;
+}
+/* List of saved named marks, docked on the right of the expanded map. Click a row
+   to jump the map there; the ✕ removes it. */
+#map-marks {
+  position: absolute; top: 50%; right: calc(14px + env(safe-area-inset-right));
+  transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 70vmin; overflow-y: auto; width: 180px;
+  padding: 8px;
+  /* The container's empty space must let drag/zoom pass through to the map; only
+     the rows themselves are clickable (re-enabled below). */
+  pointer-events: none;
+}
+#map-marks:empty { display: none; }
+#map-marks .mark-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: #fff;
+  background: rgba(8,12,30,.72); border: 1px solid rgba(255,255,255,.16);
+  border-radius: 8px; padding: 5px 8px; cursor: pointer;
+  pointer-events: auto;
+}
+#map-marks .mark-row:hover { background: rgba(20,28,52,.85); }
+#map-marks .mark-row .mark-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#map-marks .mark-row .mark-del { color: rgba(255,255,255,.6); cursor: pointer; padding: 0 2px; }
+#map-marks .mark-row .mark-del:hover { color: #ff6b5a; }
+@media (max-width: 560px) { #map-marks { display: none; } }
 #bigmap-coords {
   position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 50%;
   transform: translateX(-50%);
@@ -671,6 +750,11 @@ body.touch #minimap-box { right: 162px; }
 .shop-row .price-no { color: #e2685a; }   /* can't afford it */
 .shop-row button { padding: 5px 12px; border-radius: 7px; border: none; background: #2f86c9; color: #fff; cursor: pointer; }
 .shop-row button:disabled { background: #444b54; color: #8b95a0; cursor: not-allowed; opacity: .7; }
+/* Teleport: recommended-level tag next to a destination (red when under-level). */
+.tele-rec { font-size: 11px; color: #9fb4c4; opacity: .85; margin-left: 4px; }
+.tele-rec-low { color: #e2685a; opacity: 1; font-weight: 700; }
+/* "Go anyway" on the too-weak warning reads as a risky action. */
+.ctx-actions button.danger { background: #b4452f; }
 
 /* Mount vendor + mounts panel rows: a richer card with name, description tag. */
 .mount-list { max-height: 56svh; overflow-y: auto; }
