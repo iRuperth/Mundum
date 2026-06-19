@@ -691,10 +691,10 @@ export const QUESTS = [
   //   snowy mountains. Dragonreach = far E desert. Westharbor = far W river-port.
   //   Frostpeak = far N, frozen. Sandport = far SE oasis.
   //   Zones: Elf Forest (N of Oakvale), Troll Territory (W of Oakvale), Orc
-  //   Territory (E-S of capital), Dwarf Mines (SE of capital), Minotaur Labyrinth
-  //   (SW deep), Cyclops Camp (E of capital), Khelmun Desert (by Dragonreach),
-  //   Undead Crypt (SE), Dragon Mountains (S), Hydra Swamp (far SW), Demon Abyss
-  //   (SW deep), Desert Tombs (far SE near Sandport).
+  //   Territory (far E of capital), Dwarf Mines (N of capital), Minotaur Labyrinth
+  //   (NW deep), Cyclops Camp (NE frontier), Khelmun Desert (by Dragonreach),
+  //   Undead Crypt (SE), Dragon Mountains (far N, ringing Frostpeak), Hydra Swamp
+  //   (far S), Demon Abyss (NW deep), Desert Tombs (far SE near Sandport).
   // ###########################################################################
 
   // ---- EARLY EPICS (lv30-48): single jobs, simple "go there / clear that" ----
@@ -821,13 +821,13 @@ export const QUESTS = [
     id: 'gear_dragon_hammer',
     title: { es: 'El Martillo Dragón', en: 'The Dragon Hammer' },
     desc: {
-      es: 'Solo de día, cuando los dragones del sur duermen, un herrero osado roba sus escamas para forjar martillos. Tráele 6 escamas de dragón.',
-      en: 'Only by day, when the dragons of the south sleep, a daring smith steals their scales to forge hammers. Bring him 6 dragon scales.',
+      es: 'Solo de día, cuando los dragones del norte duermen, un herrero osado roba sus escamas para forjar martillos. Tráele 6 escamas de dragón.',
+      en: 'Only by day, when the dragons of the north sleep, a daring smith steals their scales to forge hammers. Bring him 6 dragon scales.',
     },
     giverNpc: 'dragonreach_smith', city: 'dragonreach', minLevel: 50,
     dayOnly: true,
     objectives: [
-      { type: 'collect', target: 'dragon-scale', count: 6, desc: { es: 'Reúne 6 escamas de dragón (montañas al sur)', en: 'Collect 6 dragon scales (mountains to the south)' } },
+      { type: 'collect', target: 'dragon-scale', count: 6, desc: { es: 'Reúne 6 escamas de dragón (montañas al norte)', en: 'Collect 6 dragon scales (mountains to the north)' } },
       { type: 'kill', target: 'dragon', count: 3, desc: { es: 'Mata 3 dragones', en: 'Kill 3 dragons' } },
     ],
     rewards: { gold: 4000, exp: 9000, items: ['dragon_hammer'] },
@@ -945,12 +945,12 @@ export const QUESTS = [
     id: 'dragonset_1_scales',
     title: { es: 'Forja Dracónica I: Escamas', en: 'Draconic Forge I: Scales' },
     desc: {
-      es: 'El herrero de Dragonreach puede forjar la armadura dracónica entera, pero necesita material. Empieza por las escamas: las montañas de dragones están al sur. Trae polvo y escamas.',
-      en: 'Dragonreach\'s smith can forge the whole draconic set, but needs material. Start with scales: the dragon mountains lie to the south. Bring dust and scales.',
+      es: 'El herrero de Dragonreach puede forjar la armadura dracónica entera, pero necesita material. Empieza por las escamas: las montañas de dragones están al norte. Trae polvo y escamas.',
+      en: 'Dragonreach\'s smith can forge the whole draconic set, but needs material. Start with scales: the dragon mountains lie to the north. Bring dust and scales.',
     },
     giverNpc: 'dragonreach_smith', city: 'dragonreach', minLevel: 60,
     objectives: [
-      { type: 'collect', target: 'dragon-dust', count: 60, desc: { es: 'Reúne 60 polvo de dragón (montañas al sur)', en: 'Collect 60 dragon dust (mountains to the south)' } },
+      { type: 'collect', target: 'dragon-dust', count: 60, desc: { es: 'Reúne 60 polvo de dragón (montañas al norte)', en: 'Collect 60 dragon dust (mountains to the north)' } },
       { type: 'collect', target: 'dragon-scale', count: 20, desc: { es: 'Reúne 20 escamas de dragón', en: 'Collect 20 dragon scales' } },
     ],
     rewards: { gold: 4000, exp: 10000, items: ['dragon_helmet'] },
@@ -960,12 +960,12 @@ export const QUESTS = [
     id: 'dragonset_2_plate',
     title: { es: 'Forja Dracónica II: Coraza', en: 'Draconic Forge II: Plate' },
     desc: {
-      es: 'El casco está listo. Ahora la coraza pide el calor de un Señor Dragón. Lo hallarás en lo más profundo de la guarida, al sur. No vayas solo.',
-      en: 'The helmet is ready. Now the breastplate demands a Dragon Lord\'s heat. You\'ll find him deepest in the lair, to the south. Don\'t go alone.',
+      es: 'El casco está listo. Ahora la coraza pide el calor de un Señor Dragón. Lo hallarás en lo más profundo de la guarida, al norte. No vayas solo.',
+      en: 'The helmet is ready. Now the breastplate demands a Dragon Lord\'s heat. You\'ll find him deepest in the lair, to the north. Don\'t go alone.',
     },
     giverNpc: 'dragonreach_smith', city: 'dragonreach', minLevel: 65,
     objectives: [
-      { type: 'reach', target: 'dragonlair', count: 1, desc: { es: 'Entra a la guarida del dragón (al sur)', en: 'Enter the dragon lair (to the south)' } },
+      { type: 'reach', target: 'dragonlair', count: 1, desc: { es: 'Entra a la guarida del dragón (en el norte helado)', en: 'Enter the dragon lair (in the frozen north)' } },
       { type: 'kill', target: 'dragon', count: 8, desc: { es: 'Mata 8 dragones', en: 'Kill 8 dragons' } },
     ],
     rewards: { gold: 6000, exp: 16000, items: ['dragon_armor'] },
@@ -975,12 +975,12 @@ export const QUESTS = [
     id: 'dragonset_3_limbs',
     title: { es: 'Forja Dracónica III: Grebas y Botas', en: 'Draconic Forge III: Legs & Boots' },
     desc: {
-      es: 'Falta poco para el conjunto completo. Las grebas y botas dracónicas piden colmillos de wyvern: los wyverns vuelan sobre los picos del sur.',
-      en: 'The full set is close. Draconic legs and boots demand wyvern fangs: wyverns wheel over the southern peaks.',
+      es: 'Falta poco para el conjunto completo. Las grebas y botas dracónicas piden colmillos de wyvern: los wyverns vuelan sobre los picos del norte.',
+      en: 'The full set is close. Draconic legs and boots demand wyvern fangs: wyverns wheel over the northern peaks.',
     },
     giverNpc: 'dragonreach_smith', city: 'dragonreach', minLevel: 65,
     objectives: [
-      { type: 'kill', target: 'wyvern', count: 12, desc: { es: 'Mata 12 wyverns (picos al sur)', en: 'Kill 12 wyverns (southern peaks)' } },
+      { type: 'kill', target: 'wyvern', count: 12, desc: { es: 'Mata 12 wyverns (picos al norte)', en: 'Kill 12 wyverns (northern peaks)' } },
       { type: 'collect', target: 'wyvern-fang', count: 8, desc: { es: 'Reúne 8 colmillos de wyvern', en: 'Collect 8 wyvern fangs' } },
     ],
     rewards: { gold: 7000, exp: 18000, items: ['dragon_legs', 'dragon_boots'] },
@@ -990,8 +990,8 @@ export const QUESTS = [
     id: 'dragonset_4_crest',
     title: { es: 'Forja Dracónica IV: Amuleto', en: 'Draconic Forge IV: Amulet' },
     desc: {
-      es: 'Para coronar el conjunto, el herrero engarza un amuleto con el corazón ardiente de un dragón. Una última cacería al sur y serás un señor dracónico.',
-      en: 'To crown the set, the smith sets an amulet with a dragon\'s burning heart. One last hunt to the south and you\'ll be a draconic lord.',
+      es: 'Para coronar el conjunto, el herrero engarza un amuleto con el corazón ardiente de un dragón. Una última cacería al norte y serás un señor dracónico.',
+      en: 'To crown the set, the smith sets an amulet with a dragon\'s burning heart. One last hunt to the north and you\'ll be a draconic lord.',
     },
     giverNpc: 'dragonreach_smith', city: 'dragonreach', minLevel: 60,
     objectives: [
@@ -1201,12 +1201,12 @@ export const QUESTS = [
     id: 'gear_dragon_bow',
     title: { es: 'El Arco del Dragón', en: 'The Dragon Bow' },
     desc: {
-      es: 'Keeper Maren, en el faro de Westharbor al oeste, oyó de un arco tensado con tendón de dragón. Cázalos en las montañas del sur y tráele sus dientes.',
-      en: 'Keeper Maren, at Westharbor\'s lighthouse to the west, heard of a bow strung with dragon sinew. Hunt them in the southern mountains and bring their teeth.',
+      es: 'Keeper Maren, en el faro de Westharbor al oeste, oyó de un arco tensado con tendón de dragón. Cázalos en las montañas del norte y tráele sus dientes.',
+      en: 'Keeper Maren, at Westharbor\'s lighthouse to the west, heard of a bow strung with dragon sinew. Hunt them in the northern mountains and bring their teeth.',
     },
     giverNpc: 'westharbor_lighthouse', city: 'westharbor', minLevel: 80,
     objectives: [
-      { type: 'kill', target: 'dragon', count: 10, desc: { es: 'Mata 10 dragones (montañas al sur)', en: 'Kill 10 dragons (southern mountains)' } },
+      { type: 'kill', target: 'dragon', count: 10, desc: { es: 'Mata 10 dragones (montañas al norte)', en: 'Kill 10 dragons (northern mountains)' } },
       { type: 'collect', target: 'dragon-tooth', count: 12, desc: { es: 'Reúne 12 dientes de dragón', en: 'Collect 12 dragon teeth' } },
     ],
     rewards: { gold: 16000, exp: 48000, items: ['dragon_bow'] },
@@ -1347,8 +1347,8 @@ export const QUESTS = [
     id: 'gear_staff_of_chaos',
     title: { es: 'El Bastón del Caos', en: 'The Staff of Chaos' },
     desc: {
-      es: 'El sabio teme nombrar este bastón. Su poder mana de los elementales más salvajes y de un dragón de tres cabezas que vaga por las montañas del sur. Reúne esencias.',
-      en: 'The sage dreads naming this staff. Its power flows from the wildest elementals and a three-headed dragon that roams the southern mountains. Gather essences.',
+      es: 'El sabio teme nombrar este bastón. Su poder mana de los elementales más salvajes y de un dragón de tres cabezas que vaga por las montañas del norte. Reúne esencias.',
+      en: 'The sage dreads naming this staff. Its power flows from the wildest elementals and a three-headed dragon that roams the northern mountains. Gather essences.',
     },
     giverNpc: 'dragonreach_sage', city: 'dragonreach', minLevel: 110,
     objectives: [
@@ -1489,12 +1489,12 @@ export const QUESTS = [
     id: 'gear_ring_distance',
     title: { es: 'Anillo del Francotirador', en: 'Sharpshooter Ring' },
     desc: {
-      es: 'La cazadora de Oakvale forja el anillo del arquero para quien abata wyverns en vuelo sobre las montañas del sur.',
-      en: 'Oakvale\'s hunter forges the archer\'s ring for one who downs wyverns in flight over the southern mountains.',
+      es: 'La cazadora de Oakvale forja el anillo del arquero para quien abata wyverns en vuelo sobre las montañas del norte.',
+      en: 'Oakvale\'s hunter forges the archer\'s ring for one who downs wyverns in flight over the northern mountains.',
     },
     giverNpc: 'oakvale_hunter', city: 'oakvale', minLevel: 50,
     objectives: [
-      { type: 'kill', target: 'wyvern', count: 14, desc: { es: 'Abate 14 wyverns (montañas al sur)', en: 'Down 14 wyverns (southern mountains)' } },
+      { type: 'kill', target: 'wyvern', count: 14, desc: { es: 'Abate 14 wyverns (montañas al norte)', en: 'Down 14 wyverns (northern mountains)' } },
     ],
     rewards: { gold: 6000, exp: 14000, items: ['distance_ring3'] },
     next: null, repeatable: false, dungeon: null,
@@ -1783,8 +1783,8 @@ export const QUESTS = [
     id: 'dragon_chain_peaks',
     title: { es: 'Vigía de los Picos', en: 'Watch of the Peaks' },
     desc: {
-      es: 'Scout Nima vigila las montañas de dragones al sur. Antes de cazar wyverns, cruza el Paso de los Trolls que guarda la entrada.',
-      en: 'Scout Nima watches the dragon mountains to the south. Before hunting wyverns, cross the Troll Pass that guards the way in.',
+      es: 'Scout Nima vigila las montañas de dragones al norte. Antes de cazar wyverns, cruza el Paso de los Trolls que guarda la entrada.',
+      en: 'Scout Nima watches the dragon mountains to the north. Before hunting wyverns, cross the Troll Pass that guards the way in.',
     },
     giverNpc: 'dragonreach_scout', city: 'dragonreach', minLevel: 40,
     objectives: [
@@ -1798,8 +1798,8 @@ export const QUESTS = [
     id: 'dragon_chain_wyvern_hunt',
     title: { es: 'Cazadores de Wyvern', en: 'Wyvern Hunters' },
     desc: {
-      es: 'Los wyverns vuelan sobre los picos del sur, casi dragones. Abátelos y trae sus colmillos: el herrero los necesita para empezar.',
-      en: 'Wyverns wheel over the southern peaks, almost dragons. Down them and bring their fangs: the smith needs them to begin.',
+      es: 'Los wyverns vuelan sobre los picos del norte, casi dragones. Abátelos y trae sus colmillos: el herrero los necesita para empezar.',
+      en: 'Wyverns wheel over the northern peaks, almost dragons. Down them and bring their fangs: the smith needs them to begin.',
     },
     giverNpc: 'dragonreach_scout', city: 'dragonreach', minLevel: 44,
     objectives: [
@@ -1813,13 +1813,13 @@ export const QUESTS = [
     id: 'dragon_chain_seal_intro',
     title: { es: 'El Marcado por el Dragón', en: 'Marked by the Dragon' },
     desc: {
-      es: 'El sabio puede marcarte con el sello del dragón, pero solo de día, cuando los dragones del sur duermen, podrás reunir su polvo sin que te calcinen.',
-      en: 'The sage can mark you with the dragon\'s seal, but only by day, when the southern dragons sleep, can you gather their dust without being burned.',
+      es: 'El sabio puede marcarte con el sello del dragón, pero solo de día, cuando los dragones del norte duermen, podrás reunir su polvo sin que te calcinen.',
+      en: 'The sage can mark you with the dragon\'s seal, but only by day, when the northern dragons sleep, can you gather their dust without being burned.',
     },
     giverNpc: 'dragonreach_sage', city: 'dragonreach', minLevel: 55,
     dayOnly: true,
     objectives: [
-      { type: 'collect', target: 'dragon-dust', count: 50, desc: { es: 'Reúne 50 polvo de dragón (montañas al sur)', en: 'Collect 50 dragon dust (mountains to the south)' } },
+      { type: 'collect', target: 'dragon-dust', count: 50, desc: { es: 'Reúne 50 polvo de dragón (montañas al norte)', en: 'Collect 50 dragon dust (mountains to the north)' } },
       { type: 'kill', target: 'dragon', count: 4, desc: { es: 'Mata 4 dragones', en: 'Kill 4 dragons' } },
     ],
     rewards: { gold: 4500, exp: 14000, items: [] },
@@ -1829,13 +1829,13 @@ export const QUESTS = [
     id: 'dragon_chain_lord',
     title: { es: 'El Señor Dragón', en: 'The Dragon Lord' },
     desc: {
-      es: 'Con el Sello del Dragón puedes entrar en lo más profundo de la guarida al sur, donde reina el Señor Dragón. Derróta a sus súbditos y arráncale los dientes.',
-      en: 'With the Dragon Seal you may enter the deepest lair to the south, where the Dragon Lord reigns. Defeat his minions and tear out his teeth.',
+      es: 'Con el Sello del Dragón puedes entrar en lo más profundo de la guarida al norte, donde reina el Señor Dragón. Derróta a sus súbditos y arráncale los dientes.',
+      en: 'With the Dragon Seal you may enter the deepest lair to the north, where the Dragon Lord reigns. Defeat his minions and tear out his teeth.',
     },
     giverNpc: 'dragonreach_sage', city: 'dragonreach', minLevel: 78,
     requiresItems: [{ itemId: 'dragon-seal', count: 1 }],
     objectives: [
-      { type: 'reach', target: 'dragonlair', count: 1, desc: { es: 'Entra a lo más profundo de la guarida (al sur)', en: 'Enter the deepest lair (to the south)' } },
+      { type: 'reach', target: 'dragonlair', count: 1, desc: { es: 'Entra a lo más profundo de la guarida (al norte)', en: 'Enter the deepest lair (to the north)' } },
       { type: 'kill', target: 'dragon', count: 10, desc: { es: 'Mata 10 dragones', en: 'Kill 10 dragons' } },
       { type: 'collect', target: 'dragon-tooth', count: 8, desc: { es: 'Reúne 8 dientes de dragón', en: 'Collect 8 dragon teeth' } },
     ],
@@ -1846,8 +1846,8 @@ export const QUESTS = [
     id: 'dragon_chain_chaos_hunt',
     title: { es: 'La Bestia de Tres Cabezas', en: 'The Three-Headed Beast' },
     desc: {
-      es: 'Un dragón de tres cabezas vaga por las montañas del sur, fuente de un poder caótico. Reúne las esencias que deja a su paso para el bastón.',
-      en: 'A three-headed dragon roams the southern mountains, the source of a chaotic power. Gather the essences it leaves in its wake for the staff.',
+      es: 'Un dragón de tres cabezas vaga por las montañas del norte, fuente de un poder caótico. Reúne las esencias que deja a su paso para el bastón.',
+      en: 'A three-headed dragon roams the northern mountains, the source of a chaotic power. Gather the essences it leaves in its wake for the staff.',
     },
     giverNpc: 'dragonreach_sage', city: 'dragonreach', minLevel: 105,
     objectives: [

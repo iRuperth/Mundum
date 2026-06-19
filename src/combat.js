@@ -720,10 +720,12 @@ export class CombatSystem {
         list = pool.length ? pool : creaturesForLevel(lv).filter((c) => !c.supreme);
       }
 
-      // STARTER-RING SAFETY: brand-new level-1 players gather just outside the
-      // capital, so no strong creature may spawn there — cap the pool to weak
-      // foes within the capital's protected ring (even if a tougher zone disc
-      // happens to reach this close). Outside the ring the cap is null = no limit.
+      // CITY SAFE-RING SAFETY: EVERY city has a protected ring just outside its
+      // walls — no strong creature may spawn there, so a fresh arrival (walked or
+      // teleported in) isn't one-shot by a dragon on the doorstep, even where a
+      // tough zone disc overlaps the town. The cap eases up to the zone's natural
+      // level by the ring edge; outside the ring it's null = no limit, so the
+      // strong creatures simply live FARTHER from town.
       const cap = capitalSafeLevelCap(x, z);
       if (cap != null) {
         const safe = list.filter((c) => (c.level || 1) <= cap);

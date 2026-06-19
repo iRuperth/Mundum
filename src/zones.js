@@ -23,7 +23,11 @@ export const ZONES = [
     id: 'rat-valley', name: { es: 'Valle de Ratas', en: 'Rat Valley' },
     center: { x: 90, z: 120 }, radius: 170, levelMin: 1, levelMax: 6,
     families: ['rat', 'worm'], ids: [],
-    boss: 'rat-rat-king', bossNear: { x: 90, z: 120 }, bossRadius: 16,
+    // Boss (Rat King) spawns SE of the capital, out in the open valley. It used to
+    // sit at (90,120) — inside Greenhollow's walls — so it could NEVER spawn (no
+    // creatures spawn in a city). Moved to (175,205): inside the rat-valley disc
+    // and clear of the capital. Wider bossRadius so newbies can actually find it.
+    boss: 'rat-rat-king', bossNear: { x: 175, z: 205 }, bossRadius: 36,
     caveIds: ['ratcave'], camps: [], decor: 'none',
   },
   {
@@ -59,11 +63,13 @@ export const ZONES = [
   },
   {
     id: 'orc-territory', name: { es: 'Tierras Orco', en: 'Orc Territory' },
-    // Adjacent to the trolls (rivals) but a separate disc.
-    center: { x: 540, z: -260 }, radius: 240, levelMin: 8, levelMax: 40,
+    // Pushed further out (was 540,-260 ~d599) so its level band (8-40, avg ~24)
+    // matches its distance: difficulty should rise with distance from Greenhollow,
+    // and orcs were too strong to sit that close to the centre.
+    center: { x: 800, z: -160 }, radius: 220, levelMin: 8, levelMax: 40,
     families: ['orc', 'goblin'], ids: [],
-    boss: 'orc-orc-warlord', bossNear: { x: 540, z: -260 }, bossRadius: 18,
-    caveIds: ['orcfort'], camps: [{ x: 500, z: -300 }, { x: 580, z: -220 }], decor: 'camp',
+    boss: 'orc-orc-warlord', bossNear: { x: 800, z: -160 }, bossRadius: 18,
+    caveIds: ['orcfort'], camps: [{ x: 760, z: -200 }, { x: 840, z: -120 }], decor: 'camp',
   },
   {
     id: 'dwarf-mines', name: { es: 'Minas Enanas', en: 'Dwarf Mines' },
@@ -83,10 +89,13 @@ export const ZONES = [
   },
   {
     id: 'cyclops-camp', name: { es: 'Campamento Cíclope', en: 'Cyclops Camp' },
-    center: { x: 720, z: 160 }, radius: 180, levelMin: 18, levelMax: 50,
+    // Pushed further out (was 720,160 ~d738) — at level 18-50 (avg ~34) it sat too
+    // close to the centre. Now in the rough eastern frontier, kept clear of the
+    // orc territory (800,-160) so the two discs don't overlap.
+    center: { x: 940, z: -560 }, radius: 180, levelMin: 18, levelMax: 50,
     families: ['cyclops', 'ogre'], ids: [],
     boss: null, bossNear: null, bossRadius: 0,
-    caveIds: [], camps: [{ x: 700, z: 130 }], decor: 'camp',
+    caveIds: [], camps: [{ x: 920, z: -590 }], decor: 'camp',
   },
   {
     id: 'sunken-desert', name: { es: 'Desierto de Khelmun', en: 'Khelmun Desert' },
@@ -95,8 +104,12 @@ export const ZONES = [
     center: { x: 1100, z: 260 }, radius: 300, levelMin: 6, levelMax: 34,
     families: ['scorpion'],
     ids: ['worm-larva', 'beetle-scarab', 'beetle-ancient-scarab', 'zombie-mummy', 'zombie-ancient-mummy'],
-    boss: 'beetle-ancient-scarab', bossNear: { x: 1180, z: 260 }, bossRadius: 18,
-    caveIds: [], camps: [{ x: 1040, z: 220 }, { x: 1160, z: 320 }], decor: 'pyramid',
+    // Boss (Ancient Scarab) spawns WEST of Dragonreach, out in the open desert.
+    // It used to sit at (1180,260) — exactly ON the city — so it could NEVER spawn
+    // (no creatures spawn inside a city). Moved to (980,420): inside the zone disc
+    // and ~100m clear of the walls. Wider bossRadius (40) so you can actually find it.
+    boss: 'beetle-ancient-scarab', bossNear: { x: 980, z: 420 }, bossRadius: 40,
+    caveIds: [], camps: [{ x: 1040, z: 220 }, { x: 960, z: 360 }], decor: 'pyramid',
   },
   {
     id: 'undead-crypt', name: { es: 'Cripta de los Muertos', en: 'Undead Crypt' },
@@ -107,12 +120,16 @@ export const ZONES = [
   },
   {
     id: 'dragon-mountains', name: { es: 'Montañas de Dragones', en: 'Dragon Mountains' },
-    center: { x: 200, z: -760 }, radius: 300, levelMin: 16, levelMax: 72,
+    // Pushed further NORTH (was 200,-760 ~d786) so the dragons (16-72, avg ~44)
+    // sit deep in the frozen frontier RINGING Frostpeak (300,-1080) — that's why
+    // frost dragons roam outside that city — instead of reaching too far toward the
+    // centre. Distance now tracks its high level.
+    center: { x: 30, z: -940 }, radius: 300, levelMin: 16, levelMax: 72,
     // Elves guard the dragon foothills (the user's pairing: elves near dragons).
     // Crystal Spiders (L30, frost casters) haunt the icy dragon foothills now —
     // a fitting cold home, far from the newbie zones where they used to spawn.
     families: ['dragon', 'wyvern', 'elf'], ids: ['lizardman', 'spider-crystal-spider'],
-    boss: 'dragon-dragon-lord', bossNear: { x: 200, z: -760 }, bossRadius: 22,
+    boss: 'dragon-dragon-lord', bossNear: { x: 30, z: -940 }, bossRadius: 22,
     caveIds: ['dragonlair'], camps: [], decor: 'scorched',
   },
   {
@@ -131,11 +148,13 @@ export const ZONES = [
     caveIds: ['demonabyss'], camps: [], decor: 'scorched',
   },
   {
-    // Desert tombs: mummies (zombie family) raised alongside skeletons — the
-    // user's pairing of skeletons accompanying mummies.
+    // Desert tombs: the undead desert — mummies (zombie family) and skeletons,
+    // with VAMPIRES haunting the deeper tombs. Desert creatures belong out here
+    // by Dragonreach (the user wants the desert full of scorpions, mummies,
+    // ghouls/undead and vampires — NOT dragons, which now live up north).
     id: 'desert-tombs', name: { es: 'Tumbas del Desierto', en: 'Desert Tombs' },
     center: { x: 1100, z: 620 }, radius: 240, levelMin: 14, levelMax: 60,
-    families: ['skeleton', 'zombie', 'scarab'], ids: [],
+    families: ['skeleton', 'zombie', 'scarab', 'vampire'], ids: [],
     boss: 'zombie-ancient-mummy', bossNear: { x: 1100, z: 620 }, bossRadius: 20,
     caveIds: [], camps: [], decor: 'bones',
   },
