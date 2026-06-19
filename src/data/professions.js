@@ -629,6 +629,11 @@ for (const p of PROFESSIONS) for (const sk of p.skills) {
 }
 export function getSkill(id) { return SKILL_BY_ID.get(id) || null; }
 
+// Every skill across ALL professions (the full game spell book). Used by the GM,
+// who can wield any class's powers regardless of profession, level or learned
+// points. Deduped by id (ids are globally unique, enforced above).
+export function allSkills() { return [...SKILL_BY_ID.values()]; }
+
 // Aggregate the passive bonuses from skills the player has put points into. A
 // passive declares `passive: { attackSpeedPerLevel, rangePerLevel,
 // damagePerLevel, critPerLevel, critDamagePerLevel, maxHpPerLevel,
