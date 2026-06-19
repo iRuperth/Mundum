@@ -26,6 +26,7 @@ export class Minimap {
     this.bigCtx = this.big ? this.big.getContext('2d') : null;
     this.bigCoords = opts.bigCoords || null;
     this.overlay = opts.overlay || null;     // overlay container, toggled .hidden
+    this.legend = opts.legend || null;       // left-side legend panel for the big map
     this.expanded = false;
 
     // Pan/zoom state for the expanded map. bigCenter is the world point shown at
@@ -44,7 +45,71 @@ export class Minimap {
     this.expanded = force === undefined ? !this.expanded : force;
     this.overlay.classList.toggle('hidden', !this.expanded);
     // Reset to follow-the-player every time the map is opened.
-    if (this.expanded) { this.bigCenter = null; this.bigRange = BIG_RANGE; }
+    if (this.expanded) {
+      this.bigCenter = null; this.bigRange = BIG_RANGE;
+      this.buildLegend();
+    }
+  }
+
+  // Fill the legend panel (opts.legend) with one row per marker type, each row
+  // showing the SAME glyph the map draws (via drawPoiIcon) or the plain colored
+  // dot, beside a localized label. Rebuilt each open so it re-localizes and only
+  // lists markers that can actually appear (the house row only when you own one).
+  buildLegend() {
+    const host = this.legend;
+    if (!host) return;
+    host.innerHTML = '';
+    const title = document.createElement('h4');
+    title.textContent = t('legendTitle');
+    host.appendChild(title);
+
+    // POI rows: an icon key drawn with drawPoiIcon (matches the map exactly) and
+    // a label key. Only show the house row when the player actually owns a house.
+    const owns = this.pois.some((p) => p.icon === '🏠');
+    const poiRows = [
+      ['🏠', 'mapKeyHouse', owns],
+      ['📍', 'mapKeyQuest', true],
+      ['🛒', 'mapKeyMarket', true],
+      ['🏦', 'mapKeyBank', true],
+      ['⚗️', 'mapKeyPotion', true],
+      ['⚔️', 'mapKeyArmory', true],
+      ['🔮', 'mapKeyMage', true],
+      ['🏹', 'mapKeyArcher', true],
+      ['🏛️', 'mapKeyTemple', true],
+      ['🕳️', 'mapKeyDungeon', true],
+      ['🏚️', 'mapKeyRuin', true],
+    ];
+    for (const [icon, key, show] of poiRows) {
+      if (show) host.appendChild(this._legendRow((cx) => drawPoiIcon(cx, 9, 9, 5, icon), t(key)));
+    }
+    // Dot/marker rows drawn the same way the map draws them.
+    host.appendChild(this._legendRow((cx) => { cx.fillStyle = '#3ad15a'; cx.beginPath(); cx.arc(9, 9, 4, 0, 7); cx.fill(); }, t('mapKeyGate')));
+    host.appendChild(this._legendRow((cx) => { cx.fillStyle = '#e74c3c'; cx.beginPath(); cx.arc(9, 9, 4, 0, 7); cx.fill(); }, t('mapKeyEnemy')));
+    host.appendChild(this._legendRow((cx) => { cx.fillStyle = '#3498db'; cx.beginPath(); cx.arc(9, 9, 4, 0, 7); cx.fill(); }, t('mapKeyPeer')));
+    // Player-placed mark (flag) + the cave stairs (green up / orange down), so the
+    // legend explains the underground icons too.
+    host.appendChild(this._legendRow((cx) => drawPoiIcon(cx, 9, 9, 5, '🚩'), t('mapKeyMark')));
+    host.appendChild(this._legendRow((cx) => drawStairIcon(cx, 9, 9, 5, true), t('mapKeyStairUp')));
+    host.appendChild(this._legendRow((cx) => drawStairIcon(cx, 9, 9, 5, false), t('mapKeyStairDown')));
+    // "You" — the white heading arrow.
+    host.appendChild(this._legendRow((cx) => {
+      cx.save(); cx.translate(9, 9); cx.fillStyle = '#fff';
+      cx.beginPath(); cx.moveTo(0, -6); cx.lineTo(4, 5); cx.lineTo(-4, 5); cx.closePath(); cx.fill(); cx.restore();
+    }, t('mapKeyYou')));
+  }
+
+  // One legend row: an 18×18 canvas swatch (so glyphs render identically to the
+  // map) painted by `paint(ctx)`, plus the text label.
+  _legendRow(paint, label) {
+    const row = document.createElement('div');
+    row.className = 'legend-row';
+    const c = document.createElement('canvas');
+    c.width = c.height = 18;
+    paint(c.getContext('2d'));
+    const span = document.createElement('span');
+    span.textContent = label;
+    row.appendChild(c); row.appendChild(span);
+    return row;
   }
 
   // Drag the expanded map by a pixel delta; switches it to free-look mode.
@@ -77,11 +142,12 @@ export class Minimap {
     if (cave) {
       this._renderCave(this.ctx, this.size, pp, player, creatures, cave, true);
       if (this.coords) this.coords.textContent = fmtCoords(pp);
-      const fl = cave.floorCount > 1 ? ` ${t('floor')} ${cave.viewFloor + 1}/${cave.floorCount}` : '';
-      this.cityLabel.textContent = (cave.label || t('wilderness')) + fl;
+      // Just the cave name — no "Floor 2/4" suffix (the user wants only which
+      // cave it is). The stair pips on the map already show floors above/below.
+      this.cityLabel.textContent = cave.label || t('wilderness');
       if (this.expanded && this.bigCtx) {
         this._renderCave(this.bigCtx, this.big.width, pp, player, creatures, cave, false);
-        if (this.bigCoords) this.bigCoords.textContent = (cave.label || '') + fl;
+        if (this.bigCoords) this.bigCoords.textContent = cave.label || '';
       }
       return;
     }
@@ -112,24 +178,58 @@ export class Minimap {
   _renderCave(ctx, s, pp, player, creatures, cave, legend) {
     const half = s / 2;
     ctx.clearRect(0, 0, s, s);
-    // Cave room backdrop (rocky dark fill).
-    ctx.fillStyle = '#15120f';
+    // Unexplored = near-black fog. The real cave structure (rock vs walkable
+    // floor) is painted ONLY over the cells the player has already explored, so
+    // the map fills in as you walk instead of being handed to you complete.
+    ctx.fillStyle = '#0c0b0a';
     ctx.fillRect(0, 0, s, s);
-    // A subtle floor disc so the room reads as an enclosed space.
-    ctx.fillStyle = '#241f1a';
-    ctx.beginPath(); ctx.arc(half, half, half * 0.92, 0, Math.PI * 2); ctx.fill();
 
     const range = legend ? CAVE_RANGE : CAVE_RANGE * 1.4;
     const toMap = (wx, wz) => ({ x: half + ((wx - pp.x) / range) * half, y: half + ((wz - pp.z) / range) * half });
+    const worldAt = (mx, my) => ({ x: pp.x + ((mx - half) / half) * range, z: pp.z + ((my - half) / half) * range });
 
-    // Stair markers for the viewed floor: green ▲ = up, orange ▼ = down.
-    for (const st of (cave.stairs || [])) {
-      const p = toMap(st.x, st.z);
-      ctx.fillStyle = st.dir === 'up' ? '#7bed6f' : '#ff9a3a';
-      ctx.beginPath();
-      if (st.dir === 'up') { ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x + 5, p.y + 4); ctx.lineTo(p.x - 5, p.y + 4); }
-      else { ctx.moveTo(p.x, p.y + 6); ctx.lineTo(p.x + 5, p.y - 4); ctx.lineTo(p.x - 5, p.y - 4); }
-      ctx.closePath(); ctx.fill();
+    // --- Explored structure (fog of war) -------------------------------------
+    // Sample the floor's solidAt over a grid of `step`-px cells. A revealed cell
+    // is drawn as lit floor (walkable) or stone (rock); unrevealed cells are left
+    // as fog. The reveal mask + solidAt come from the cave context (main.js).
+    const st = cave.structure;
+    const revealed = cave.revealed;
+    if (st && typeof st.solidAt === 'function') {
+      const step = legend ? 4 : 5;
+      for (let my = 0; my < s; my += step) {
+        for (let mx = 0; mx < s; mx += step) {
+          const w = worldAt(mx + step / 2, my + step / 2);
+          if (revealed && !revealed(w.x, w.z)) continue;   // still fogged
+          const solid = st.solidAt(w.x, w.z);
+          ctx.fillStyle = solid ? '#473f34' : '#7d7260';   // rock vs lit floor
+          ctx.fillRect(mx, my, step, step);
+        }
+      }
+      // A soft "currently lit" disc right around the player so their immediate
+      // surroundings read a touch brighter than older explored rock.
+      const lit = ctx.createRadialGradient(half, half, 2, half, half, half * 0.5);
+      lit.addColorStop(0, 'rgba(255,240,200,0.10)');
+      lit.addColorStop(1, 'rgba(255,240,200,0)');
+      ctx.fillStyle = lit; ctx.fillRect(0, 0, s, s);
+    } else {
+      // No structure available (shouldn't happen) — fall back to a plain disc.
+      ctx.fillStyle = '#6a6051';
+      ctx.beginPath(); ctx.arc(half, half, half * 0.9, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // --- Stair icons: a little green stair = UP, orange stair = DOWN ----------
+    // Only drawn once the player has explored near them (so the map reveals where
+    // the exits are as you find them, not for free).
+    for (const stp of (cave.stairs || [])) {
+      if (revealed && !revealed(stp.x, stp.z)) continue;
+      const p = toMap(stp.x, stp.z);
+      drawStairIcon(ctx, p.x, p.y, legend ? 4.5 : 6, stp.dir === 'up');
+    }
+
+    // --- Player-placed named marks on THIS floor -----------------------------
+    for (const m of (cave.marks || [])) {
+      const p = toMap(m.x, m.z);
+      drawMapMark(ctx, p.x, p.y, m.name, legend);
     }
 
     // Creatures: ONLY when viewing the player's own floor, and only those within
@@ -452,6 +552,8 @@ const POI_STYLE = {
   '🗼': { color: '#e0e0e0', shape: 'tower' },    // lighthouse / ice tower
   '🗿': { color: '#9aa0a6', shape: 'tower' },    // obelisk
   '🔺': { color: '#e0a050', shape: 'triangle' }, // pyramid
+  '🏠': { color: '#34d058', shape: 'house' },    // the player's own house (green so it pops)
+  '🚩': { color: '#ffd24d', shape: 'flag' },     // player-placed named map mark
   '📍': { color: '#ffd24d', shape: 'diamond' },  // QUEST destination (bright gold)
 };
 
@@ -514,7 +616,80 @@ function drawPoiIcon(ctx, x, y, r, icon) {
     ctx.beginPath(); ctx.moveTo(x - r * 0.6, y - r * 0.4); ctx.lineTo(x, y - r * 1.3); ctx.lineTo(x + r * 0.6, y - r * 0.4); ctx.closePath();
     ctx.fill(); ctx.stroke(); ctx.restore(); return;
   }
+  if (st.shape === 'house') {
+    // A little house: a square body with a pitched roof — reads clearly as "home".
+    const b = r * 0.95;
+    ctx.fillRect(x - b, y - b * 0.2, b * 2, b * 1.2);          // body
+    ctx.strokeRect(x - b, y - b * 0.2, b * 2, b * 1.2);
+    ctx.beginPath();                                            // roof
+    ctx.moveTo(x - b - 1, y - b * 0.2); ctx.lineTo(x, y - b * 1.3); ctx.lineTo(x + b + 1, y - b * 0.2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(20,40,20,0.85)';                      // door
+    ctx.fillRect(x - b * 0.3, y + b * 0.2, b * 0.6, b * 0.8);
+    ctx.restore(); return;
+  }
+  if (st.shape === 'flag') {
+    // A pin flag for a player-placed map mark.
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(x - r * 0.4, y + r); ctx.lineTo(x - r * 0.4, y - r); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x - r * 0.4, y - r); ctx.lineTo(x + r, y - r * 0.45); ctx.lineTo(x - r * 0.4, y + r * 0.1); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore(); return;
+  }
   path(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+// A little STAIRCASE glyph for the cave map: a 3-step flight drawn in green when
+// it goes UP (toward the surface) and orange when it goes DOWN (deeper), so the
+// exits read at a glance — green = subir, orange = bajar. Centered on (x,y).
+function drawStairIcon(ctx, x, y, r, up) {
+  const col = up ? '#5fe06a' : '#ff9a3a';
+  ctx.save();
+  ctx.fillStyle = col;
+  ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+  ctx.lineWidth = 1;
+  // Three ascending/descending steps. For "up" the steps climb to the right; for
+  // "down" they descend to the right — a quick directional read.
+  const n = 3;
+  const sw = (r * 2) / n;            // step width
+  const sh = (r * 1.6) / n;          // step rise
+  for (let i = 0; i < n; i++) {
+    const sx = x - r + i * sw;
+    // Step top height grows (up) or shrinks (down) left→right.
+    const h = up ? (i + 1) * sh : (n - i) * sh;
+    const top = y + r * 0.8 - h;
+    ctx.fillRect(sx, top, sw + 0.5, y + r * 0.8 - top);
+    ctx.strokeRect(sx, top, sw + 0.5, y + r * 0.8 - top);
+  }
+  ctx.restore();
+}
+
+// A player-placed NAMED MAP MARK: a small flag pin with its name beside it. Used
+// for Tibia-style "I was here, I'll come back" notes. On the corner map only the
+// pin is drawn (no room for text); the big map shows the label too.
+function drawMapMark(ctx, x, y, name, legend) {
+  ctx.save();
+  // Flag pole.
+  ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 9); ctx.stroke();
+  // Flag pennant.
+  ctx.fillStyle = '#ffd24d'; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, y - 9); ctx.lineTo(x + 7, y - 7); ctx.lineTo(x, y - 5); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // Base dot.
+  ctx.fillStyle = '#ffd24d';
+  ctx.beginPath(); ctx.arc(x, y, 1.8, 0, Math.PI * 2); ctx.fill();
+  // Label (big map only, to keep the corner map uncluttered).
+  if (!legend && name) {
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(name).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x + 5, y - 16, tw + 6, 14);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(name, x + 8, y - 9);
+  }
   ctx.restore();
 }
 
