@@ -11,7 +11,9 @@ import * as THREE from 'three';
 export const DUNGEONS = [
   {
     id: 'ratcave', name: { es: 'Cueva de Ratas', en: 'Rat Cave' },
-    x: 90, z: 120, minLevel: 1, floors: 2,
+    // Was (90,120) — inside Greenhollow's walls (a cave mouth in the capital!).
+    // Moved SE into the open rat valley, clear of the city.
+    x: 250, z: 120, minLevel: 1, floors: 2,
     creatureFamilies: ['rat', 'worm'],
     chest: { itemId: 'copper_sword', reward: 1, questId: 'rat-cave-clear' },
   },
@@ -23,7 +25,8 @@ export const DUNGEONS = [
   },
   {
     id: 'orcfort', name: { es: 'Fuerte Orco', en: 'Orc Fort' },
-    x: 540, z: -260, minLevel: 14, floors: 3, big: true,
+    // Moved with the orc-territory zone (now centred at 800,-160).
+    x: 800, z: -160, minLevel: 14, floors: 3, big: true,
     creatureFamilies: ['orc', 'goblin', 'kobold'],
     chest: { itemId: 'iron_sword', reward: 1, questId: 'orc-fort-clear' },
   },
@@ -36,9 +39,9 @@ export const DUNGEONS = [
   // The troll mega-zone has several scattered caves; the toughest (trollcave6)
   // holds the supreme Troll Champion across 4 floors. They reuse the standard
   // cave machinery. Most dens are shallow 1-floor pockets; the throne is deep.
-  { id: 'trollcave2', name: { es: 'Guarida Trol', en: 'Troll Den' }, x: -470, z: 380, minLevel: 6, floors: 1, creatureFamilies: ['troll'], chest: { itemId: 'iron_armor', reward: 1, questId: 'troll-den2-clear' } },
+  { id: 'trollcave2', name: { es: 'Guarida Trol', en: 'Troll Den' }, x: -560, z: 540, minLevel: 6, floors: 1, creatureFamilies: ['troll'], chest: { itemId: 'iron_armor', reward: 1, questId: 'troll-den2-clear' } }, // was (-470,380), inside Oakvale; moved deeper into troll lands
   { id: 'trollcave3', name: { es: 'Foso Trol', en: 'Troll Pit' }, x: -620, z: 520, minLevel: 7, floors: 1, creatureFamilies: ['troll'], chest: { itemId: 'studded_armor', reward: 1, questId: 'troll-den3-clear' } },
-  { id: 'trollcave4', name: { es: 'Madriguera Trol', en: 'Troll Burrow' }, x: -560, z: 300, minLevel: 8, floors: 2, creatureFamilies: ['troll', 'spider'], chest: { itemId: 'iron_sword', reward: 1, questId: 'troll-den4-clear' } },
+  { id: 'trollcave4', name: { es: 'Madriguera Trol', en: 'Troll Burrow' }, x: -660, z: 540, minLevel: 8, floors: 2, creatureFamilies: ['troll', 'spider'], chest: { itemId: 'iron_sword', reward: 1, questId: 'troll-den4-clear' } }, // was (-560,300), inside Oakvale; moved deeper into troll lands
   { id: 'trollcave5', name: { es: 'Cubil Trol', en: 'Troll Lair' }, x: -440, z: 540, minLevel: 9, floors: 1, creatureFamilies: ['troll'], chest: { itemId: 'battle_axe', reward: 1, questId: 'troll-den5-clear' } },
   { id: 'trollcave6', name: { es: 'Trono del Campeón', en: "Champion's Throne" }, x: -640, z: 420, minLevel: 12, floors: 4, big: true, creatureFamilies: ['troll'], chest: { itemId: 'morning_star', reward: 1, questId: 'troll-champion-clear' } },
   {
@@ -49,7 +52,8 @@ export const DUNGEONS = [
   },
   {
     id: 'dragonlair', name: { es: 'Guarida del Dragon', en: 'Dragon Lair' },
-    x: 200, z: -760, minLevel: 40, floors: 4, big: true,
+    // Moved with the dragon-mountains zone (now centred at 30,-940, ringing Frostpeak).
+    x: 30, z: -940, minLevel: 40, floors: 4, big: true,
     creatureFamilies: ['dragon', 'wyvern', 'lizardman'],
     chest: { itemId: 'dragon_shield', reward: 1, questId: 'dragon-lair-clear' },
   },

@@ -490,14 +490,14 @@ export const NPCS = [
     },
   },
 
-  // Dragonreach: distant town near the dragon peaks.
+  // Dragonreach: a desert tomb-city; its dragon-hunters set out north toward the distant peaks.
   {
     id: 'dragonreach_priest', name: 'Oracle Sena', city: 'dragonreach', role: 'priest',
     model: 'priest', color: 0xf0d9b5, offset: { x: 0, z: -4 },
-    greeting: { es: 'Los dragones observan desde las cumbres.', en: 'Dragons watch from the peaks.' },
+    greeting: { es: 'Las arenas guardan a los muertos, y los muertos guardan sus secretos.', en: 'The sands keep the dead, and the dead keep their secrets.' },
     lines: {
-      es: ['Solo los mas fuertes llegan tan lejos.', 'Cura tus heridas, las necesitaras.', 'El fuego antiguo aun arde alli arriba.'],
-      en: ['Only the strongest reach this far.', 'Heal your wounds, you will need it.', 'Ancient fire still burns up there.'],
+      es: ['Solo los mas fuertes sobreviven a las tumbas.', 'Cura tus heridas, las necesitaras.', 'El polvo antiguo aun susurra bajo la arena.'],
+      en: ['Only the strongest survive the tombs.', 'Heal your wounds, you will need it.', 'Ancient dust still whispers beneath the sand.'],
     },
   },
   {
@@ -512,10 +512,10 @@ export const NPCS = [
   {
     id: 'dragonreach_sage', name: 'Sage Orin', city: 'dragonreach', role: 'questgiver',
     model: 'wizard', color: 0x4a55a8, offset: { x: 6, z: 3 },
-    greeting: { es: 'Conozco los secretos de los dragones.', en: 'I know the secrets of dragons.' },
+    greeting: { es: 'Conozco el viejo saber de los dragones, aunque los dragones queden a un largo camino al norte.', en: 'I know the old dragon-lore, though the dragons themselves are a long road north.' },
     lines: {
-      es: ['Las escamas de dragon tienen gran poder.', 'Traeme reliquias de las cumbres.', 'El saber antiguo abre nuevas puertas.'],
-      en: ['Dragon scales hold great power.', 'Bring me relics from the peaks.', 'Old wisdom opens new doors.'],
+      es: ['Las escamas de dragon tienen gran poder, si sobrevives al viaje al norte.', 'Traeme reliquias de las cumbres lejanas del norte.', 'El saber antiguo abre nuevas puertas.'],
+      en: ['Dragon scales hold great power, if you survive the trek north.', 'Bring me relics from the distant northern peaks.', 'Old wisdom opens new doors.'],
     },
   },
   {
@@ -523,8 +523,8 @@ export const NPCS = [
     model: 'guard', color: 0x9c5a4a, offset: { x: 5, z: -5 },
     greeting: { es: 'Este es el ultimo bastion del mundo.', en: 'This is the world last bastion.' },
     lines: {
-      es: ['Mas alla solo hay fuego y garras.', 'Vigilo el cielo por si vuelan dragones.', 'No avances sin estar bien preparado.'],
-      en: ['Beyond lie only fire and claws.', 'I watch the sky for flying dragons.', 'Do not advance unprepared.'],
+      es: ['Mas alla de los muros: arena, escorpiones y los muertos sin descanso.', 'Vigilo las dunas por si aparecen escorpiones y saqueadores de tumbas.', 'No avances sin estar bien preparado.'],
+      en: ['Beyond the walls: sand, scorpions, and the restless dead.', 'I watch the dunes for scorpions and grave-robbers.', 'Do not advance unprepared.'],
     },
   },
   // --- Dragonreach vendors (one per district) and desert-city folk -----------
@@ -554,8 +554,8 @@ export const NPCS = [
     shop: { buyMult: 1, sellMult: 0.4, sells: { types: ['wand'] }, buys: { types: ['wand'] } },
     greeting: { es: 'Varitas que canalizan el fuego antiguo.', en: 'Wands that channel the ancient fire.' },
     lines: {
-      es: ['Las escamas de dragon guardan magia dormida.', 'Una varita de fuego no teme a la noche del desierto.'],
-      en: ['Dragon scales hold sleeping magic.', 'A fire wand fears no desert night.'],
+      es: ['Las escamas que traen del lejano norte guardan magia dormida.', 'Una varita de fuego no teme a la noche del desierto.'],
+      en: ['The scales hauled from the far north hold sleeping magic.', 'A fire wand fears no desert night.'],
     },
   },
   {
@@ -573,8 +573,8 @@ export const NPCS = [
     model: 'merchant', color: 0xd9b34a, offset: { x: -12, z: 0 },
     greeting: { es: 'La camara del tesoro esta sellada con runas.', en: 'The treasure chamber is sealed with runes.' },
     lines: {
-      es: ['Ni la arena ni los ladrones entran aqui.', 'Guarda tu oro antes de retar a los dragones.'],
-      en: ['Neither sand nor thieves get in here.', 'Store your gold before you challenge dragons.'],
+      es: ['Ni la arena ni los ladrones entran aqui.', 'Guarda tu oro antes de adentrarte en las tumbas.'],
+      en: ['Neither sand nor thieves get in here.', 'Store your gold before you brave the tombs.'],
     },
   },
   {
@@ -600,8 +600,8 @@ export const NPCS = [
     model: 'woman', color: 0xc05a8a, offset: { x: 24, z: -28 },
     greeting: { es: 'El desierto es duro; alegralo un poco.', en: 'The desert is harsh; brighten it a little.' },
     lines: {
-      es: ['Bailo para los que vuelven vivos de las cumbres.', 'Una moneda y te cuento el rumor del dia.', 'Hasta los dragones se calman con buena musica.'],
-      en: ['I dance for those who return alive from the peaks.', 'A coin and I will tell you today rumor.', 'Even dragons settle for good music.'],
+      es: ['Bailo para los que vuelven vivos del largo camino al norte.', 'Una moneda y te cuento el rumor del dia.', 'Dicen que hasta las momias se calman con buena musica.'],
+      en: ['I dance for those who return alive from the long road north.', 'A coin and I will tell you today rumor.', 'They say even the mummies settle for good music.'],
     },
   },
   {
@@ -618,8 +618,8 @@ export const NPCS = [
     model: 'king', color: 0xa05a2a, offset: { x: 0, z: 20 },
     greeting: { es: 'Bienvenido a Dragonreach, el ultimo bastion.', en: 'Welcome to Dragonreach, the last bastion.' },
     lines: {
-      es: ['Deseas residenciarte? Renaceras bajo las piramides.', 'Solo los valientes hacen hogar tan cerca de los dragones.'],
-      en: ['Would you settle here? You will respawn beneath the pyramids.', 'Only the bold make a home this close to dragons.'],
+      es: ['Deseas residenciarte? Renaceras bajo las piramides.', 'Solo los valientes hacen hogar al borde del desierto, entre las tumbas.'],
+      en: ['Would you settle here? You will respawn beneath the pyramids.', 'Only the bold make a home at the desert edge, among the tombs.'],
     },
   },
   {
