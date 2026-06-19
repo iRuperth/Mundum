@@ -731,6 +731,20 @@ export class CaveSystem {
     return out;
   }
 
+  // The walkable STRUCTURE of a floor, for the minimap to draw the real cave shape
+  // (rock vs floor) instead of a blank disc. Returns the floor's rectangular
+  // bounds and a solidAt(x,z) probe (no player padding, so the drawn walls sit
+  // right at the geometry). The minimap samples this over a grid and masks it by
+  // what the player has actually explored (fog of war, see caveMap.js).
+  floorStructure(i) {
+    const f = this.floors[Math.max(0, Math.min(this.floorCount - 1, i))];
+    if (!f) return null;
+    return {
+      cx: f.cx, cz: f.cz, halfX: f.halfX, halfZ: f.halfZ,
+      solidAt: (x, z) => f.solidAt(x, z, 0),
+    };
+  }
+
   dispose() {
     for (const f of this.floors) f.dispose();
   }
