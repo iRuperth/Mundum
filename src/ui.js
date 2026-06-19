@@ -22,7 +22,7 @@ function itemDisplayName(id, lang = 'es') {
   return String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 import { EQUIP_SLOTS, itemWeight } from './inventory.js';
-import { shopStock, shopStockFor, vendorBuysItem, sellPrice, buyPrice, CITIES } from './cities.js';
+import { shopStock, shopStockFor, vendorBuysItem, sellPrice, buyPrice, CITIES, cityRecLevel } from './cities.js';
 import { iconFor, slotPlaceholderIcon } from './itemIcons.js';
 import { housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, HOUSE_PALETTE, FACADE_SLOTS } from './house.js';
 
@@ -146,6 +146,9 @@ export class UI {
     const toggle = panel.querySelector('#panel-toggle, #panel-toggle-left');
     if (toggle) toggle.textContent = collapsed ? (isLeft ? '›' : '‹') : (isLeft ? '‹' : '›');
     if (panel === this.refs.sidePanel) this.collapsed = collapsed;
+    // Right panel drives the floating minimap: when it collapses, slide the map
+    // over to the edge with it (CSS body.right-collapsed #minimap-box).
+    if (!isLeft) document.body.classList.toggle('right-collapsed', collapsed);
   }
 
   // Reveal a side panel (by a selector like '.side-left'), un-hiding and
@@ -1275,8 +1278,15 @@ export class UI {
     card.classList.remove('hidden');
   }
 
-  // Teleport portal: pick another city to travel to.
+  // Teleport portal: pick another city to travel to. Each destination shows its
+  // RECOMMENDED level; if the player is under it, the level reads red and a
+  // "you're not strong enough yet — go anyway?" confirm appears before travelling
+  // (it's a warning, never a hard block — walking is always free).
   openTeleport(city, onTravel) {
+    this._renderTeleportList(city, onTravel);
+  }
+
+  _renderTeleportList(city, onTravel) {
     const card = this.refs.contextCard;
     card.innerHTML = `<div class="ctx-head">🌀 ${t('teleport')}</div>
       <div class="ctx-sub">${t('teleportHint')}</div>`;
@@ -1284,16 +1294,46 @@ export class UI {
     list.className = 'shop-list';
     for (const dest of CITIES) {
       if (dest.id === city.id) continue;
+      const rec = cityRecLevel(dest);
+      const under = this.level < rec;
       const row = document.createElement('div');
       row.className = 'shop-row';
-      row.innerHTML = `<span>🏛️ ${dest.name}</span>`;
+      // City name + a recommended-level tag (red when the player is below it).
+      const recTag = rec > 1
+        ? `<span class="tele-rec${under ? ' tele-rec-low' : ''}">${t('recLevel', rec)}</span>`
+        : '';
+      row.innerHTML = `<span>🏛️ ${dest.name} ${recTag}</span>`;
       const go = document.createElement('button');
       go.textContent = t('travel');
-      go.addEventListener('click', () => onTravel(dest));
+      go.addEventListener('click', () => {
+        if (under) this._confirmTeleport(city, dest, rec, onTravel);
+        else onTravel(dest);
+      });
       row.appendChild(go);
       list.appendChild(row);
     }
     card.appendChild(list);
+    this.addCloseX(card);
+    card.classList.remove('hidden');
+  }
+
+  // "Too weak" confirm: warn the player and let them go anyway or back out to the
+  // city list. Reuses the same context card.
+  _confirmTeleport(city, dest, rec, onTravel) {
+    const card = this.refs.contextCard;
+    card.innerHTML = `<div class="ctx-head">${t('tooWeakTitle')}</div>
+      <div class="ctx-body">${t('tooWeakBody', dest.name, rec, this.level)}</div>`;
+    const actions = document.createElement('div');
+    actions.className = 'ctx-actions';
+    const go = document.createElement('button');
+    go.className = 'danger';
+    go.textContent = t('travelAnyway');
+    go.addEventListener('click', () => onTravel(dest));
+    const back = document.createElement('button');
+    back.textContent = t('cancelTravel');
+    back.addEventListener('click', () => this._renderTeleportList(city, onTravel));
+    actions.append(go, back);
+    card.appendChild(actions);
     this.addCloseX(card);
     card.classList.remove('hidden');
   }
