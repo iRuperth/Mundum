@@ -7,6 +7,28 @@ const NIGHT = new THREE.Color(0x0b1030);
 const DAWN = new THREE.Color(0xff9e6b);
 const tmp = new THREE.Color();
 
+// Current hour/minute/second in SPAIN (Europe/Madrid), so the day/night cycle is
+// the same for everyone regardless of their device timezone. Intl resolves the
+// CET/CEST DST offset for us; if it's unavailable we fall back to local time.
+let _madridFmt = null;
+function spainHMS() {
+  try {
+    if (!_madridFmt) {
+      _madridFmt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Madrid', hour12: false,
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+    }
+    const p = {};
+    for (const part of _madridFmt.formatToParts(new Date())) p[part.type] = part.value;
+    // '24' can appear at midnight in some engines; normalise to 0.
+    return { h: (+p.hour) % 24, m: +p.minute, s: +p.second };
+  } catch (_) {
+    const d = new Date();
+    return { h: d.getHours(), m: d.getMinutes(), s: d.getSeconds() };
+  }
+}
+
 export class DayNight {
   constructor(scene) {
     this.scene = scene;
@@ -123,8 +145,12 @@ export class DayNight {
   timeFraction() {
     // forceDay pins the world to midday for now, regardless of real time.
     if (this.forceDay) return 0.5;
-    const d = new Date();
-    return (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()) / 86400;
+    // Day/night follows SPAIN's local clock (Europe/Madrid) for EVERY player, so
+    // when it's night in Spain it's night in the game worldwide — not tied to each
+    // device's own timezone. Intl handles CET/CEST DST. Falls back to the device
+    // clock if Intl/Date is unavailable.
+    const hms = spainHMS();
+    return (hms.h * 3600 + hms.m * 60 + hms.s) / 86400;
   }
 
   elevation() {
