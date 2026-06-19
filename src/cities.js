@@ -13,20 +13,34 @@ import { stallLayout, buildStall, STALL_RADIUS } from './market.js';
 // `id` stays stable (NPCs/quests/saves key off it); `name` is what players see.
 // `style` drives a distinct look per city (see CITY_STYLES below). Greenhollow is
 // the temperate capital with a castle; the others each have their own character.
+// `recLevel` is the RECOMMENDED player level to travel here by teleport, NOT a
+// hard gate. It's the AVERAGE level (midpoint of levelMin..levelMax) of the
+// toughest creature zone bordering each city — so it reflects the real difficulty
+// of the region you'd be dropped into, not just its gentle edge. Walking is always
+// free; the portal only WARNS when you're under it ("you're not strong enough for
+// this region yet — go anyway?"). Greenhollow is pinned to 1 (it's the safe
+// starter capital, even though the Elven Forest brushes its ring). Frostpeak is
+// highest (44) because the Dragon Mountains (lv 16-72, avg 44) border it. Tune
+// freely — advisory only.
 export const CITIES = [
-  { id: 'rivertown', name: 'Greenhollow', x: 0, z: 0, biome: 'forest', style: 'capital' },
-  { id: 'oakvale', name: 'Oakvale', x: -420, z: 280, biome: 'forest', style: 'village' },
-  { id: 'stonehaven', name: 'Stonehaven', x: -300, z: -1180, biome: 'snow', style: 'mountain' },
+  { id: 'rivertown', name: 'Greenhollow', x: 0, z: 0, biome: 'forest', style: 'capital', recLevel: 1 },
+  { id: 'oakvale', name: 'Oakvale', x: -420, z: 280, biome: 'forest', style: 'village', recLevel: 14 },
+  { id: 'stonehaven', name: 'Stonehaven', x: -300, z: -1180, biome: 'snow', style: 'mountain', recLevel: 14 },
   // Dragonreach is the desert (pharaonic) city — now out EAST where the desert is.
-  { id: 'dragonreach', name: 'Dragonreach', x: 1180, z: 260, biome: 'desert', style: 'desert' },
+  { id: 'dragonreach', name: 'Dragonreach', x: 1180, z: 260, biome: 'desert', style: 'desert', recLevel: 37 },
   // New distant cities, each in its own corner of the finite continent with a
   // distinct biome and character: a forest river-port to the west, a frozen
   // mining outpost to the far north, and a sun-baked oasis town in the far east
   // desert (south-east corner).
-  { id: 'westharbor', name: 'Westharbor', x: -1200, z: 120, biome: 'forest', style: 'harbor' },
-  { id: 'frostpeak', name: 'Frostpeak', x: 300, z: -1080, biome: 'snow', style: 'frost' },
-  { id: 'sandport', name: 'Sandport', x: 1080, z: 780, biome: 'desert', style: 'oasis' },
+  { id: 'westharbor', name: 'Westharbor', x: -1200, z: 120, biome: 'forest', style: 'harbor', recLevel: 18 },
+  { id: 'frostpeak', name: 'Frostpeak', x: 300, z: -1080, biome: 'snow', style: 'frost', recLevel: 44 },
+  { id: 'sandport', name: 'Sandport', x: 1080, z: 780, biome: 'desert', style: 'oasis', recLevel: 37 },
 ];
+
+// Recommended travel level for a city (advisory; defaults to 1 if unset).
+export function cityRecLevel(city) {
+  return (city && city.recLevel) || 1;
+}
 
 // Per-style look: wall/roof palette, roof shape, and how big the city pad is.
 // The capital is a huge Tibia-style grid city (radius covers its rectangle); the
@@ -314,22 +328,55 @@ export function nearestCity(x, z) {
 
 // The capital city (the starter town where brand-new level-1 players land).
 export const CAPITAL = CITIES.find((c) => c.style === 'capital') || CITIES[0];
-// How far PAST the capital walls counts as its protected "starter ring".
-const CAPITAL_SAFE_MARGIN = 130;
+// How far PAST a city's walls counts as its protected "safe ring".
+const CITY_SAFE_MARGIN = 150;
+// Creature level allowed right AT a city wall (the cap eases up to the zone's
+// natural difficulty by the ring's edge). The capital is the gentlest (it must
+// hold brand-new level-1 players); the other towns sit deeper in the world, so
+// their inner cap is a bit higher but still survivable for a fresh arrival who
+// teleported or walked in — no dragon one step out of the gate.
+const SAFE_CAP_AT_WALL_CAPITAL = 4;
+const SAFE_CAP_AT_WALL_OTHER = 7;
 
-// Level cap for creatures spawning in the capital's STARTER RING, or null when a
-// point is far enough out that normal zone difficulty applies. Brand-new level-1
-// players gather just outside Greenhollow, so anything that spawns within the
-// ring must be weak — no level-12 ambusher one step out of the gate. The cap
-// eases UP from 4 at the wall to ~8 at the ring's edge, so it's a gentle slope
-// out of the safe town, not a cliff.
-export function capitalSafeLevelCap(x, z) {
-  if (!CAPITAL) return null;
-  const wall = styleFor(CAPITAL).radius;
-  const d = Math.hypot(CAPITAL.x - x, CAPITAL.z - z);
-  if (d >= wall + CAPITAL_SAFE_MARGIN) return null;   // outside the ring: no cap
-  const t = Math.max(0, (d - wall) / CAPITAL_SAFE_MARGIN); // 0 at wall → 1 at edge
-  return Math.round(4 + t * 4);                        // 4 near the wall, ~8 at the edge
+// Level cap for creatures spawning in ANY city's SAFE RING, or null when the
+// point is far enough out that normal zone difficulty applies. EVERY city now
+// gets this protection (not just the capital): so a player who arrives at, say,
+// Frostpeak — whose Dragon Mountains zone (level 16-72) overlaps the wall — won't
+// be one-shot by a dragon spawning on the doorstep. The cap eases UP from a low
+// floor at the wall to the zone's own level by the ring edge, so it's a gentle
+// slope out of the safe town, not a cliff, and the strong creatures simply spawn
+// FARTHER from town (past the ring) instead of against the gate.
+export function citySafeLevelCap(x, z) {
+  let nearest = null, nd = Infinity;
+  for (const c of CITIES) {
+    const d = Math.hypot(c.x - x, c.z - z);
+    if (d < nd) { nd = d; nearest = c; }
+  }
+  if (!nearest) return null;
+  const wall = styleFor(nearest).radius;
+  if (nd >= wall + CITY_SAFE_MARGIN) return null;     // outside the ring: no cap
+  const t = Math.max(0, (nd - wall) / CITY_SAFE_MARGIN); // 0 at wall → 1 at edge
+  const isCapital = nearest.style === 'capital';
+  const floor = isCapital ? SAFE_CAP_AT_WALL_CAPITAL : SAFE_CAP_AT_WALL_OTHER;
+  // The cap climbs from `floor` at the wall to the zone's natural level at the
+  // ring edge (so the ring blends smoothly into the surrounding difficulty
+  // instead of ending in a sudden wall of dragons). We approximate the zone level
+  // at the ring edge with the wilderness curve, clamped so the ring is always at
+  // least a few levels of head-room above the wall floor.
+  const edgeLevel = Math.max(floor + 4, citySafeEdgeLevel(nearest));
+  return Math.round(floor + t * (edgeLevel - floor));
+}
+
+// Backwards-compatible alias: combat.js imported the capital-only name. Keep it
+// pointing at the generalised, all-cities ring so existing call sites still work.
+export const capitalSafeLevelCap = citySafeLevelCap;
+
+// Roughly how dangerous the open world is right at a city's safe-ring edge, used
+// as the upper end of that city's cap slope. Distance-from-origin curve (the same
+// shape wildernessLevelAt uses) so far-flung frontier towns get a higher ceiling
+// than cozy inner ones, without hard-coding a number per city.
+function citySafeEdgeLevel(city) {
+  return Math.max(6, Math.round(2 + Math.hypot(city.x, city.z) / 120));
 }
 
 // The wall outline of a city, for drawing on the map. Grid cities (the capital)
@@ -431,19 +478,24 @@ export function buildCities(scene, world) {
     // Two biome-themed soldiers stand watch at each gate of every city.
     buildGateGuards(group, c, flat);
 
-    // A healing statue just inside the main gate: talk to it to be patched up
-    // (low-level players only). Placed a couple of metres in from the first gate,
-    // facing into the town. Position returned for interaction + a map marker.
-    let healStatue = null;
-    const gates = cityGates(c);
-    if (gates.length) {
-      const g0 = gates[0];
-      const ox = g0.x - c.x, oz = g0.z - c.z;
+    // An entrance PLAZA with a central green healing fountain JUST INSIDE every
+    // gate: a themed paved circle with a glowing green heal-shrine in its middle,
+    // so whichever exit you arrive at has the same welcoming roundabout. Talk to
+    // the fountain to be patched up (low-level only). Centres returned for
+    // interaction + map markers.
+    const st0 = styleFor(c);
+    // The capital's gate corridors are wide; round towns have a narrower 5m road
+    // corridor through the wall, so use a smaller plaza there to avoid poking into
+    // the neighbouring house lots.
+    const plazaR = st0.grid ? 6 : 5;
+    const inset = st0.grid ? 9 : 8;              // how far inside the gate the centre sits
+    const healStatues = [];
+    for (const g of cityGates(c)) {
+      const ox = g.x - c.x, oz = g.z - c.z;
       const len = Math.hypot(ox, oz) || 1;
       const dx = ox / len, dz = oz / len;          // outward (centre -> gate)
-      const sx = g0.x - dx * 3.5, sz = g0.z - dz * 3.5;   // 3.5m inside the gate
-      const face = Math.atan2(-dx, -dz);            // look inward (toward centre)
-      healStatue = buildHealStatue(group, world, sx, sz, flat, face, mats);
+      const px = g.x - dx * inset, pz = g.z - dz * inset;   // INSIDE the gate (plaza centre)
+      healStatues.push(buildHealPlaza(group, world, px, pz, flat, mats, st0, plazaR));
     }
 
     for (const it of built.interiors) interiors.push(it);
@@ -456,8 +508,9 @@ export function buildCities(scene, world) {
       pois: built.pois || [],
       // Free-market stalls (ring of { stallId, x, z, rot }) for interaction.
       stalls: built.stalls || [],
-      // Gate healing statue ({ x, z }) — talk to it to heal (low level only).
-      healStatue,
+      // Gate healing statues (one per gate, each { x, z }) — talk to one to heal
+      // (low level only).
+      healStatues,
     });
   }
   scene.add(group);
@@ -480,14 +533,34 @@ export function houseLotAt(houses, x, z, radius = 2.2) {
   return best;
 }
 
-// Biome-themed soldier kit. Each city's guards wear gear that matches their
-// climate: temperate steel + green tabard in the forest, frost-blue plate with a
-// fur cloak up north, and warm brass with a sand cloak out in the desert. Picked
-// by city.biome so snow towns get snow soldiers, desert towns desert soldiers.
+// Soldier kits. Guards are now dressed for THEIR OWN CITY, not just their biome —
+// every town gets a distinct livery (its own tabard, trim and plume) echoing that
+// city's wall/roof palette, so two forest towns or two snow towns don't field
+// identical soldiers. GUARD_THEMES_BY_CITY is keyed by city id; GUARD_THEMES is
+// the per-biome fallback for any city without a bespoke kit.
 const GUARD_THEMES = {
   forest: { metal: 0xbfc4cc, metalDark: 0x6f7681, cloth: 0x3f6e34, trim: 0xd8c060, plume: 0xc23a2e, cape: false },
   snow:   { metal: 0xcfe0ec, metalDark: 0x7f97ad, cloth: 0x3a5e86, trim: 0xdfeaf4, plume: 0x9fd0ef, cape: true,  capeColor: 0xe8eef4 },
   desert: { metal: 0xd9b25a, metalDark: 0x9c7a32, cloth: 0xc28a3e, trim: 0x7a3320, plume: 0x3a8a7a, cape: true,  capeColor: 0xd8b97a },
+};
+const GUARD_THEMES_BY_CITY = {
+  // Greenhollow (capital): bright royal steel, crimson tabard, gold trim — the
+  // king's own guard, the grandest livery.
+  rivertown:  { metal: 0xcfd4dc, metalDark: 0x767d88, cloth: 0x8e2f2c, trim: 0xe8c84e, plume: 0xe8c84e, cape: true,  capeColor: 0x8e2f2c },
+  // Oakvale: a homelier forest town — burnished steel, deep-green tabard, no cape.
+  oakvale:    { metal: 0xb6bcc2, metalDark: 0x6a7178, cloth: 0x2f6f3a, trim: 0xc8a84a, plume: 0xc23a2e, cape: false },
+  // Westharbor: a teal-and-brass river port livery with a sea-green cloak.
+  westharbor: { metal: 0xc2cccb, metalDark: 0x6f7e7c, cloth: 0x1f6f68, trim: 0xd8c060, plume: 0x2f9d92, cape: true,  capeColor: 0x215c58 },
+  // Stonehaven: slate-grey mountain plate, steel-blue tabard, fur cloak.
+  stonehaven: { metal: 0xb9c2cc, metalDark: 0x6f7884, cloth: 0x49566a, trim: 0xbcc6d2, plume: 0x8fb4d6, cape: true,  capeColor: 0xc4cdd8 },
+  // Frostpeak: pale frost-blue plate, ice tabard, white fur cloak — distinct from
+  // Stonehaven's darker slate kit so the two snow towns differ at a glance.
+  frostpeak:  { metal: 0xdce8f2, metalDark: 0x88a0b6, cloth: 0x2f6aa0, trim: 0xeaf2fa, plume: 0x7fc8ef, cape: true,  capeColor: 0xeef4fa },
+  // Dragonreach: pharaonic gold plate, deep-red tabard, teal plume, sand cloak.
+  dragonreach:{ metal: 0xe0bd5c, metalDark: 0xa07e34, cloth: 0x8a2e22, trim: 0xf0d77a, plume: 0x2f9d8a, cape: true,  capeColor: 0xd8b97a },
+  // Sandport: warm brass with a turquoise oasis tabard and a light sand cloak —
+  // distinct from Dragonreach's red-and-gold pharaonic kit.
+  sandport:   { metal: 0xd8b96a, metalDark: 0x9a7e3a, cloth: 0x2f9d8a, trim: 0x7a3320, plume: 0x39a39a, cape: true,  capeColor: 0xe7cf93 },
 };
 
 // One stocky low-poly knight standing guard, facing `face` (radians). Built from
@@ -576,7 +649,7 @@ function buildSoldier(group, x, z, y, face, theme) {
 // reads as garrisoned. Falls back to the temperate forest kit for any biome we
 // don't have a theme for.
 function buildGateGuards(group, city, flat) {
-  const theme = GUARD_THEMES[city.biome] || GUARD_THEMES.forest;
+  const theme = GUARD_THEMES_BY_CITY[city.id] || GUARD_THEMES[city.biome] || GUARD_THEMES.forest;
   for (const g of cityGates(city)) {
     const ox = g.x - city.x, oz = g.z - city.z;
     const len = Math.hypot(ox, oz) || 1;
@@ -590,58 +663,88 @@ function buildGateGuards(group, city, flat) {
   }
 }
 
-// A benevolent HEALING STATUE for a city gate: a robed figure on a plinth
-// cradling a glowing green orb, with a soft green light and a faint aura ring, so
-// it reads as a shrine that tends weary low-level travellers. Talk to it (it's a
-// 'healStatue' interactable) to be patched up. Returns its position. `face` aims
-// the figure inward toward the city. Registers a small solid for the plinth.
-function buildHealStatue(group, world, x, z, y, face, mats) {
-  const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
+// A circular ENTRANCE PLAZA with a central green HEALING FOUNTAIN, built just
+// inside a city gate. Every city gets one at each gate, themed to its biome (the
+// paving uses the city's own stone colour, like the capital's central plaza), so
+// the exits all read as a proper paved roundabout with a glowing green shrine in
+// the middle. The fountain is the 'healStatue' interactable — stand in the circle
+// and talk to it to be patched up (low-level only). Returns the centre { x, z }.
+//
+// `radius` is the plaza disc radius; `st` carries the city style (for the themed
+// stone colour). The fountain sits dead-centre so you walk up to it from any side.
+function buildHealPlaza(group, world, x, z, y, mats, st, radius = 6) {
+  // --- The paved circular plaza (themed cobbles + a thin raised rim) ----------
+  const stoneHex = (st && st.stone) || 0xb9b2a2;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.3, 40), mats.stoneDark);
+  base.position.set(x, y - 0.04, z);
+  group.add(base);
+  // Cobbled top layer clipped to the disc (square paving scaled in like the
+  // capital's plaza, so it reads as laid stone, not a flat slab).
+  const pave = makePaving(radius * 2, radius * 2, stoneHex, cellSeed(Math.round(x), Math.round(z)), 0.5);
+  pave.position.set(x, y + 0.06, z);
+  pave.scale.set(0.86, 1, 0.86);
+  group.add(pave);
+  // A low rim ring around the plaza edge so the circle reads crisply.
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(radius - 0.2, 0.18, 8, 44), mats.stone);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.set(x, y + 0.12, z);
+  group.add(rim);
+
+  // --- The central green healing fountain -------------------------------------
+  buildHealFountain(group, world, x, z, y, mats);
+  return { x, z };
+}
+
+// The green healing fountain that sits at the centre of an entrance plaza: a
+// tiered stone basin with green water, a tapering spire, and a glowing green orb
+// on top with a halo + light, so it reads as a benevolent healing shrine from a
+// distance. Registers a solid so players circle it instead of standing inside it.
+function buildHealFountain(group, world, x, z, y, mats) {
   const g = new THREE.Group();
-  // Tiered pedestal.
-  const step = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 1.8), mats.stoneDark);
-  step.position.set(0, 0.15, 0);
+  const GREEN = 0x55ff88, ORB = 0x66ffa0;
+  // Stepped basin: a wide low bowl on a round pedestal.
+  const step = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.2, 0.4, 24), mats.stoneDark);
+  step.position.set(0, 0.2, 0);
   g.add(step);
-  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, 1.1, 12), mats.stone);
-  plinth.position.set(0, 0.85, 0);
-  g.add(plinth);
-  // A robed figure: a tapered robe body, rounded head, two arms cupped forward.
-  const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.62, 1.6, 12), mats.temple);
-  robe.position.set(0, 2.2, 0);
-  g.add(robe);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 10), mats.temple);
-  head.position.set(0, 3.15, 0);
-  g.add(head);
-  for (const s of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 8), mats.temple);
-    arm.position.set(s * 0.28, 2.45, 0.28);
-    arm.rotation.x = 1.1; arm.rotation.z = -s * 0.4;
-    g.add(arm);
-  }
-  // The glowing green healing orb cradled in the hands (additive so it reads as
-  // light), plus a soft halo and a point light.
-  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x66ffa0 }));
-  orb.position.set(0, 2.5, 0.55);
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.9, 0.6, 24), mats.stone);
+  basin.position.set(0, 0.7, 0);
+  g.add(basin);
+  // Green water surface inside the basin (tinted, glowing green so it reads as a
+  // magical heal-spring rather than ordinary water).
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 0.12, 24),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.55 }));
+  water.position.set(0, 0.96, 0);
+  g.add(water);
+  // A central tapering spire/pillar rising from the basin.
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.55, 2.4, 12), mats.stone);
+  pillar.position.set(0, 2.1, 0);
+  g.add(pillar);
+  // A small upper bowl that the "water" spills from.
+  const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.55, 0.4, 16), mats.stoneDark);
+  upper.position.set(0, 3.2, 0);
+  g.add(upper);
+  // The glowing green healing orb crowning the spire, with a soft halo + light.
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 14),
+    new THREE.MeshBasicMaterial({ color: ORB }));
+  orb.position.set(0, 4.0, 0);
   g.add(orb);
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x55ff88, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
-  halo.position.set(0, 2.5, 0.55);
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 18, 14),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
+  halo.position.set(0, 4.0, 0);
   g.add(halo);
-  const light = new THREE.PointLight(0x55ff88, 0.6, 8, 2);
-  light.position.set(0, 2.5, 0.55);
+  const light = new THREE.PointLight(GREEN, 0.8, 16, 2);
+  light.position.set(0, 3.6, 0);
   g.add(light);
-  // A faint aura ring on the ground so the heal zone reads from a distance.
-  const ring = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.7, 24),
-    new THREE.MeshBasicMaterial({ color: 0x55ff88, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  // A faint aura ring on the ground so the heal zone reads from across the plaza.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.8, 28),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(0, 0.05, 0);
+  ring.position.set(0, 0.06, 0);
   g.add(ring);
 
   g.position.set(x, y, z);
-  g.rotation.y = face;
   group.add(g);
-  if (world && world.addSolid) world.addSolid(x, z, 0.8);
+  if (world && world.addSolid) world.addSolid(x, z, 1.6);
   return { x, z };
 }
 
@@ -762,6 +865,24 @@ function buildLandmark(group, world, x, z, y, kind, mats) {
 function roundHouseLots(c, R) {
   const rec = houseRecipeFor(c);
   const lots = [];
+  // The town's actual WALL polygon (same one buildWall traces, inset to R-3).
+  // Shaped towns (diamond/rectangle/pentagon…) pull the wall much closer to the
+  // centre along their edge midpoints than a circle would, so a house placed on a
+  // circular ring can poke straight THROUGH a wall edge (the "buildings outside
+  // Frostpeak" bug). We reject any lot whose footprint isn't fully inside this
+  // polygon, with a small margin so houses don't kiss the wall.
+  const shape = styleFor(c).shape;
+  const poly = shape ? townPolygon(c.x, c.z, R - 3, shape) : null;
+  // Bearings of the REAL gate openings, so we clear the right corridors for the
+  // gate roads (cardinal bearings miss the openings on shaped towns).
+  const gateBearings = cityGates(c).map((g) => Math.atan2(g.z - c.z, g.x - c.x));
+  const lotInsideWall = (x, z, w, d) => {
+    if (!poly) return true;                 // circular town: ring already fits
+    const hw = w / 2 + 1.5, hd = d / 2 + 1.5;   // footprint half-extents + margin
+    // All four footprint corners must sit inside the wall polygon.
+    return pointInPolygon(x - hw, z - hd, poly) && pointInPolygon(x + hw, z - hd, poly)
+        && pointInPolygon(x - hw, z + hd, poly) && pointInPolygon(x + hw, z + hd, poly);
+  };
   // FNV-ish stable hash of an index -> [0,1), so a town's mix is fixed per load.
   const rand = (k) => {
     let h = (k * 2654435761) ^ ((R | 0) * 40503) ^ 0x9e3779b9;
@@ -782,8 +903,9 @@ function roundHouseLots(c, R) {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + ring.gap;
       // Keep the gate corridors clear on the two OUTER rings (inner houses sit
-      // well clear of the gate openings already).
-      if (rr > R * 0.6 && nearAnyGate(a, ROUND_GATE_BEARINGS, 0.22)) continue;
+      // well clear of the gate openings already). Clear against the REAL gate
+      // bearings so the corridor lines up with the actual openings/roads.
+      if (rr > R * 0.6 && nearAnyGate(a, gateBearings, 0.22)) continue;
       // Four INDEPENDENT hash draws per lot so size/floors/basement don't
       // correlate (a separate r4 for the basement, not the mansion roll).
       const r1 = rand(hi * 11 + 1), r2 = rand(hi * 11 + 3), r3 = rand(hi * 11 + 5), r4 = rand(hi * 11 + 7);
@@ -806,6 +928,9 @@ function roundHouseLots(c, R) {
       const big = mansion || floors >= 3;
       if (big) bigCount++;
       const basement = big && (bigCount === 1 || r4 < rec.basement);
+      // Drop any lot whose footprint would cross the (shaped) wall — keeps every
+      // house inside the town instead of floating outside a diamond/rectangle edge.
+      if (!lotInsideWall(hx0, hz0, w, d)) { hi++; continue; }
       // Door world-pos: replicate buildHouse (front +z face at d/2, post-rotation).
       const fx = Math.sin(facing), fz = Math.cos(facing);
       lots.push({
@@ -831,25 +956,29 @@ function buildRoundCity(group, world, c, flat, mats, st) {
 
   buildStreets(group, c.x, c.z, flat, R, mats, st);
   buildWall(group, world, c.x, c.z, flat, R - 3, mats, st.shape);
-  // Dress each of the three gates: a paved approach strip running out through the
-  // opening, flanked by a pair of lamps, so the exits read as real roads out of
-  // town (and match the gate markers drawn on the map).
-  for (const gateA of ROUND_GATE_BEARINGS) {
-    const dx = Math.cos(gateA), dz = Math.sin(gateA);
+  // Dress each REAL gate: a paved approach strip running out through the opening,
+  // flanked by a pair of lamps, so the exits read as real roads out of town (and
+  // match the gate markers, guards and heal statues). Use cityGates() — the actual
+  // wall openings (edge midpoints for shaped towns), NOT the cardinal bearings,
+  // which on a diamond/rectangle miss the openings and dressed solid wall instead.
+  for (const g of cityGates(c)) {
+    const ox = g.x - c.x, oz = g.z - c.z;
+    const len = Math.hypot(ox, oz) || 1;
+    const dx = ox / len, dz = oz / len;      // outward (centre -> gate)
     const px = -dz, pz = dx;                 // perpendicular (road width axis)
-    const gx = c.x + dx * (R - 3), gz = c.z + dz * (R - 3);
+    const gateA = Math.atan2(dz, dx);
     const road = new THREE.Mesh(new THREE.BoxGeometry(5, 0.2, 30), mats.stoneDark);
-    road.position.set(gx + dx * 9, flat - 0.04, gz + dz * 9);
+    road.position.set(g.x + dx * 9, flat - 0.04, g.z + dz * 9);
     road.rotation.y = -gateA + Math.PI / 2;
     group.add(road);
-    buildProp(group, world, gx + px * 3.5, gz + pz * 3.5, flat, 'lamp', mats);
-    buildProp(group, world, gx - px * 3.5, gz - pz * 3.5, flat, 'lamp', mats);
+    buildProp(group, world, g.x + px * 3.5, g.z + pz * 3.5, flat, 'lamp', mats);
+    buildProp(group, world, g.x - px * 3.5, g.z - pz * 3.5, flat, 'lamp', mats);
   }
   buildTemple(group, c.x, c.z, flat, mats.temple, mats.stone, world);
   pois.push({ x: c.x, z: c.z, icon: '🏛️', label: 'Temple' });
   buildTownHall(group, world, c.x, c.z + 18, flat, mats);
   pois.push({ x: c.x, z: c.z + 18, icon: '🏛️', label: 'Town Hall' });
-  buildNameLabel(group, c, flat + 15);
+  // (No floating city-name sprite — the name still shows on the minimap label.)
   // Each town's signature landmark, off to one side of the plaza, so the
   // skyline reads differently in every city — and it gets its own map marker.
   if (st.landmark) {
@@ -1074,7 +1203,7 @@ function buildGridCity(group, world, c, flat, mats, st) {
     const tx = c.x + Math.cos(a + 0.5) * 13, tz = c.z + Math.sin(a + 0.5) * 13;
     if (clearOfPortal(tx, tz)) buildProp(group, world, tx, tz, flat, 'tree', mats);
   }
-  buildNameLabel(group, c, flat + 20);
+  // (No floating city-name sprite — the name still shows on the minimap label.)
   // The capital keeps its castle, set back in the northern keep spur.
   if (st.castle) buildCastle(group, world, c.x, c.z + (CAPITAL_CELLS.minR - 0.3) * cell, flat, mats);
 
@@ -1753,6 +1882,49 @@ function nearAnyGate(a, bearings = ROUND_GATE_BEARINGS, half = GATE_HALF_ANGLE) 
   return false;
 }
 
+// The SINGLE source of truth for which polygon edges a shaped town opens as
+// gates — used by BOTH the wall builder (where to leave a gap) and cityGates()
+// (where to put roads, guards, heal statues and map markers), so they can never
+// drift apart. Picks the edge nearest each cardinal bearing; then, if that
+// collapsed to fewer than 3 distinct edges (an axis-aligned square maps all four
+// cardinals onto just two diagonal edges, which left Frostpeak with only two
+// gates — both north), it opens the remaining widest edges until there are at
+// least min(3, edgeCount) gates, so every town has a proper spread of exits.
+function gateEdgesFor(pts, cx, cz) {
+  const n = pts.length;
+  const edgeBearing = (i) => Math.atan2(
+    (pts[i].z + pts[(i + 1) % n].z) / 2 - cz,
+    (pts[i].x + pts[(i + 1) % n].x) / 2 - cx);
+  const gateEdges = new Set();
+  for (const gA of ROUND_GATE_BEARINGS) {
+    let edge = 0, bestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = Math.abs(((edgeBearing(i) - gA + Math.PI) % (Math.PI * 2)) - Math.PI);
+      if (d < bestD) { bestD = d; edge = i; }
+    }
+    gateEdges.add(edge);
+  }
+  // Guarantee at least 3 exits (or all edges, if the shape has fewer): add the
+  // not-yet-open edges most evenly spaced from the ones already chosen.
+  const want = Math.min(3, n);
+  while (gateEdges.size < want) {
+    let best = -1, bestSpread = -1;
+    for (let i = 0; i < n; i++) {
+      if (gateEdges.has(i)) continue;
+      // Prefer the candidate whose bearing is farthest from every open gate.
+      let nearest = Infinity;
+      for (const j of gateEdges) {
+        const d = Math.abs(((edgeBearing(i) - edgeBearing(j) + Math.PI) % (Math.PI * 2)) - Math.PI);
+        if (d < nearest) nearest = d;
+      }
+      if (nearest > bestSpread) { bestSpread = nearest; best = i; }
+    }
+    if (best < 0) break;
+    gateEdges.add(best);
+  }
+  return gateEdges;
+}
+
 // World-space gate points for a city, for the map to mark its exits. Round towns
 // report their four cardinal gates on the wall; the grid capital reports its
 // three usable gates (south, east, west — the north gate is a decorative keep
@@ -1817,8 +1989,23 @@ export function cityGates(city) {
       return { x: city.x + (g.col + dx * 0.5) * cell, z: city.z + (g.row + dz * 0.5) * cell };
     });
   }
-  const r = st.radius - 3;
-  return ROUND_GATE_BEARINGS.map((a) => ({ x: city.x + Math.cos(a) * r, z: city.z + Math.sin(a) * r }));
+  // Shaped round towns: the wall (buildWall) opens a gap in the MIDDLE of the
+  // polygon edge nearest each cardinal bearing — NOT at the cardinal bearing
+  // itself. A diamond/rectangle has its edges on the diagonals, so a gate sits at
+  // an edge midpoint that can be ~45° away from the cardinal. Return those exact
+  // edge midpoints so heal statues, gate guards and the map markers all land in
+  // the REAL openings (the old cardinal-bearing points missed the gaps entirely,
+  // leaving Frostpeak's exits with no statue or guards). Dedupe by edge so two
+  // cardinals that pick the same edge (e.g. the diamond's N & W) yield ONE gate,
+  // matching the wall's gateEdges Set.
+  const cx = city.x, cz = city.z;
+  const pts = townPolygon(cx, cz, st.radius - 3, st.shape);
+  const n = pts.length;
+  const gateEdges = gateEdgesFor(pts, cx, cz);
+  return [...gateEdges].map((i) => ({
+    x: (pts[i].x + pts[(i + 1) % n].x) / 2,
+    z: (pts[i].z + pts[(i + 1) % n].z) / 2,
+  }));
 }
 
 // A stone wall around the town. When `shape` is given the wall traces a POLYGON
@@ -1833,18 +2020,9 @@ function buildWall(group, world, cx, cz, y, radius, mats, shape) {
     // edges nearest the four cardinals so the town has a way out each direction.
     const pts = townPolygon(cx, cz, radius, shape);
     const n = pts.length;
-    // Pick the edge nearest each gate bearing; open all of them.
-    const gateEdges = new Set();
-    for (const gA of ROUND_GATE_BEARINGS) {
-      let edge = 0, bestD = Infinity;
-      for (let i = 0; i < n; i++) {
-        const mx = (pts[i].x + pts[(i + 1) % n].x) / 2, mz = (pts[i].z + pts[(i + 1) % n].z) / 2;
-        const a = Math.atan2(mz - cz, mx - cx);
-        const d = Math.abs(((a - gA + Math.PI) % (Math.PI * 2)) - Math.PI);
-        if (d < bestD) { bestD = d; edge = i; }
-      }
-      gateEdges.add(edge);
-    }
+    // Open the SAME edges cityGates() reports, so the gaps in the wall line up
+    // exactly with the roads, guards, heal statues and map markers.
+    const gateEdges = gateEdgesFor(pts, cx, cz);
     for (let i = 0; i < n; i++) {
       const a = pts[i], b = pts[(i + 1) % n];
       const ex = b.x - a.x, ez = b.z - a.z;
@@ -2661,32 +2839,6 @@ function buildDepot(group, world, x, z, y, mats) {
   world && world.addSolid(x, z, 2.6);
 }
 
-// Floating city name above the town hall, rendered to a canvas sprite.
-function buildNameLabel(group, city, y) {
-  const pad = 16, fontPx = 52;
-  const cv = document.createElement('canvas');
-  const ctx = cv.getContext('2d');
-  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
-  const w = Math.ceil(ctx.measureText(city.name).width) + pad * 2;
-  const h = fontPx + pad * 2;
-  cv.width = w; cv.height = h;
-  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineWidth = 7;
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeText(city.name, w / 2, h / 2);
-  ctx.fillStyle = '#ffe9b0';
-  ctx.fillText(city.name, w / 2, h / 2);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.minFilter = THREE.LinearFilter;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: true, transparent: true }));
-  const scale = 1.6;
-  sprite.scale.set((w / h) * scale, scale, 1);
-  sprite.position.set(city.x, y, city.z + 16);
-  group.add(sprite);
-}
-
 // A small marble temple at the city center: stepped base, columns and a roof.
 //
 // OPEN PAVILION collision. The old design had two bugs the user hit: (1) an
@@ -2756,6 +2908,13 @@ function buildTemple(group, cx, cz, flat, matTemple, matStone, world) {
 function buildTempleAura(group, cx, cz, flat) {
   const aura = new THREE.Group();
   aura.userData.templeAura = true;
+  // The aura GROUP sits at the temple; its children are positioned in LOCAL space
+  // (relative to the group). main.js spins this group on its Y axis every frame —
+  // if the children carried world coords (cx,cz), that spin would orbit them
+  // around the world origin, flinging the aura across the map for any city not at
+  // (0,0) (the Frostpeak "heal circle racing through town" bug). Local coords keep
+  // the rotation in place: the motes drift around the temple, nothing flies off.
+  aura.position.set(cx, flat, cz);
   const GREEN = 0x55ff88;
   // A glowing disc lying on the temple floor (additive so it reads as light, not
   // paint). Slightly above the marble to avoid z-fighting.
@@ -2765,7 +2924,7 @@ function buildTempleAura(group, cx, cz, flat) {
   });
   const disc = new THREE.Mesh(new THREE.CircleGeometry(4.6, 32), discMat);
   disc.rotation.x = -Math.PI / 2;
-  disc.position.set(cx, flat + 0.06, cz);
+  disc.position.set(0, 0.06, 0);
   aura.add(disc);
   // A soft translucent dome of light enclosing the gazebo.
   const domeMat = new THREE.MeshBasicMaterial({
@@ -2773,7 +2932,7 @@ function buildTempleAura(group, cx, cz, flat) {
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
   });
   const dome = new THREE.Mesh(new THREE.SphereGeometry(5, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
-  dome.position.set(cx, flat + 0.05, cz);
+  dome.position.set(0, 0.05, 0);
   aura.add(dome);
   // A ring of floating motes (little glowing specks) for a "blessing" feel.
   const moteMat = new THREE.MeshBasicMaterial({ color: 0xbfffd4, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -2781,12 +2940,12 @@ function buildTempleAura(group, cx, cz, flat) {
     const a = (i / 14) * Math.PI * 2;
     const rr = 3.6 + (i % 3) * 0.4;
     const mote = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 6), moteMat);
-    mote.position.set(cx + Math.cos(a) * rr, flat + 0.6 + (i % 4) * 0.5, cz + Math.sin(a) * rr);
+    mote.position.set(Math.cos(a) * rr, 0.6 + (i % 4) * 0.5, Math.sin(a) * rr);
     aura.add(mote);
   }
   // A warm green point light so nearby surfaces tint toward the heal colour.
   const light = new THREE.PointLight(GREEN, 0.7, 14, 2);
-  light.position.set(cx, flat + 2.2, cz);
+  light.position.set(0, 2.2, 0);
   aura.add(light);
   group.add(aura);
 }
@@ -2797,9 +2956,14 @@ export function interactableAt(props, x, z) {
     if (Math.hypot(p.shop.x - x, p.shop.z - z) < SHOP_RADIUS) return { kind: 'shop', city: p.city };
     if (Math.hypot(p.depot.x - x, p.depot.z - z) < DEPOT_RADIUS) return { kind: 'depot', city: p.city };
     if (Math.hypot(p.portal.x - x, p.portal.z - z) < PORTAL_RADIUS) return { kind: 'portal', city: p.city };
-    // Gate healing statue — talk to it to be patched up (low-level only).
-    if (p.healStatue && Math.hypot(p.healStatue.x - x, p.healStatue.z - z) < HEAL_STATUE_RADIUS) {
-      return { kind: 'healStatue', city: p.city };
+    // Gate healing statues — talk to one to be patched up (low-level only). One
+    // stands outside every gate, so any nearby qualifies.
+    if (p.healStatues) {
+      for (const hs of p.healStatues) {
+        if (Math.hypot(hs.x - x, hs.z - z) < HEAL_STATUE_RADIUS) {
+          return { kind: 'healStatue', city: p.city };
+        }
+      }
     }
     // Free-market stalls sit on a ring outside SHOP_RADIUS, so they never clash
     // with the shop interaction. Touch one to open / browse it.
