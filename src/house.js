@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import { iconFor } from './itemIcons.js';
+import { buildItemMesh, fitItemToSlot } from './itemDisplay.js';
 
 // ---------------------------------------------------------------------------
 // Pricing & capacity (everything scales with the house SIZE).
@@ -52,36 +53,42 @@ export function housePrice(lot) {
   return Math.max(5000, Math.round(base / 500) * 500);
 }
 
-// How many showcase columns fit across ONE wall: "3 rows and every column that
-// fits on the wall — the bigger the house, the more items". One column per ~0.9m
-// of interior wall, clamped so a tiny house still shows a few and a mansion a lot.
-function colsForWall(lot) {
-  const span = Math.max(lot.w, lot.d) || 5;
-  return Math.max(4, Math.min(14, Math.round(span / 0.85)));
-}
-
 export const SHOWCASE_ROWS = 3;
 
 // How many items the owner may show on the FRONT wall, outside the house. The
 // spec: replace one window space with two display slots.
 export const FACADE_SLOTS = 2;
 
-// The set of showcase WALLS in a house, each with its own capacity. A house has
-// the four interior walls; mansions add a long gallery wall; a basement adds two
-// more walls downstairs (the extra value of a cellar). Returns an array of
-// { id, label, cols, rows, cap, floor } so the UI and the 3D builder agree.
+// House SIZE TIER → total display slots (the player's spec):
+//   basic 1-floor cottage  →  9 slots
+//   2-floor house          → 12 slots
+//   large / mansion        → 20 slots
+// The slots are spread across a FEW walls (3 rows each), deliberately NOT filling
+// every wall — a 3×3 on one wall, a 3×4 split, etc. — so the room never looks like
+// a wall of plaques.
+export function houseSizeTier(lot) {
+  if (lot.mansion || houseFootprint(lot) > 90) return 'large';
+  if ((lot.floors || 1) >= 2 || houseFootprint(lot) > 45) return 'two';
+  return 'basic';
+}
+
+// The showcase WALLS: each { id, cols, rows, cap, floor }. We pick a wall layout
+// per size tier that sums to the target total (9/12/20) without packing the room.
 export function showcaseWalls(lot) {
-  const cols = colsForWall(lot);
-  const rows = SHOWCASE_ROWS;
+  const tier = houseSizeTier(lot);
   const walls = [];
-  const add = (id, floor) => walls.push({ id, label: id, cols, rows, cap: cols * rows, floor });
-  // Four ground-floor walls (north/east/south-with-door uses fewer, west).
-  add(0, 'ground');
-  add(1, 'ground');
-  add(2, 'ground');
-  add(3, 'ground');
-  if (lot.mansion || (lot.floors || 1) >= 2) add(4, 'ground'); // a gallery wall
-  if (lot.basement) { add(5, 'basement'); add(6, 'basement'); }
+  const add = (id, cols, rows, floor) => walls.push({ id, label: id, cols, rows, cap: cols * rows, floor });
+  if (tier === 'large') {
+    // 20 slots: back wall 3×4 (12) + west wall 2×4 (8). Two walls, room to spare.
+    add(0, 4, 3, 'ground');   // back  → 12
+    add(1, 4, 2, 'ground');   // west  → 8
+  } else if (tier === 'two') {
+    // 12 slots: back wall 3×4 only. One feature wall, the rest stays open.
+    add(0, 4, 3, 'ground');   // back  → 12
+  } else {
+    // 9 slots: a single tidy 3×3 on the back wall.
+    add(0, 3, 3, 'ground');   // back  → 9
+  }
   return walls;
 }
 
@@ -285,20 +292,32 @@ const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
 // the same neutral frame.
 function buildPlaque(slot, size = 0.7) {
   const g = new THREE.Group();
-  // Frame (slightly larger flat box) + recessed board.
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(size, size, 0.05), lambert(0xf2efe6));
+  // A wall mount: a backing board + a small shelf, and the item posed on it as a
+  // real 3D model (sword, armor, potion, gem…) jutting out of the wall — not a
+  // flat icon. Empty slots show just the board.
+  const board = new THREE.Mesh(new THREE.BoxGeometry(size, size, 0.04), lambert(0x2b2620));
+  g.add(board);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(size + 0.06, size + 0.06, 0.03), lambert(0x6a4a2a));
+  frame.position.z = -0.01;
   g.add(frame);
-  const back = new THREE.Mesh(new THREE.BoxGeometry(size * 0.84, size * 0.84, 0.04), lambert(0x2b2620));
-  back.position.z = 0.02;
-  g.add(back);
   if (slot && slot.item) {
-    const tex = iconTexture(slot.item);
-    if (tex) {
-      const face = new THREE.Mesh(
-        new THREE.PlaneGeometry(size * 0.78, size * 0.78),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-      face.position.z = 0.05;
-      g.add(face);
+    let mesh = null;
+    try { mesh = buildItemMesh(slot.item); } catch (_) { mesh = null; }
+    if (mesh) {
+      const fitted = fitItemToSlot(mesh, size * 0.42);
+      fitted.position.z = size * 0.42 + 0.05;   // stand proud of the board
+      g.add(fitted);
+      g.userData.spin = fitted;                 // gently rotate the showpiece
+    } else {
+      // Fallback to the old 2D icon plaque if a 3D mesh can't be built.
+      const tex = iconTexture(slot.item);
+      if (tex) {
+        const face = new THREE.Mesh(
+          new THREE.PlaneGeometry(size * 0.78, size * 0.78),
+          new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+        face.position.z = 0.04;
+        g.add(face);
+      }
     }
   }
   return g;
@@ -393,6 +412,53 @@ export class HouseInterior {
     return { x: this.worldX(this.stair.x), z: this.worldZ(this.stair.z), r: 1.0 };
   }
 
+  // Build the bed in the back-left corner and remember its local spot, where the
+  // sleeping player model lies (centre of the mattress, facing along the bed).
+  _buildBed(ox, oy, oz, W, D) {
+    const wood = lambert(0x6a4a2a);
+    const sheet = lambert(0x8a3b4b);
+    const pillow = lambert(0xeae0d0);
+    const bx = -W / 2 + 0.85;          // back-left corner, local
+    const bz = -D / 2 + 0.7;
+    const bed = new THREE.Group();
+    bed.position.set(ox + bx, oy, oz + bz);
+    // frame + legs
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.22, 2.0), wood);
+    frame.position.y = 0.22; bed.add(frame);
+    // mattress + sheet
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.16, 1.9), lambert(0xd8d2c4));
+    mattress.position.y = 0.4; bed.add(mattress);
+    const blanket = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.1, 1.2), sheet);
+    blanket.position.set(0, 0.46, 0.3); bed.add(blanket);
+    // pillow at the head (−z end)
+    const pil = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.14, 0.35), pillow);
+    pil.position.set(0, 0.5, -0.75); bed.add(pil);
+    // headboard
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 0.12), wood);
+    head.position.set(0, 0.5, -0.98); bed.add(head);
+    this.group.add(bed);
+    // Local + world bed spot. The mattress top is ~0.48 above floor; the sleeper
+    // lies along +z (feet) with head toward −z.
+    this._bedLocal = { x: bx, z: bz, y: 0.48 };
+  }
+
+  // World-space sleep trigger (step beside the bed + interact → sleep).
+  bedTrigger() {
+    if (!this._bedLocal) return null;
+    return { x: this.worldX(this._bedLocal.x), z: this.worldZ(this._bedLocal.z), r: 1.6 };
+  }
+
+  // Where the sleeping player model lies (world coords + the lie-down yaw).
+  bedSleepSpot() {
+    if (!this._bedLocal) return null;
+    return {
+      x: this.worldX(this._bedLocal.x),
+      y: this.floorY() + this._bedLocal.y,
+      z: this.worldZ(this._bedLocal.z),
+      yaw: 0,
+    };
+  }
+
   setVisible(v) { this.group.visible = v; }
 
   // --- World interface (duck-typed like CaveSystem) ------------------------
@@ -440,6 +506,15 @@ export class HouseInterior {
         const f = 0.92 + Math.sin(performance.now() * 0.006) * 0.06;
         this.lamp.intensity = this._lampBase * f;
       } catch (_) { /* ignore */ }
+    }
+    // Slowly rotate each showcased 3D item so it reads as a displayed showpiece.
+    if (this._wallMeshes) {
+      let t = 0;
+      try { t = performance.now() * 0.0006; } catch (_) { t = 0; }
+      for (const p of this._wallMeshes) {
+        const sp = p.userData && p.userData.spin;
+        if (sp) sp.rotation.y = t;
+      }
     }
   }
 
@@ -502,6 +577,11 @@ export class HouseInterior {
     const rug = new THREE.Mesh(new THREE.BoxGeometry(W * 0.5, 0.04, D * 0.4), lambert(0x7a3b3b));
     rug.position.set(ox, oy + 0.03, oz);
     this.group.add(rug);
+
+    // A BED in the back-left corner — click it to sleep. (The only furniture; the
+    // spec is "a bed in one corner, nothing else".) Store its world spot so the
+    // sleep trigger + the sleeping-pose placement can find it.
+    this._buildBed(ox, oy, oz, W, D);
 
     // Hang the showcase plaques on each wall.
     this._hangWalls(ox, oy, oz, W, D, H);
@@ -579,7 +659,8 @@ export class HouseInterior {
         const pz = oz + face.cz + az * offX + face.nz * 0.04;
         plaque.position.set(px, oy + y, pz);
         plaque.rotation.y = Math.atan2(face.nx, face.nz);
-        plaque.userData = { wallId: wall.id, index: idx };
+        const spin = plaque.userData.spin || null;  // preserve the showpiece ref
+        plaque.userData = { wallId: wall.id, index: idx, spin };
         this.group.add(plaque);
         this._wallMeshes.push(plaque);
       }
