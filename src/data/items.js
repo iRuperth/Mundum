@@ -470,39 +470,81 @@ export const QUIVERS = [
 for (const a of ARMORS) if (SECRET_ITEM_IDS.has(a.id)) a.secret = true;
 for (const q of QUIVERS) if (SECRET_ITEM_IDS.has(q.id)) q.secret = true;
 
-// Color table for collectible/buyable bags and backpacks (Tibia-style).
+// Color table for collectible/buyable bags and backpacks (Tibia-style). priceTier
+// scales the dye cost: 'common' (earthy/muted) < 'bright' (vivid) < 'rich' (deep
+// jewel tones) — fancier colour = pricier, per the user's "mejor diseño, más cara".
 const CONTAINER_COLORS = [
-  { key: 'red', name: 'Red', color: 0xc0392b },
-  { key: 'blue', name: 'Blue', color: 0x2980b9 },
-  { key: 'green', name: 'Green', color: 0x27ae60 },
-  { key: 'yellow', name: 'Yellow', color: 0xf1c40f },
-  { key: 'purple', name: 'Purple', color: 0x8e44ad },
-  { key: 'orange', name: 'Orange', color: 0xe67e22 },
-  { key: 'pink', name: 'Pink', color: 0xff6fa5 },
-  { key: 'grey', name: 'Grey', color: 0xecf0f1 },
-  { key: 'teal', name: 'Teal', color: 0x16a085 },
-  { key: 'crimson', name: 'Crimson', color: 0x922b21 },
-  { key: 'azure', name: 'Azure', color: 0x5dade2 },
-  { key: 'lime', name: 'Lime', color: 0x7dcea0 },
-  { key: 'violet', name: 'Violet', color: 0xa569bd },
-  { key: 'black', name: 'Black', color: 0x34495e },
+  { key: 'red', name: 'Red', color: 0xc0392b, priceTier: 'bright' },
+  { key: 'blue', name: 'Blue', color: 0x2980b9, priceTier: 'bright' },
+  { key: 'green', name: 'Green', color: 0x27ae60, priceTier: 'bright' },
+  { key: 'yellow', name: 'Yellow', color: 0xf1c40f, priceTier: 'bright' },
+  { key: 'purple', name: 'Purple', color: 0x8e44ad, priceTier: 'rich' },
+  { key: 'orange', name: 'Orange', color: 0xe67e22, priceTier: 'common' },
+  { key: 'pink', name: 'Pink', color: 0xff6fa5, priceTier: 'rich' },
+  { key: 'grey', name: 'Grey', color: 0xecf0f1, priceTier: 'common' },
+  { key: 'teal', name: 'Teal', color: 0x16a085, priceTier: 'bright' },
+  { key: 'crimson', name: 'Crimson', color: 0x922b21, priceTier: 'rich' },
+  { key: 'azure', name: 'Azure', color: 0x5dade2, priceTier: 'bright' },
+  { key: 'lime', name: 'Lime', color: 0x7dcea0, priceTier: 'common' },
+  { key: 'violet', name: 'Violet', color: 0xa569bd, priceTier: 'rich' },
+  { key: 'black', name: 'Black', color: 0x34495e, priceTier: 'common' },
 ];
 
 // Build colored variants: a small bag (cap 8) and a backpack (cap 20) per color.
-const COLORED_CONTAINERS = CONTAINER_COLORS.flatMap((c) => [
-  { id: `${c.key}_bag`, name: `${c.name} Bag`, slot: 'bag', capacity: 8, weight: 18, value: 60, color: c.color, shopTier: 'shop' },
-  { id: `${c.key}_backpack`, name: `${c.name} Backpack`, slot: 'bag', capacity: 20, weight: 30, value: 300, color: c.color, shopTier: 'shop' },
-]);
+// Pricing follows the base ratio (bag ~⅓ of a backpack). Plain base is 10/30; the
+// coloured ones cost a little more for the dye work — fancier dyes (the bright,
+// jewel-toned ones) cost the most, set by each color's `priceTier` below:
+//   common  → bag 12 / pack 36     (earthy / muted)
+//   bright  → bag 18 / pack 54     (vivid primaries)
+//   rich    → bag 24 / pack 72     (deep / jewel tones)
+// These stay BUYABLE in every city (shopTier 'shop'); the themed PREMIUM ones
+// further down are the city-exclusive bling.
+const COLOR_PRICE = { common: { bag: 12, pack: 36 }, bright: { bag: 18, pack: 54 }, rich: { bag: 24, pack: 72 } };
+const COLORED_CONTAINERS = CONTAINER_COLORS.flatMap((c) => {
+  const pr = COLOR_PRICE[c.priceTier || 'common'];
+  return [
+    { id: `${c.key}_bag`, name: `${c.name} Bag`, slot: 'bag', capacity: 8, weight: 18, value: pr.bag, color: c.color, shopTier: 'shop' },
+    { id: `${c.key}_backpack`, name: `${c.name} Backpack`, slot: 'bag', capacity: 20, weight: 30, value: pr.pack, color: c.color, shopTier: 'shop' },
+  ];
+});
+
+// PREMIUM containers: the "guay" bling. Each is sold in exactly ONE distant city
+// (the `city` tag; see the bag/general vendors in data/npcs.js which list these by
+// id under `sells.only`). The themed icon is drawn by paintContainer in
+// itemIcons.js, keyed off the id (star → star crest, scorpion → scorpion, etc.).
+// Prices: backpacks 120–400, bags scaled to ~⅓ (your base 10:30 ratio). shopTier
+// 'premium' makes them buyable (and bypass the shop level cap) yet kept off the
+// generic stock — only the named vendor's allowlist surfaces them.
+const PREMIUM_CONTAINERS = [
+  // Star — Greenhollow (the capital): a glittery five-point star crest.
+  { id: 'star_bag', name: 'Star Bag', slot: 'bag', capacity: 10, weight: 16, value: 80, color: 0x3b6ea5, shopTier: 'premium', city: 'rivertown' },
+  { id: 'star_backpack', name: 'Star Backpack', slot: 'bag', capacity: 22, weight: 28, value: 250, color: 0x2c3e87, shopTier: 'premium', city: 'rivertown' },
+  // Pink — Westharbor (the far-west river port): a rosy, heart-sparkle pack. (The
+  // plain `pink_*` colour pack already exists in the colour table; this fancy one
+  // is `rosy_*` to avoid an id clash, but reads as "the pink one" in game.)
+  { id: 'rosy_bag', name: 'Rosy Bag', slot: 'bag', capacity: 10, weight: 16, value: 60, color: 0xff6fa5, shopTier: 'premium', city: 'westharbor' },
+  { id: 'rosy_backpack', name: 'Rosy Backpack', slot: 'bag', capacity: 22, weight: 28, value: 180, color: 0xff4f95, shopTier: 'premium', city: 'westharbor' },
+  // Purple — Oakvale (the forest village): a deep violet enchanted-looking pack.
+  { id: 'purple_premium_bag', name: 'Violet Bag', slot: 'bag', capacity: 10, weight: 16, value: 70, color: 0x9b4fd0, shopTier: 'premium', city: 'oakvale' },
+  { id: 'purple_premium_backpack', name: 'Violet Backpack', slot: 'bag', capacity: 22, weight: 28, value: 220, color: 0x7d2fb8, shopTier: 'premium', city: 'oakvale' },
+  // Desert (scorpion) — Dragonreach (the pharaonic desert city): sandy tan with a
+  // black scorpion crest on the flap.
+  { id: 'scorpion_bag', name: 'Scorpion Bag', slot: 'bag', capacity: 12, weight: 16, value: 110, color: 0xd9b25a, shopTier: 'premium', city: 'dragonreach' },
+  { id: 'scorpion_backpack', name: 'Scorpion Backpack', slot: 'bag', capacity: 24, weight: 28, value: 330, color: 0xc99a3a, shopTier: 'premium', city: 'dragonreach' },
+  // Snow (snowflake) — Frostpeak (the far-north frost outpost): icy white-blue
+  // with a crystalline snowflake crest.
+  { id: 'frost_bag', name: 'Snowflake Bag', slot: 'bag', capacity: 12, weight: 16, value: 130, color: 0xbfe3f2, shopTier: 'premium', city: 'frostpeak' },
+  { id: 'frost_backpack', name: 'Snowflake Backpack', slot: 'bag', capacity: 24, weight: 28, value: 400, color: 0x8fc7e0, shopTier: 'premium', city: 'frostpeak' },
+];
 
 export const CONTAINERS = [
-  { id: 'bag', name: 'Bag', slot: 'bag', capacity: 8, weight: 18, value: 50, color: 0x8a6a3b },
-  { id: 'backpack', name: 'Backpack', slot: 'bag', capacity: 20, weight: 30, value: 250, color: 0x6a4a2b },
+  // Base: a Bag is 10, a Backpack is 30 (the user's reference prices).
+  { id: 'bag', name: 'Bag', slot: 'bag', capacity: 8, weight: 18, value: 10, color: 0x8a6a3b },
+  { id: 'backpack', name: 'Backpack', slot: 'bag', capacity: 20, weight: 30, value: 30, color: 0x6a4a2b },
   ...COLORED_CONTAINERS,
-  // Star bags/backpacks — a glittery star crest on the flap (kid bling).
-  { id: 'star_bag', name: 'Star Bag', slot: 'bag', capacity: 10, weight: 16, value: 600, color: 0x3b6ea5, shopTier: 'shop' },
-  { id: 'star_backpack', name: 'Star Backpack', slot: 'bag', capacity: 22, weight: 28, value: 1800, color: 0x2c3e87, shopTier: 'epic' },
-  // Themed special bags (kid bling — looted, big capacity). The demon backpack
-  // gets a demon face in the icon (see itemIcons paintContainer).
+  ...PREMIUM_CONTAINERS,
+  // Themed LOOT-ONLY bags (kid bling — earned by quest or creature drop, never
+  // sold). The demon/dragon/golden packs get bespoke icons (see paintContainer).
   { id: 'fur_bag', name: 'Fur Bag', slot: 'bag', capacity: 12, weight: 16, value: 800, color: 0x8a6a3a, shopTier: 'epic' },
   { id: 'golden_backpack', name: 'Golden Backpack', slot: 'bag', capacity: 24, weight: 30, value: 12000, color: 0xddbb33, shopTier: 'legendary-tier' },
   { id: 'dragon_backpack', name: 'Dragon Backpack', slot: 'bag', capacity: 22, weight: 30, value: 9000, color: 0xcc3322, shopTier: 'legendary-tier' },

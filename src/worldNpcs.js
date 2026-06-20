@@ -23,61 +23,77 @@ function buildCollectorStall() {
   const darkWood = new THREE.MeshLambertMaterial({ color: 0x3a2616 });
   const cloth = new THREE.MeshLambertMaterial({ color: 0x6a1b4a });   // rich purple awning
   const gold = new THREE.MeshStandardMaterial({ color: 0xd9b341, metalness: 0.7, roughness: 0.4 });
-  const W = 4.2, H = 3.0, D = 3.0;
+  const W = 4.6, H = 3.4, D = 2.6;
+  const backZ = -D;                  // inside face of the back wall
+  const counterTopY = 1.0;           // top of the counter the collector stands at
 
   // Back wall + two side walls (behind/around the collector, away from the plaza).
   const back = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.18), darkWood);
-  back.position.set(0, H / 2, -D);
+  back.position.set(0, H / 2, backZ);
   g.add(back);
   for (const s of [-1, 1]) {
     const side = new THREE.Mesh(new THREE.BoxGeometry(0.18, H, D), wood);
     side.position.set(s * W / 2, H / 2, -D / 2);
     g.add(side);
   }
-  // Counter the collector stands behind.
-  const counter = new THREE.Mesh(new THREE.BoxGeometry(W, 1.0, 0.5), wood);
-  counter.position.set(0, 0.5, -0.4);
+  // Counter the collector stands behind (front of the kiosk, toward the plaza).
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(W, counterTopY, 0.5), wood);
+  counter.position.set(0, counterTopY / 2, -0.35);
   g.add(counter);
-  const counterTop = new THREE.Mesh(new THREE.BoxGeometry(W + 0.2, 0.1, 0.7), darkWood);
-  counterTop.position.set(0, 1.0, -0.4);
+  const counterTop = new THREE.Mesh(new THREE.BoxGeometry(W + 0.2, 0.1, 0.66), darkWood);
+  counterTop.position.set(0, counterTopY, -0.35);
   g.add(counterTop);
-  // Awning slab + gold trim over the front.
-  const awning = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.12, 1.2), cloth);
-  awning.position.set(0, H - 0.1, 0.2);
-  awning.rotation.x = -0.18;
+
+  // Awning: a FLAT slab sitting level on top of the two front posts (no tilt — the
+  // old −0.18 tilt is what read as a deformed canopy), with a hanging valance
+  // stripe and a gold trim edge so it reads as a proper market canopy.
+  const awnY = H - 0.15;
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(W + 0.7, 0.14, D + 0.5), cloth);
+  awning.position.set(0, awnY, -D / 2 + 0.3);
   g.add(awning);
-  const trim = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.08, 0.08), gold);
-  trim.position.set(0, H - 0.45, 0.78);
+  const valance = new THREE.Mesh(new THREE.BoxGeometry(W + 0.7, 0.34, 0.06), cloth);
+  valance.position.set(0, awnY - 0.22, 0.55);
+  g.add(valance);
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(W + 0.7, 0.06, 0.06), gold);
+  trim.position.set(0, awnY - 0.4, 0.55);
   g.add(trim);
   for (const s of [-1, 1]) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, H, 8), wood);
-    post.position.set(s * (W / 2 + 0.25), H / 2, 0.75);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, awnY, 8), wood);
+    post.position.set(s * (W / 2 + 0.3), awnY / 2, 0.5);
     g.add(post);
   }
 
-  // A grid of treasures on the BACK wall (a glass case behind each). 3 rows × 4.
+  // A tidy SHELF of treasures on the back wall — ABOVE the counter so nothing clips
+  // into it. Each treasure sits in its own glass-fronted case on a wooden shelf
+  // board. Two shelves of N, filling the wall between the counter and the awning.
   const spinners = [];
-  const cols = 4, rows = 3, cell = 0.86;
+  const cols = 4, rows = 2, cell = 0.82;
   const startX = -((cols - 1) * cell) / 2;
-  const startY = H - 0.7;
+  const bandBottom = counterTopY + 0.55;       // clear of the counter top
+  const bandTop = awnY - 0.55;                  // clear of the awning
+  const rowStep = rows > 1 ? (bandTop - bandBottom) / (rows - 1) : 0;
   let n = 0;
   for (let row = 0; row < rows; row++) {
+    const py = bandTop - row * rowStep;
+    // A wooden shelf board running the width, under this row of cases.
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, 0.07, 0.34), wood);
+    shelf.position.set(0, py - cell * 0.46, backZ + 0.26);
+    g.add(shelf);
     for (let col = 0; col < cols; col++) {
       const id = COLLECTOR_DISPLAY[n % COLLECTOR_DISPLAY.length]; n++;
       const def = getArmor(id) || getWeapon(id);
       if (!def) continue;
       const px = startX + col * cell;
-      const py = startY - row * cell;
-      // a recessed dark case
-      const caseBox = new THREE.Mesh(new THREE.BoxGeometry(cell * 0.92, cell * 0.92, 0.12),
+      // a recessed dark case set into the back wall
+      const caseBox = new THREE.Mesh(new THREE.BoxGeometry(cell * 0.9, cell * 0.9, 0.1),
         new THREE.MeshLambertMaterial({ color: 0x201810 }));
-      caseBox.position.set(px, py, -D + 0.12);
+      caseBox.position.set(px, py, backZ + 0.1);
       g.add(caseBox);
       let mesh = null;
       try { mesh = buildItemMesh(def); } catch (_) { mesh = null; }
       if (mesh) {
-        const fitted = fitItemToSlot(mesh, cell * 0.4);
-        fitted.position.set(px, py, -D + 0.28);
+        const fitted = fitItemToSlot(mesh, cell * 0.38);
+        fitted.position.set(px, py, backZ + 0.3);
         g.add(fitted);
         spinners.push(fitted);
       }

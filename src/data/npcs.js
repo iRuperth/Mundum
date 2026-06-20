@@ -10,6 +10,9 @@
 //   buyMult  price the player pays  = floor(item.value * buyMult)
 //   sellMult coins the player gets  = floor(item.value * sellMult)
 //   sells    what the vendor offers to BUY-from: { kinds:[], types:[], slots:[], excludePct } or { all:true }
+//            plus optional `also:[ids]` — extra item ids stocked ON TOP of the
+//            category rules; this is how a city sells its EXCLUSIVE premium
+//            container(s) (star/pink/violet/scorpion/snowflake bags+backpacks).
 //   buys     what the vendor accepts when the player SELLS: same shape (omit = nothing)
 
 export const NPCS = [
@@ -111,18 +114,20 @@ export const NPCS = [
   {
     id: 'rivertown_bagseller', name: 'Sela of the Sacks', city: 'rivertown', role: 'vendor',
     model: 'woman', color: 0xc06bb0, district: 'bag', offset: { x: -22, z: -8 },
-    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'] }, buys: { kinds: ['container'] } },
+    // Greenhollow exclusive: the Star bag/backpack (also: star_*). Other premium
+    // designs are sold only in their own distant cities.
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['star_bag', 'star_backpack'] }, buys: { kinds: ['container'] } },
     greeting: { es: 'Bolsas y mochilas, de todos los colores!', en: 'Bags and backpacks, in every color!' },
     lines: {
       es: [
         'Cosí cada mochila a mano. La roja, la azul, la que prefieras.',
         'Una buena mochila carga más botín y te hace ver con estilo.',
-        'Me llaman Sela de los Sacos. Nadie tiene más bolsas que yo.',
+        'Mi orgullo es la mochila de estrella: ¡solo la vendo yo, aquí en Greenhollow!',
       ],
       en: [
         'I stitched every backpack by hand. Red, blue, whichever you fancy.',
         'A good backpack carries more loot — and looks sharp doing it.',
-        'They call me Sela of the Sacks. No one carries more bags than I do.',
+        'My pride is the Star backpack — only I sell it, here in Greenhollow!',
       ],
     },
   },
@@ -280,6 +285,17 @@ export const NPCS = [
     lines: {
       es: ['Las mejores hierbas crecen donde nadie mira.', 'Old Wren me enseno todo lo que se.'],
       en: ['The best herbs grow where no one looks.', 'Old Wren taught me everything I know.'],
+    },
+  },
+  {
+    // Oakvale's bag vendor: basics in every colour PLUS the exclusive Violet pack.
+    id: 'oakvale_bagseller', name: 'Weaver Linnet', city: 'oakvale', role: 'vendor',
+    model: 'woman', color: 0x8a5fb0, district: 'market', offset: { x: 26, z: 18 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['purple_premium_bag', 'purple_premium_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Bolsas tenidas con bayas del bosque.', en: 'Bags dyed with forest berries.' },
+    lines: {
+      es: ['Tino mis mochilas con bayas: ningun violeta es mas vivo.', 'La mochila violeta solo se vende aqui, en Oakvale.'],
+      en: ['I dye my packs with berries — no violet is deeper.', 'The Violet backpack is sold only here, in Oakvale.'],
     },
   },
   {
@@ -569,6 +585,18 @@ export const NPCS = [
     },
   },
   {
+    // Dragonreach's bag vendor: basics plus the exclusive Scorpion pack (sandy
+    // tan with a black scorpion crest — the desert design).
+    id: 'dragonreach_bagseller', name: 'Sackmaker Qadir', city: 'dragonreach', role: 'vendor',
+    model: 'merchant', color: 0xc9a86a, district: 'market', offset: { x: -24, z: 16 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['scorpion_bag', 'scorpion_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Sacos de cuero curtido al sol del desierto.', en: 'Sacks of leather tanned in desert sun.' },
+    lines: {
+      es: ['Mi mochila del escorpion solo se cose aqui, en Dragonreach.', 'El cuero del desierto aguanta la arena y el sol.'],
+      en: ['My Scorpion backpack is stitched only here, in Dragonreach.', 'Desert leather shrugs off sand and sun.'],
+    },
+  },
+  {
     id: 'dragonreach_banker', name: 'Treasurer Amset', city: 'dragonreach', role: 'banker',
     model: 'merchant', color: 0xd9b34a, offset: { x: -12, z: 0 },
     greeting: { es: 'La camara del tesoro esta sellada con runas.', en: 'The treasure chamber is sealed with runes.' },
@@ -709,6 +737,17 @@ export const NPCS = [
     lines: {
       es: ['Algas, sal y un secreto que no contare.', 'Bebe esto y ni la peor tormenta te tumba.'],
       en: ['Kelp, salt and a secret I will not tell.', 'Drink this and no storm will lay you low.'],
+    },
+  },
+  {
+    // Westharbor's bag vendor: basics plus the exclusive Pink pack.
+    id: 'westharbor_bagseller', name: 'Sailmaker Posy', city: 'westharbor', role: 'vendor',
+    model: 'woman', color: 0xd87aa5, district: 'market', offset: { x: 22, z: 20 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['rosy_bag', 'rosy_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Bolsas cosidas con lona de vela.', en: 'Bags sewn from sailcloth.' },
+    lines: {
+      es: ['Tino la lona de rosa con caracolas del puerto.', 'La mochila rosa solo zarpa desde aqui, Westharbor.'],
+      en: ['I dye sailcloth pink with harbour shells.', 'The Pink backpack sets sail only from here, Westharbor.'],
     },
   },
   {
@@ -854,6 +893,18 @@ export const NPCS = [
     lines: {
       es: ['Mezclo musgo de nieve y grasa de oso.', 'Sin una de estas, no cruces el paso del norte.'],
       en: ['I mix snow-moss and bear fat.', 'Without one of these, do not cross the north pass.'],
+    },
+  },
+  {
+    // Frostpeak's bag vendor: basics plus the exclusive Snowflake pack (icy white-
+    // blue with a crystalline snowflake crest — the snow design).
+    id: 'frostpeak_bagseller', name: 'Stitcher Yrsa', city: 'frostpeak', role: 'vendor',
+    model: 'woman', color: 0x9fc7e0, district: 'market', offset: { x: -20, z: 22 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['frost_bag', 'frost_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Bolsas forradas de piel contra el frio.', en: 'Fur-lined bags against the cold.' },
+    lines: {
+      es: ['Bordo un copo de nieve en cada mochila escarchada.', 'La mochila de copo solo se cose aqui, en Frostpeak.'],
+      en: ['I stitch a snowflake on every frosted pack.', 'The Snowflake backpack is sewn only here, in Frostpeak.'],
     },
   },
   {
