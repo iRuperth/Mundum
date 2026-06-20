@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildCharacter } from './character.js';
+import { EquipVisuals } from './equipVisuals.js';
 
 // Renders other players. Each peer is a character model interpolated toward its
 // last broadcast state. A floating name tag sits above the head.
@@ -42,6 +43,18 @@ export class Peers {
       peer.name = state.name;
       this._setTag(peer, state.name);
     }
+    // Worn gear: re-apply when the broadcast carries an `equip` snapshot (only
+    // sent on change / while asleep) so peers show the player's set.
+    if (state.equip && peer.equipVisuals) {
+      try { peer.equipVisuals.refresh(state.equip, state.level || 1); } catch (_) {}
+    }
+    // Sleeping: lay the body down (and stop walk animation in tick). Toggling
+    // only on change keeps the pose stable.
+    const sleeping = !!state.sleeping;
+    if (sleeping !== peer.sleeping) {
+      peer.sleeping = sleeping;
+      if (peer.char.setSleeping) peer.char.setSleeping(sleeping);
+    }
   }
 
   _create(id, state) {
@@ -60,13 +73,18 @@ export class Peers {
     const tag = this._makeTag(state.name || '?');
     char.group.add(tag.sprite);
     tag.sprite.position.y = 2.1;
+    // Visible worn gear (weapon/armor/helmet/…) so peers look equipped like the
+    // local hero. Applied from the broadcast `equip` snapshot when present.
+    const equipVisuals = new EquipVisuals(char);
     const peer = {
-      char, tag, name: state.name || '',
+      char, tag, equipVisuals, name: state.name || '',
       pos: new THREE.Vector3(state.x, state.y, state.z),
       target: new THREE.Vector3(state.x, state.y, state.z),
       yaw: state.yaw || 0, targetYaw: state.yaw || 0,
-      walkPhase: 0, lastSeen: performance.now(),
+      walkPhase: 0, lastSeen: performance.now(), sleeping: false,
     };
+    if (state.equip) { try { equipVisuals.refresh(state.equip, state.level || 1); } catch (_) {} }
+    if (state.sleeping) { peer.sleeping = true; if (char.setSleeping) char.setSleeping(true); }
     this.peers.set(id, peer);
     return peer;
   }
@@ -105,8 +123,14 @@ export class Peers {
       peer.pos.lerp(peer.target, Math.min(1, dt * 8));
       const moving = peer.pos.distanceTo(peer.target) > 0.02;
       peer.yaw += angleDelta(peer.yaw, peer.targetYaw) * Math.min(1, dt * 10);
-      peer.walkPhase += (moving ? dt * 9 : 0);
-      peer.char.animate(peer.walkPhase, moving ? 1 : 0, true, dt);
+      // A sleeping peer lies still — keep the lie-down pose (animate with 0 phase
+      // so setSleeping's breathing carries) and don't advance the walk cycle.
+      if (peer.sleeping) {
+        peer.char.animate(0, 0, true, dt);
+      } else {
+        peer.walkPhase += (moving ? dt * 9 : 0);
+        peer.char.animate(peer.walkPhase, moving ? 1 : 0, true, dt);
+      }
       peer.char.updateAttack(dt);
       peer.char.group.position.copy(peer.pos);
       peer.char.group.rotation.y = peer.yaw + Math.PI;
