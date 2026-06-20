@@ -2,6 +2,8 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="../freshreg.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Creature Preview — Mundum</title>
 <script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
@@ -119,14 +121,24 @@ function build(family) {
   if (scaleOverride != null) opts.scale = scaleOverride;
   if (!designKeys.has(family)) opts.color = (TINTS[family] != null ? TINTS[family] : 0x9a9a9a);
   model = buildCreatureModel(family, opts);
+  // The game places the model origin at terrain height and lifts it by footOffset
+  // so the feet rest on the ground; mirror that here so the preview shows the same
+  // grounding (no floating, no sinking) as in-world.
+  model.group.position.y = model.footOffset || 0;
   root.add(model.group);
   // Measure real height and frame the camera so big and small creatures are both
   // readable — and show the size next to the human (1.0) reference.
   const box = new THREE.Box3().setFromObject(model.group);
   const h = (box.max.y - box.min.y) || 1;
-  const dist = Math.max(2.4, h * 1.7);
-  camera.position.set(0, h * 0.55, dist);
-  camera.lookAt(0, h * 0.45, 0);
+  // Frame to the LARGEST extent (a giant spider is far wider/deeper than it is
+  // tall), so wide creatures aren't cropped. Pull back enough to fit it all.
+  const w = (box.max.x - box.min.x) || 1;
+  const d = (box.max.z - box.min.z) || 1;
+  const span = Math.max(h, w, d);
+  const dist = Math.max(2.4, span * 1.9);
+  const midY = (box.max.y + box.min.y) / 2;
+  camera.position.set(0, Math.max(midY, h * 0.5), dist);
+  camera.lookAt(0, midY, 0);
   refFigure.visible = refOn;
   nameEl.textContent = `${family}  ·  alto≈${h.toFixed(2)} (humano=1.0)${scaleOverride != null ? '  ×' + scaleOverride.toFixed(1) : ''}`;
   markActive();
@@ -158,7 +170,27 @@ function markActive() {
   for (const f in fbtns) fbtns[f].classList.toggle('on', f === current);
 }
 
-build('orc');
+// Allow deep-linking a creature with #name (e.g. creature_preview.html#dragon)
+// so a specific model can be opened/screenshotted directly.
+// Hash form: #name  or  #name@angle  (angle in radians sets the start yaw and
+// freezes spin, handy for screenshotting a fixed 3/4 view).
+function parseHash() {
+  const raw = decodeURIComponent((location.hash || '').replace(/^#/, ''));
+  const at = raw.indexOf('@');
+  return at >= 0 ? { name: raw.slice(0, at), angle: parseFloat(raw.slice(at + 1)) } : { name: raw, angle: null };
+}
+{
+  const { name, angle } = parseHash();
+  build(FAMILIES.includes(name) ? name : 'orc');
+  // A fixed angle (screenshot mode) also freezes the walk so the still shows the
+  // resting pose, not a mid-swing frame that makes held weapons look detached.
+  if (angle != null && !isNaN(angle)) { spinning = false; moving = false; root.rotation.y = angle; }
+}
+window.addEventListener('hashchange', () => {
+  const { name, angle } = parseHash();
+  if (FAMILIES.includes(name)) build(name);
+  if (angle != null && !isNaN(angle)) { spinning = false; moving = false; root.rotation.y = angle; }
+});
 
 // --- loop ----------------------------------------------------------------
 let last = performance.now();
