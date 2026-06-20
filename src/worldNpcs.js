@@ -2,6 +2,90 @@ import * as THREE from 'three';
 import { buildNpcModel } from './npcModels.js';
 import { NPCS } from './data/npcs.js';
 import { CITIES } from './cities.js';
+import { buildItemMesh, fitItemToSlot } from './itemDisplay.js';
+import { getArmor, getWeapon } from './data/items.js';
+
+// The treasures shown (decoration only) on the rarity collector's stall walls —
+// a curated wall of legendary gear and jewels the player can look at but not take.
+const COLLECTOR_DISPLAY = [
+  'demon_armor', 'golden_armor', 'dragon_helmet', 'royal_armor',
+  'demon_helmet', 'crusader_helmet', 'golden_legs', 'platinum_amulet',
+  'demon_sword', 'crystal_sword', 'demon_axe', 'frost_helmet',
+];
+
+// Build the collector's ornate stall: a wooden kiosk with a back-and-side wall,
+// a counter, an awning, and a grid of glass-cased 3D treasures mounted on the
+// walls. Pure decoration — nothing here is interactive. Returns a THREE.Group to
+// place at the collector's feet (origin at ground, facing +Z toward the plaza).
+function buildCollectorStall() {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
+  const darkWood = new THREE.MeshLambertMaterial({ color: 0x3a2616 });
+  const cloth = new THREE.MeshLambertMaterial({ color: 0x6a1b4a });   // rich purple awning
+  const gold = new THREE.MeshStandardMaterial({ color: 0xd9b341, metalness: 0.7, roughness: 0.4 });
+  const W = 4.2, H = 3.0, D = 3.0;
+
+  // Back wall + two side walls (behind/around the collector, away from the plaza).
+  const back = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.18), darkWood);
+  back.position.set(0, H / 2, -D);
+  g.add(back);
+  for (const s of [-1, 1]) {
+    const side = new THREE.Mesh(new THREE.BoxGeometry(0.18, H, D), wood);
+    side.position.set(s * W / 2, H / 2, -D / 2);
+    g.add(side);
+  }
+  // Counter the collector stands behind.
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(W, 1.0, 0.5), wood);
+  counter.position.set(0, 0.5, -0.4);
+  g.add(counter);
+  const counterTop = new THREE.Mesh(new THREE.BoxGeometry(W + 0.2, 0.1, 0.7), darkWood);
+  counterTop.position.set(0, 1.0, -0.4);
+  g.add(counterTop);
+  // Awning slab + gold trim over the front.
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.12, 1.2), cloth);
+  awning.position.set(0, H - 0.1, 0.2);
+  awning.rotation.x = -0.18;
+  g.add(awning);
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.08, 0.08), gold);
+  trim.position.set(0, H - 0.45, 0.78);
+  g.add(trim);
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, H, 8), wood);
+    post.position.set(s * (W / 2 + 0.25), H / 2, 0.75);
+    g.add(post);
+  }
+
+  // A grid of treasures on the BACK wall (a glass case behind each). 3 rows × 4.
+  const spinners = [];
+  const cols = 4, rows = 3, cell = 0.86;
+  const startX = -((cols - 1) * cell) / 2;
+  const startY = H - 0.7;
+  let n = 0;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const id = COLLECTOR_DISPLAY[n % COLLECTOR_DISPLAY.length]; n++;
+      const def = getArmor(id) || getWeapon(id);
+      if (!def) continue;
+      const px = startX + col * cell;
+      const py = startY - row * cell;
+      // a recessed dark case
+      const caseBox = new THREE.Mesh(new THREE.BoxGeometry(cell * 0.92, cell * 0.92, 0.12),
+        new THREE.MeshLambertMaterial({ color: 0x201810 }));
+      caseBox.position.set(px, py, -D + 0.12);
+      g.add(caseBox);
+      let mesh = null;
+      try { mesh = buildItemMesh(def); } catch (_) { mesh = null; }
+      if (mesh) {
+        const fitted = fitItemToSlot(mesh, cell * 0.4);
+        fitted.position.set(px, py, -D + 0.28);
+        g.add(fitted);
+        spinners.push(fitted);
+      }
+    }
+  }
+  g.userData.spinners = spinners;   // gently rotated by WorldNpcs.update()
+  return g;
+}
 
 const NPC_RADIUS = 2.6;
 const NAME_RANGE = 18;     // only show a name tag within this many meters (and with line of sight)
@@ -18,6 +102,62 @@ function mulberry(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+// Hash a string to a 32-bit seed so an NPC's look is stable across sessions.
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+const LOOK_SKIN = [0xf2c79b, 0xe0a87e, 0xc68a5a, 0x9c6b43, 0x7a4f2e, 0xffdbac];
+const LOOK_HAIR = [0x2a1a10, 0x3a2a1c, 0x4a2f1b, 0x6a4a2a, 0x222222, 0x555555, 0x992222];
+const LOOK_GRAY = [0xb0b0b0, 0xd8d8d8, 0xe8e4dc, 0x9a9a9a];
+const MALE_HATS = ['none', 'none', 'none', 'cap', 'feather', 'bandana', 'straw'];
+
+// Build a DETERMINISTIC, unique-ish appearance for an NPC from its id, so the
+// potion seller in one city never looks like the one in another. A hand-authored
+// npc.look (the special lore characters) always wins over this. Roles with fixed
+// regalia (king/wizard/priest/guard) keep their preset; we only vary the humans.
+export function lookForNpc(npc) {
+  if (npc.look) return npc.look;                 // authored look wins
+  // Robe/regalia roles already read distinct; leave them to the preset.
+  if (npc.model === 'king' || npc.model === 'wizard' || npc.model === 'priest') return undefined;
+  const rng = mulberry(hashStr(npc.id || npc.name || 'npc'));
+  const old = rng() < 0.28;                       // ~a quarter are elders (gray)
+  const female = npc.model === 'woman';
+  const look = {
+    skin: LOOK_SKIN[(rng() * LOOK_SKIN.length) | 0],
+    hair: old ? LOOK_GRAY[(rng() * LOOK_GRAY.length) | 0] : LOOK_HAIR[(rng() * LOOK_HAIR.length) | 0],
+  };
+  if (!female) {
+    const b = rng();
+    look.beard = old
+      ? (b < 0.4 ? 'long' : b < 0.7 ? 'full' : 'short')
+      : (b < 0.35 ? 'none' : b < 0.55 ? 'short' : b < 0.72 ? 'goatee' : b < 0.86 ? 'full' : 'long');
+    if (rng() < 0.18) look.bald = true;
+    else if (rng() < 0.2) look.balding = true;
+    // build variety for non-fixed male roles
+    const bd = rng();
+    if (npc.model === 'man' || npc.model === 'merchant' || npc.model === 'smith') {
+      look.build = bd < 0.14 ? 'fat' : bd < 0.24 ? 'dwarf' : bd < 0.34 ? 'slim' : 'broad';
+    }
+    look.hat = MALE_HATS[(rng() * MALE_HATS.length) | 0];
+    if (rng() < 0.08) look.eyepatch = rng() < 0.5 ? 1 : -1;
+    if (rng() < 0.14) look.glasses = true;
+    if (rng() < 0.14) look.scar = true;          // smiths/guards often scarred
+    if (rng() < 0.12) look.mole = true;
+    if (rng() < 0.14) look.freckles = true;
+    if (rng() < 0.1) look.big_nose = true;
+    if (old && rng() < 0.5) look.bushyBrows = true;
+  } else {
+    if (rng() < 0.18) look.glasses = true;
+    if (rng() < 0.16) look.freckles = true;
+    if (rng() < 0.12) look.mole = true;
+    if (rng() < 0.3) look.build = rng() < 0.5 ? 'slim' : 'broad';
+  }
+  return look;
 }
 
 // Smoothly rotate `from` toward `to`, never overshooting, taking the short way.
@@ -107,13 +247,23 @@ export class WorldNpcs {
         // Dress NPCs for their city's climate.
         color = climateTint(npc.color, city.biome);
       }
-      const model = buildNpcModel(npc.model, { color, scale: 1 });
+      const model = buildNpcModel(npc.model, { color, scale: 1, look: lookForNpc(npc) });
       // Face toward the city center (town NPCs) or a default heading (loose NPCs).
       const faceCity = !npc.worldPos && cityById[npc.city];
       const yaw = faceCity ? Math.atan2(faceCity.x - x, faceCity.z - z) : 0;
       model.group.position.set(x, y, z);
       model.group.rotation.y = yaw;
       this.scene.add(model.group);
+
+      // The rarity collector gets an ornate treasure stall behind him (display
+      // only). It faces the same way the collector does (toward the plaza).
+      let stall = null;
+      if (npc.collector) {
+        stall = buildCollectorStall();
+        stall.position.set(x, y, z);
+        stall.rotation.y = yaw;
+        this.scene.add(stall);
+      }
 
       const mark = makeMarker();
       mark.position.set(x, y + 2.2, z);
@@ -129,7 +279,7 @@ export class WorldNpcs {
 
       const rng = mulberry(((Math.round(x * 13.7) * 73856093) ^ (Math.round(z * 9.1) * 19349663)) >>> 0);
       const e = {
-        npc, model, x, z, y, mark, nameTag, yaw, rng, indoor,
+        npc, model, x, z, y, mark, nameTag, yaw, rng, indoor, stall,
         // Indoor vendors keep a tight stroll so they don't clip through the walls.
         roam: indoor ? 3.0 : HOME_RADIUS,
         homeX: x, homeZ: z, targetX: x, targetZ: z, waitT: rng() * 2, faceT: 0,
@@ -197,12 +347,20 @@ export class WorldNpcs {
   }
 
   tick(dt, playerPos = null) {
+    const tnow = performance.now() * 0.0006;
     for (const e of this.entries) {
       let moving = false;
+      // Spin the collector's display treasures so the stall reads as a showcase.
+      if (e.stall && e.stall.userData.spinners) {
+        for (const sp of e.stall.userData.spinners) sp.rotation.y = tnow;
+      }
       if (e.faceT > 0) {
         // Holding the player's gaze: stand still and turn to them.
         e.faceT -= dt;
         if (e.targetYaw != null) e.yaw = turnToward(e.yaw, e.targetYaw, dt * 8);
+      } else if (e.npc.collector) {
+        // The collector stays put behind his counter (never wanders).
+        moving = false;
       } else {
         moving = this._wander(e, dt);
       }
