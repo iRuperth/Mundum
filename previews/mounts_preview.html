@@ -2,6 +2,8 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="../freshreg.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mounts Preview — Mundum</title>
 <script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
@@ -105,7 +107,15 @@ function build(id) {
     ? `<span class="tag-shop">Tienda · ${def.cost} oro</span>`
     : `<span class="tag-quest">Gesta · nivel ${def.levelReq}</span>`;
   nameEl.textContent = def.name.es;
-  subEl.innerHTML = `+30% velocidad · +30% salto &nbsp;|&nbsp; ${src}`;
+  // Show THIS mount's own bonuses (each differs), not a fixed +30/+30.
+  const b = def.bonus || {};
+  const bits = [];
+  if (b.speed) bits.push(`+${Math.round(b.speed * 100)}% velocidad`);
+  if (b.jump) bits.push(`+${Math.round(b.jump * 100)}% salto`);
+  if (b.shielding) bits.push(`+${b.shielding} escudo`);
+  if (b.hpRegen) bits.push(`+${b.hpRegen.amount} vida/${b.hpRegen.every}s`);
+  if (b.manaRegen) bits.push(`+${b.manaRegen.amount} maná/${b.manaRegen.every}s`);
+  subEl.innerHTML = `${bits.join(' · ')} &nbsp;|&nbsp; ${src}`;
   markActive();
 }
 
