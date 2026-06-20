@@ -3,12 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-<script src="./freshreg.js"></script>
+<script src="../freshreg.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mundum — Galería 3D</title>
-<!-- Lives at the REPO ROOT (not /previews) so it loads as http://localhost:8000/galeria.html
-     and its src/ + vendor/ imports resolve from the root with no ../ gymnastics. -->
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<!-- Lives under previews with the other previews, so its src and vendor imports climb one level up to the repo root. -->
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
 <style>
   :root { --bg:#161b21; --panel:#20262d; --panel2:#272e37; --line:#3a434d; --ink:#e7ecf2; --dim:#9fb0c2; --accent:#3b6ea5; --accent2:#5a90c8; }
   * { box-sizing: border-box; }
@@ -66,11 +65,11 @@
 
 <script type="module">
 import * as THREE from 'three';
-import './src/creatureDesigns.js';        // registers authored designs
-import './src/creatureDesignsExtra.js';   // registers vermin + dragons
-import { buildCreatureModel, getDesignKeys } from './src/creatureModels.js';
-import { buildCharacter } from './src/character.js';
-import { CREATURES } from './src/data/creatures.js';
+import '../src/creatureDesigns.js';        // registers authored designs
+import '../src/creatureDesignsExtra.js';   // registers vermin + dragons
+import { buildCreatureModel, getDesignKeys } from '../src/creatureModels.js';
+import { buildCharacter } from '../src/character.js';
+import { CREATURES } from '../src/data/creatures.js';
 
 // ---- one shared WebGL renderer; each cell blits from it ------------------
 let shared = null;
