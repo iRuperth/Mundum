@@ -15,6 +15,17 @@ const G = {
   dome: new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
   torus: new THREE.TorusGeometry(1, 0.3, 6, 12),
 };
+// Base-anchored cone: a unit cone whose BASE sits at the local origin and whose
+// tip points to +Y (height 1). Used for horns/claws/teeth/spikes so a part can be
+// placed with its base ON the surface and grown outward — then pushed a touch
+// INTO the surface so the base is embedded and the part doesn't float. (The plain
+// G.cone is centre-anchored, which is why parts placed at the surface left their
+// base hovering half a length away.)
+G.spike = new THREE.ConeGeometry(1, 1, 10);
+G.spike.translate(0, 0.5, 0);
+// A small rounded collar to seat at the base of a spike where it meets the body,
+// so even an imperfect join reads as "growing out of" the surface, not stuck on.
+G.collar = new THREE.SphereGeometry(1, 8, 6);
 
 const EYE_W = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const EYE_B = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
@@ -219,14 +230,33 @@ function giveWeapon(parts, kind, opts = {}) {
   if (!make || !parts.arms || !parts.arms.length) return null;
   const hand = parts.arms[parts.arms.length - 1]; // right arm pivot
   const w = make(opts);
-  const handY = opts.handY != null ? opts.handY : (parts.handY != null ? parts.handY : -0.22 * (opts.armLen || 1));
-  const handR = opts.handR != null ? opts.handR : (parts.handR || 0.06);
+  // Find the REAL fist: measure the arm pivot's own geometry (its arm capsule)
+  // and grab at its lowest point, so the weapon lands in the hand no matter the
+  // creature's size. Falls back to the builder-declared handY/handR if the pivot
+  // has no measurable children yet. This kills weapons floating up by the shoulder
+  // (the old fixed default) or out beside big creatures.
+  let handY = opts.handY != null ? opts.handY : (parts.handY != null ? parts.handY : -0.22 * (opts.armLen || 1));
+  let handR = opts.handR != null ? opts.handR : (parts.handR || 0.06);
+  // Measure the arm capsule (the hand pivot's child mesh) in the pivot's OWN local
+  // frame, and grab at its lowest point — that's the fist. Pure local geometry so
+  // the arm's animation rotation doesn't skew it. Kills weapons floating up by the
+  // shoulder / out beside big creatures.
+  try {
+    const armMesh = hand.children.find((c) => c.isMesh);
+    if (armMesh && armMesh.geometry) {
+      armMesh.geometry.computeBoundingBox();
+      const gb = armMesh.geometry.boundingBox;       // unit-capsule bounds
+      const lowLocal = armMesh.position.y + gb.min.y * armMesh.scale.y; // fist y in pivot space
+      const halfW = (gb.max.x - gb.min.x) * 0.5 * armMesh.scale.x;
+      if (isFinite(lowLocal)) { handY = lowLocal + 0.02; handR = Math.max(0.04, halfW * 0.9); }
+    }
+  } catch (_) { /* keep declared values */ }
 
   const grip = new THREE.Group();
   // Sit in the fist, then push slightly out (+X) and forward (+Z) so the handle
   // doesn't intersect the arm/torso. A bow is held across the body, so it sits
   // a touch more forward and isn't rotated up.
-  grip.position.set(handR * 1.1, handY, handR * 1.8);
+  grip.position.set(handR * 0.6, handY, handR * 1.2);
   if (kind === 'bow') {
     grip.rotation.set(0, 0, 0);         // bow stays upright, faced forward
     grip.position.z += handR * 1.5;
@@ -237,6 +267,12 @@ function giveWeapon(parts, kind, opts = {}) {
     grip.rotation.x = opts.rest != null ? opts.rest : 0.7;
   }
   grip.scale.setScalar(opts.scale || 1);
+  // A fist around the handle so the weapon reads as HELD, not floating beside the
+  // hand — sits at the grip origin (where the shaft passes through), tinted to the
+  // creature's skin if known else a neutral grey.
+  const fist = mesh(G.sphere, parts.handMat || lambert(0x7a6a58));
+  fist.scale.setScalar(handR * 1.15);
+  grip.add(fist);
   // Grip the weapon partway up its shaft so it hangs in the fist instead of
   // sprouting entirely above it. Default grabs near the lower third (butt below
   // the hand, head above); a bow is held at its centre and isn't shifted.
@@ -292,7 +328,10 @@ function shade(hex, f) {
 // ---------------------------------------------------------------------------
 
 // Flattened blotches stuck to a body sphere/dome, tinted darker than the tint.
-function addSpots(target, r, tint, count = 6, factor = 0.7) {
+// `cy` lifts the whole ring to the body's centre height — pass it when adding
+// spots to a creature ROOT (origin at the feet) so they hug the torso instead of
+// scattering on the floor around it (which read as "dirt").
+function addSpots(target, r, tint, count = 6, factor = 0.7, cy = 0) {
   const m = lambert(shade(tint, factor));
   for (let i = 0; i < count; i++) {
     const a = (i * 2.39996);                 // golden-angle spread, deterministic
@@ -300,16 +339,18 @@ function addSpots(target, r, tint, count = 6, factor = 0.7) {
     const spot = mesh(G.lowSphere, m);
     const sr = r * (0.18 + (i % 3) * 0.05);
     spot.scale.set(sr, sr * 0.5, sr);
-    spot.position.set(Math.cos(a) * r * 0.85, y * r, Math.sin(a) * r * 0.85 + r * 0.3);
+    spot.position.set(Math.cos(a) * r * 0.85, cy + y * r, Math.sin(a) * r * 0.85 + r * 0.3);
     target.add(spot);
   }
 }
 
 // Short fur tufts ringing a body part (cones flared outward) — shaggy look.
-function addFur(target, r, tint, rings = 2, perRing = 8, factor = 0.85) {
+// `cy` lifts the ring to body height; pass it when ringing a creature ROOT so the
+// tufts circle the chest instead of lying on the floor as scattered cones.
+function addFur(target, r, tint, rings = 2, perRing = 8, factor = 0.85, cy = 0) {
   const m = lambert(shade(tint, factor));
   for (let ring = 0; ring < rings; ring++) {
-    const y = r * (0.1 - ring * 0.35);
+    const y = cy + r * (0.1 - ring * 0.35);
     for (let i = 0; i < perRing; i++) {
       const a = (i / perRing) * Math.PI * 2 + ring * 0.4;
       const tuft = mesh(G.cone, m);
@@ -335,15 +376,40 @@ function addMane(target, hs, color, count = 5) {
   }
 }
 
-// Claws/nails: little white cones at the end of a limb pivot or paw.
+// Seat a base-anchored spike (horn/claw/tooth/spine) so it grows OUT of a surface
+// instead of floating beside it. The spike's base is placed at (x,y,z), pushed a
+// little back along its own axis so the base embeds in the body, then a small
+// collar is dropped at the contact point to hide the seam. `rx/ry/rz` aim the
+// spike; +Y is "straight out". Returns the spike mesh.
+//   target: group/mesh to add to   rad,len: thickness & length   mat: material
+function addSpike(target, x, y, z, rad, len, mat, rx = 0, ry = 0, rz = 0, collar = true) {
+  const sp = mesh(G.spike, mat);
+  sp.scale.set(rad, len, rad);
+  sp.rotation.set(rx, ry, rz);
+  sp.position.set(x, y, z);
+  // Pull the spike back along its own (rotated) axis by ~a quarter length so the
+  // base sinks into the surface rather than sitting on top of it.
+  const sink = len * 0.28;
+  const dir = new THREE.Vector3(0, 1, 0).applyEuler(sp.rotation);
+  sp.position.addScaledVector(dir, -sink);
+  target.add(sp);
+  if (collar) {
+    const c = mesh(G.collar, mat);
+    c.scale.setScalar(rad * 1.25);
+    c.position.set(x, y, z);
+    target.add(c);
+  }
+  return sp;
+}
+
+// Claws/nails: little white cones at the end of a limb pivot or paw. Each claw is
+// base-anchored and sunk into the paw so it reads as a nail growing from the toe,
+// not a cone floating below the foot.
 function addClaws(target, y, z, spread, size, count = 3, mat) {
   const m = mat || lambert(0xf0ece0);
   for (let i = 0; i < count; i++) {
-    const claw = mesh(G.cone, m);
-    claw.scale.set(size * 0.4, size, size * 0.4);
-    claw.position.set((i - (count - 1) / 2) * spread, y, z);
-    claw.rotation.x = Math.PI * 0.5 + 0.3;
-    target.add(claw);
+    addSpike(target, (i - (count - 1) / 2) * spread, y, z, size * 0.4, size,
+      m, Math.PI * 0.5 + 0.3, 0, 0, false);
   }
 }
 
@@ -410,23 +476,14 @@ function humanoid(root, body, o) {
   addEyes(head, 0.04, hs * 0.95, hs * 0.45, hs * 0.32);
 
   if (o.tusks) {
-    for (const s of [-1, 1]) {
-      const t = mesh(G.cone, lambert(WHITE));
-      t.scale.set(0.018, 0.06, 0.018);
-      t.position.set(s * hs * 0.4, -hs * 0.55, hs * 0.7);
-      t.rotation.x = Math.PI;
-      head.add(t);
-    }
+    const tm = lambert(WHITE);
+    for (const s of [-1, 1])
+      addSpike(head, s * hs * 0.4, -hs * 0.5, hs * 0.62, 0.018, 0.06, tm, Math.PI, 0, 0);
   }
   if (o.horns) {
     const hm = lambert(o.hornColor || shade(o.tint, 0.5));
-    for (const s of [-1, 1]) {
-      const horn = mesh(G.cone, hm);
-      horn.scale.set(0.03, 0.12, 0.03);
-      horn.position.set(s * hs * 0.5, hs * 0.9, -hs * 0.1);
-      horn.rotation.z = -s * 0.3;
-      head.add(horn);
-    }
+    for (const s of [-1, 1])
+      addSpike(head, s * hs * 0.5, hs * 0.82, -hs * 0.1, 0.03, 0.12, hm, 0, 0, -s * 0.3);
   }
   if (o.hood) {
     const hood = mesh(G.dome, lambert(o.hoodColor || shade(o.tint, 0.7)));
@@ -441,13 +498,8 @@ function humanoid(root, body, o) {
     head.add(cap);
   }
   if (o.ears) {
-    for (const s of [-1, 1]) {
-      const ear = mesh(G.cone, skinMat);
-      ear.scale.set(0.02, 0.07, 0.02);
-      ear.position.set(s * hs * 0.85, hs * 0.5, 0);
-      ear.rotation.z = -s * 0.6;
-      head.add(ear);
-    }
+    for (const s of [-1, 1])
+      addSpike(head, s * hs * 0.78, hs * 0.45, 0, 0.02, 0.07, skinMat, 0, 0, -s * 0.6, false);
   }
   if (o.mane) addMane(head, hs, o.maneColor || shade(o.tint, 0.6), o.maneCount || 5);
   root.add(head);
@@ -462,9 +514,11 @@ function humanoid(root, body, o) {
   if (o.shoulders) {
     const sm = lambert(o.armorColor || shade(o.tint, 0.55));
     for (const s of [-1, 1]) {
+      // Cap the shoulder JOINT (where the arm pivot meets the torso) and overlap
+      // both, so the pad sits ON the shoulder instead of floating out beside it.
       const pad = mesh(G.dome, sm);
-      pad.scale.set(torsoR * 0.55, torsoR * 0.45, torsoR * 0.55);
-      pad.position.set(s * (torsoR + 0.03), torsoY + torsoH * 0.42, 0);
+      pad.scale.set(torsoR * 0.62, torsoR * 0.5, torsoR * 0.62);
+      pad.position.set(s * (torsoR + 0.02), torsoY + torsoH * 0.35, 0);
       root.add(pad);
     }
   }
@@ -615,30 +669,18 @@ function quadruped(root, body, o) {
   }
   addEyes(head, r * 0.2, r * 0.6, r * 0.35, r * 0.18);
   if (o.ears) {
-    for (const s of [-1, 1]) {
-      const ear = mesh(G.cone, body);
-      ear.scale.set(0.03, 0.08, 0.03);
-      ear.position.set(s * r * 0.4, r * 0.7, 0);
-      head.add(ear);
-    }
+    for (const s of [-1, 1])
+      addSpike(head, s * r * 0.38, r * 0.62, 0, 0.03, 0.08, body, 0, 0, -s * 0.25, false);
   }
   if (o.antlers) {
-    for (const s of [-1, 1]) {
-      const a = mesh(G.cone, lambert(0x8a6a3a));
-      a.scale.set(0.02, 0.18, 0.02);
-      a.position.set(s * r * 0.4, r * 0.9, -r * 0.1);
-      a.rotation.z = -s * 0.4;
-      head.add(a);
-    }
+    const am = lambert(0x8a6a3a);
+    for (const s of [-1, 1])
+      addSpike(head, s * r * 0.38, r * 0.8, -r * 0.1, 0.02, 0.18, am, 0, 0, -s * 0.4);
   }
   if (o.tusks) {
-    for (const s of [-1, 1]) {
-      const t = mesh(G.cone, lambert(WHITE));
-      t.scale.set(0.015, 0.05, 0.015);
-      t.position.set(s * r * 0.3, -r * 0.1, r * 0.5);
-      t.rotation.x = -0.4;
-      head.add(t);
-    }
+    const tm = lambert(WHITE);
+    for (const s of [-1, 1])
+      addSpike(head, s * r * 0.3, -r * 0.05, r * 0.45, 0.015, 0.05, tm, -0.5, 0, 0, false);
   }
   root.add(head);
   parts.head = head;
@@ -710,31 +752,77 @@ function bug(root, body, o) {
   const legY = r * 0.5;
   const parts = { type: 'bug', legs: [] };
 
+  // Spider proportions (real tarantula): a BIG round opisthosoma (the "butt")
+  // set well to the rear, a much SMALLER cephalothorax up front, and a narrow
+  // pedicel waist visibly pinching the two apart — so it never reads as one fat
+  // tick. Other bugs (beetle/crab/scorpion) keep the compact two-segment body.
+  const spider = !!o.spider;
+  const abScale = spider ? 1.32 : 1;
+  const abZ = spider ? -r * 0.62 : -r * 0.3;
+  const headScale = spider ? 0.58 : 0.7;
+  const headZ = spider ? r * 0.42 : r * 0.6;
+
   const abdomen = mesh(G.sphere, body);
-  abdomen.scale.set(r, r * (o.flat || 0.75), r * 1.1);
-  abdomen.position.set(0, legY + r * 0.3, -r * 0.3);
+  abdomen.scale.set(r * abScale, r * (o.flat || 0.75) * abScale, r * 1.1 * abScale);
+  abdomen.position.set(0, legY + r * 0.3, abZ);
   root.add(abdomen);
 
   const headSeg = mesh(G.sphere, body);
-  headSeg.scale.set(r * 0.7, r * 0.55, r * 0.7);
-  headSeg.position.set(0, legY + r * 0.3, r * 0.6);
+  headSeg.scale.set(r * headScale, r * (spider ? 0.5 : 0.55), r * headScale);
+  headSeg.position.set(0, legY + r * (spider ? 0.24 : 0.3), headZ);
   root.add(headSeg);
-  addEyes(headSeg, r * 0.4, r * 0.5, r * 0.3, r * 0.18);
+  addEyes(headSeg, r * 0.4, r * 0.5, r * (spider ? 0.34 : 0.3), r * (spider ? 0.14 : 0.18));
 
-  // legs spread along the sides
+  // Pedicel: the slim waist linking the big abdomen to the small head segment,
+  // so the two body parts are clearly distinct (a tarantula's pinch), not fused.
+  if (spider) {
+    const waist = mesh(G.sphere, body);
+    waist.scale.set(r * 0.26, r * 0.26, r * 0.34);
+    waist.position.set(0, legY + r * 0.26, -r * 0.04);
+    root.add(waist);
+  }
+  parts.spider = spider;
+  parts.r = r;
+
+  // legs spread along the sides. Spider legs are LONG and BENT (a femur angling up
+  // and out, then a tibia dropping to the ground) so they arch like a tarantula's;
+  // other bugs keep the short straight legs.
   const perSide = legCount / 2;
+  const legM = o.legMat || body;
   for (let i = 0; i < perSide; i++) {
-    const z = (i / Math.max(1, perSide - 1) - 0.5) * r * 1.6;
+    const spread = spider ? r * 2.0 : r * 1.6;
+    const z = (i / Math.max(1, perSide - 1) - 0.5) * spread;
     for (const s of [-1, 1]) {
       const pivot = new THREE.Group();
-      pivot.position.set(s * r * 0.6, legY, z);
-      pivot.rotation.z = s * 0.7;
-      const leg = mesh(G.capsule, o.legMat || body);
-      leg.scale.set(0.018, r * 0.5, 0.018);
-      leg.position.y = -r * 0.4;
-      pivot.add(leg);
+      pivot.position.set(s * r * (spider ? 0.5 : 0.6), legY, z);
+      if (spider) {
+        // splay angle fans the legs front-to-back a touch as well as out
+        pivot.rotation.z = s * 1.05;
+        pivot.rotation.y = (i / Math.max(1, perSide - 1) - 0.5) * 0.7;
+        // femur: angles up-and-out from the body to the "knee"
+        const femur = mesh(G.capsule, legM);
+        femur.scale.set(0.02, r * 0.5, 0.02);
+        femur.position.y = -r * 0.42;
+        pivot.add(femur);
+        // tibia: a knee group that bends sharply DOWN to the ground
+        const knee = new THREE.Group();
+        knee.position.y = -r * 0.86;
+        knee.rotation.z = -s * 1.5;
+        const tibia = mesh(G.capsule, legM);
+        tibia.scale.set(0.018, r * 0.55, 0.018);
+        tibia.position.y = -r * 0.45;
+        knee.add(tibia);
+        pivot.add(knee);
+        parts.legs.push({ pivot, phase: i, knee });
+      } else {
+        pivot.rotation.z = s * 0.7;
+        const leg = mesh(G.capsule, legM);
+        leg.scale.set(0.018, r * 0.5, 0.018);
+        leg.position.y = -r * 0.4;
+        pivot.add(leg);
+        parts.legs.push({ pivot, phase: i });
+      }
       root.add(pivot);
-      parts.legs.push({ pivot, phase: i });
     }
   }
 
@@ -1089,6 +1177,13 @@ function bulky(root, body, o) {
     root.add(pivot);
     parts.legs.push(pivot);
   }
+  // Hand anchor for held weapons: the fist sits at the bottom of the arm capsule
+  // (~-0.40h below the shoulder pivot), the arm radius is 0.09. Without these,
+  // giveWeapon used a default that placed the grip up near the shoulder, so big
+  // creatures' weapons floated out beside the body instead of in the hand.
+  parts.armLen = h;
+  parts.handY = -0.40 * h;
+  parts.handR = 0.09;
   parts.baseY = torsoY;
   return parts;
 }
@@ -1329,7 +1424,7 @@ const BASE_BUILDERS = {
 // The helper surface handed to each design's decorate()/options so authored
 // code can build with the same primitives the built-ins use.
 const MODEL_API = {
-  THREE, G, mesh, lambert, shade, addEyes, addSpots, addFur, addMane, addClaws,
+  THREE, G, mesh, lambert, shade, addEyes, addSpots, addFur, addMane, addClaws, addSpike,
   giveWeapon, collectMats, EYE_W, EYE_B, EYE_BOSS, EYE_BOSS_PUPIL, WHITE, DARK, WOOD, STEEL, IRON, GOLD, STRING,
   // True while building a boss/supreme creature, so a design's custom eyes/relief
   // can read it (e.g. use EYE_BOSS for hand-built eyes). Set in buildCreatureModel.
@@ -1425,10 +1520,14 @@ export function buildCreatureModel(family, opts = {}) {
 
   group.scale.setScalar(scale);
 
-  // Foot offset: many models build their legs reaching BELOW the group origin
-  // (negative Y), so placing the origin at terrain height sinks the feet through
-  // the ground (worse the bigger the scale). We need how far to LIFT the group so
-  // the lowest point rests at y=0 (only sinkers, min.y<0).
+  // Foot offset: snap EVERY model so its lowest point rests exactly on the ground
+  // (y=0) when its origin is placed at terrain height. Models that build legs
+  // reaching below the origin (min.y<0) get LIFTED so they don't sink; models
+  // authored with their body sitting ABOVE the origin (min.y>0 — serpents,
+  // some quadrupeds, the dragon barrel) get DROPPED so they don't float above the
+  // dirt with a visible gap. Flight is NOT handled here: a flying def hovers via
+  // combat's own _flyY added on top of this grounded model, so grounding the model
+  // is always correct (a 4-unit-high dragon = grounded model + _flyY).
   //
   // The geometry is deterministic per design key, and the lowest point scales
   // linearly with `scale` (tint never changes shape), so we measure the UNSCALED
@@ -1439,7 +1538,7 @@ export function buildCreatureModel(family, opts = {}) {
     const prevScale = group.scale.x;
     group.scale.setScalar(1);                       // measure at unit scale
     const _bb = new THREE.Box3().setFromObject(group);
-    unscaledLift = (isFinite(_bb.min.y) && _bb.min.y < 0) ? -_bb.min.y : 0;
+    unscaledLift = isFinite(_bb.min.y) ? -_bb.min.y : 0;   // snap lowest point to y=0
     group.scale.setScalar(prevScale);               // restore
     FOOT_LIFT_CACHE.set(designKey, unscaledLift);
   }
