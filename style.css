@@ -1756,12 +1756,20 @@ body.touch #crosshair { display: none !important; }
 /* Backpack pick grid (choose an item to hang on a wall). */
 .house-pickgrid { display: grid; grid-template-columns: repeat(auto-fill, 44px); gap: 6px; margin-bottom: 10px; max-height: 220px; overflow-y: auto; }
 .house-pickcell {
+  position: relative;
   width: 44px; height: 44px; padding: 0; cursor: pointer; border-radius: 8px;
   background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
   display: flex; align-items: center; justify-content: center;
 }
 .house-pickcell:hover { background: rgba(255,255,255,.14); }
 .house-pickcell .ico, .house-pickcell svg { width: 34px; height: 34px; }
+/* A worn (currently-equipped) piece: a gold rim + a little blade badge. */
+.house-pickcell.worn { border-color: rgba(240,200,90,.7); box-shadow: inset 0 0 0 1px rgba(240,200,90,.35); }
+.house-pickcell .count, .house-pickcell .worn-badge {
+  position: absolute; right: 2px; bottom: 1px; font-size: 10px; line-height: 1;
+  padding: 1px 3px; border-radius: 5px; background: rgba(0,0,0,.6); color: #fff; pointer-events: none;
+}
+.house-pickcell .worn-badge { left: 2px; right: auto; background: rgba(240,200,90,.85); color: #1a1407; }
 .house-empty { opacity: .6; font-size: 12px; padding: 8px; }
 
 /* Facade display: two front-wall slots in the house-manage panel. */
