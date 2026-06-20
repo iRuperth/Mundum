@@ -1066,6 +1066,113 @@ export const NPCS = [
       en: ['Would you settle here? You will respawn by the oasis.', 'Here water is shared and the stranger is a guest.'],
     },
   },
+
+  // ===================================================================
+  // LORE CHARACTERS — hand-authored, each unique in look AND story. Their
+  // `look` overrides the procedural generator; their `lore` ties them to the
+  // world (rumors, family feuds, the haunting outside Greenhollow).
+  // ===================================================================
+
+  // The madman of Greenhollow: went mad after seeing ghosts outside the walls.
+  // Nobody believes him. (Wild white beard, bushy brows, a thousand-yard stare.)
+  {
+    id: 'rivertown_madman', name: 'Loco Crispín', city: 'rivertown', role: 'villager',
+    model: 'man', color: 0x6a6258, offset: { x: -8, z: 8 },
+    look: { build: 'slim', beard: 'wild', hair: 0xe8e4dc, bushyBrows: true, scar: true, skin: 0xc68a5a },
+    greeting: { es: '¡Los vi! ¡Flotaban tras los árboles, te lo juro!', en: 'I saw them! Floating past the trees, I swear!' },
+    lines: {
+      es: [
+        'Salí a cazar conejos y los espectros me miraron con ojos vacíos.',
+        'Nadie me cree. Dicen que el vino me secó la cabeza. ¡Pero yo SÉ lo que vi!',
+        'No salgas de noche. El bosque ya no es nuestro… algo despertó ahí afuera.',
+      ],
+      en: [
+        'I went out for rabbits and the wraiths stared at me with hollow eyes.',
+        'No one believes me. They say wine rotted my mind. But I KNOW what I saw!',
+        'Don\'t go out at night. The forest isn\'t ours anymore… something woke out there.',
+      ],
+    },
+  },
+
+  // The half-orc of Greenhollow: human skin, but orc tusks and brawn. Stepson of
+  // a human woman and an orc — caught between two peoples, accepted by neither.
+  {
+    id: 'rivertown_halforc', name: 'Borgan el Mestizo', city: 'rivertown', role: 'villager',
+    model: 'guard', color: 0x5a6a4a, offset: { x: 9, z: 7 },
+    look: { tusks: true, build: 'broad', skin: 0xb8a06a, hair: 0x2a1a10, beard: 'short', scar: true, hat: 'none' },
+    greeting: { es: 'Sí, tengo colmillos. No, no voy a comerte. Siéntate.', en: 'Yes, I have tusks. No, I won\'t eat you. Sit.' },
+    lines: {
+      es: [
+        'Mi madre era humana de esta ciudad; mi padrastro, un orco de las colinas.',
+        'Los humanos me temen y los orcos me llaman débil. No pertenezco a ninguno.',
+        'Si vas a las tierras orcas, di que eres amigo de Borgan. Tal vez te perdonen la vida.',
+      ],
+      en: [
+        'My mother was a human of this town; my stepfather, an orc of the hills.',
+        'Humans fear me and orcs call me weak. I belong to neither.',
+        'If you go to the orc lands, say you\'re a friend of Borgan. They might spare you.',
+      ],
+    },
+  },
+
+  // Feuding cousins: Dorbel in Stonehaven and Marvel in Sandport. Same grandfather,
+  // a disputed inheritance (a mine), and they haven't spoken in twenty years.
+  {
+    id: 'stonehaven_cousin', name: 'Dorbel Picacueva', city: 'stonehaven', role: 'villager',
+    model: 'smith', color: 0x6a5a4a, offset: { x: -7, z: -9 },
+    look: { build: 'dwarf', beard: 'full', hair: 0x6a4a2a, bushyBrows: true, hat: 'cap' },
+    greeting: { es: 'Bah. ¿Vienes de parte de mi primo? Entonces vete.', en: 'Bah. Did my cousin send you? Then leave.' },
+    lines: {
+      es: [
+        'Mi primo Marvel, en Sandport, me robó la mina de nuestro abuelo. ¡Ladrón!',
+        'Veinte años sin hablarnos. Y que siga así hasta que devuelva lo que es mío.',
+        'Si lo ves en el desierto, dile que Dorbel no ha olvidado. Ni perdonado.',
+      ],
+      en: [
+        'My cousin Marvel, in Sandport, stole our grandfather\'s mine. Thief!',
+        'Twenty years without a word. Let it stay that way till he returns what\'s mine.',
+        'If you see him in the desert, tell him Dorbel has not forgotten. Nor forgiven.',
+      ],
+    },
+  },
+  {
+    id: 'sandport_cousin', name: 'Marvel Picacueva', city: 'sandport', role: 'villager',
+    model: 'merchant', color: 0xc8a44a, offset: { x: 8, z: -8 },
+    look: { build: 'fat', beard: 'goatee', hair: 0x4a2f1b, hat: 'feather', monocle: true },
+    greeting: { es: 'Ah, un viajero del norte. ¿No te habrá enviado el amargado de Dorbel?', en: 'Ah, a northern traveler. Did sour old Dorbel send you?' },
+    lines: {
+      es: [
+        'Mi primo Dorbel dice que le robé una mina. ¡La gané en una apuesta, justa y legal!',
+        'Él se quedó en las montañas heladas, rumiando. Yo prosperé bajo el sol. ¿Quién ganó?',
+        'Dile que la puerta de mi casa está abierta… si trae una disculpa.',
+      ],
+      en: [
+        'Cousin Dorbel says I stole a mine. I WON it in a wager, fair and square!',
+        'He stayed in the frozen mountains, sulking. I prospered under the sun. Who won?',
+        'Tell him my door is open… if he brings an apology.',
+      ],
+    },
+  },
+
+  // A retired one-eyed sailor in Westharbor with tall tales of sea monsters.
+  {
+    id: 'westharbor_sailor', name: 'Viejo Marlo', city: 'westharbor', role: 'villager',
+    model: 'man', color: 0x3a6a8a, offset: { x: -6, z: 9 },
+    look: { eyepatch: 1, beard: 'long', hair: 0xd8d8d8, bandana: true, hat: 'bandana', skin: 0x9c6b43 },
+    greeting: { es: 'Perdí el ojo con un kraken. ¿O fue una resaca? Ya no recuerdo.', en: 'Lost the eye to a kraken. Or a hangover? I forget.' },
+    lines: {
+      es: [
+        'Cuarenta años en el mar y aún sueño con la cosa de mil brazos.',
+        'Los jóvenes ríen, pero el océano se traga barcos enteros sin pedir permiso.',
+        'Si zarpas, lleva sal bendita. A las criaturas del fondo no les gusta.',
+      ],
+      en: [
+        'Forty years at sea and I still dream of the thing with a thousand arms.',
+        'The young laugh, but the ocean swallows whole ships without asking.',
+        'If you sail, bring blessed salt. The deep things don\'t care for it.',
+      ],
+    },
+  },
 ];
 
 // A "remains buyer" in EVERY city: buys creature trophies (rat tail, demon horn,
@@ -1092,6 +1199,52 @@ for (let i = 0; i < REMAINS_CITIES.length; i++) {
     lines: {
       es: ['Todo resto tiene su precio, por humilde que sea.', 'Los cazadores listos venden hasta las colas de rata.'],
       en: ['Every scrap has a price, however humble.', 'Smart hunters sell even rat tails.'],
+    },
+  });
+}
+
+// The RARITY COLLECTOR: an exclusive buyer in every city who pays REAL money for
+// rare gear (epic/legendary weapons, armor, jewelry) that no normal shop will
+// touch. Pays by level (levelReq × 100 → shown as silver/gold). He never SELLS —
+// his stall walls are lined with jewels, plate and trophies as decoration only.
+// `rarity: true` flags his shop so vendorBuysItem/sellPrice use the collector path.
+const COLLECTOR_CITIES = ['rivertown', 'oakvale', 'stonehaven', 'frostpeak', 'sandport', 'westharbor', 'dragonreach'];
+const COLLECTOR_INFO = {
+  rivertown:  { name: 'Lord Velasco', look: { build: 'fat', beard: 'goatee', hat: 'feather', monocle: true, hair: 0x2a1a10 } },
+  oakvale:    { name: 'Dame Ysolde', model: 'woman', look: { glasses: true, hair: 0xd8d8d8 } },
+  stonehaven: { name: 'Baron Krell', look: { build: 'broad', beard: 'full', hat: 'feather', hair: 0x555555, scar: true } },
+  frostpeak:  { name: 'Collector Voss', look: { build: 'slim', beard: 'long', hair: 0xe8e4dc, monocle: true } },
+  sandport:   { name: 'Emir Hadi', model: 'king', look: undefined },
+  westharbor: { name: 'Madame Corla', model: 'woman', look: { hair: 0x992222 } },
+  dragonreach:{ name: 'Magnate Orin', look: { build: 'fat', beard: 'short', hat: 'feather', monocle: true } },
+};
+for (let i = 0; i < COLLECTOR_CITIES.length; i++) {
+  const city = COLLECTOR_CITIES[i];
+  const info = COLLECTOR_INFO[city] || { name: 'Collector' };
+  NPCS.push({
+    id: `${city}_collector`, name: info.name, city, role: 'vendor',
+    model: info.model || 'merchant', color: 0x6a2a5a,
+    look: info.look,
+    // His own ornate stall, off to the side (not a district building).
+    offset: { x: -16 - (i % 2) * 3, z: 13 + (i % 3) * 3 },
+    collector: true,
+    // rarity:true tells the shop helpers to buy ANY rare gear and price by level.
+    shop: { rarity: true, buyMult: 1, sellMult: 0, sells: {}, buys: { rarity: true } },
+    greeting: {
+      es: 'Colecciono lo extraordinario. Si tienes algo raro, pagaré en plata… y oro.',
+      en: 'I collect the extraordinary. If you have something rare, I pay in silver… and gold.',
+    },
+    lines: {
+      es: [
+        'Las tiendas no tocan el equipo legendario. Yo sí — y pago por su nivel.',
+        'Un peto de nivel sesenta vale sesenta piezas de plata. Anillos y collares, mil de bronce.',
+        'Lo que ves en mis paredes no está a la venta. Son mis tesoros, mira pero no toques.',
+      ],
+      en: [
+        'Shops won\'t touch legendary gear. I will — and I pay for its level.',
+        'A level-sixty cuirass is worth sixty silver. Rings and amulets, a thousand bronze.',
+        'What hangs on my walls is not for sale. They are my treasures — look, don\'t touch.',
+      ],
     },
   });
 }
