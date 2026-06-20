@@ -2,6 +2,8 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="../freshreg.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Character Preview — Mundum</title>
 <script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
@@ -114,6 +116,27 @@ picker('Piernas', 'legs', ARMORS.filter(a => a.slot === 'legs'), instanceFromArm
 picker('Botas', 'boots', ARMORS.filter(a => a.slot === 'boots'), instanceFromArmor, (a) => a.name);
 picker('Amuleto', 'amulet', ARMORS.filter(a => a.slot === 'amulet'), instanceFromArmor, (a) => a.name);
 picker('Mochila/Bolsa', 'bag', CONTAINERS, instanceFromContainer, (c) => c.name);
+
+// Deep-link: #armor=demon_armor  (optionally &legs=…&helmet=…&angle=2.6&sex=female)
+// so a specific loadout can be opened/screenshotted directly. angle freezes spin.
+{
+  const hp = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  if ([...hp.keys()].length) {
+    if (hp.get('sex')) profile.sex = hp.get('sex');
+    rebuild();
+    for (const slot of ['armor', 'legs', 'boots', 'helmet', 'amulet']) {
+      const id = hp.get(slot); if (!id) continue;
+      const a = ARMORS.find(x => x.id === id); if (a) equip[slot] = instanceFromArmor(a);
+    }
+    for (const slot of ['weapon', 'shield']) {
+      const id = hp.get(slot); if (!id) continue;
+      const w = WEAPONS.find(x => x.id === id); if (w) equip[slot] = rollWeaponInstance(w.id, () => 0.5);
+    }
+    ev.refresh(equip, 60);
+    const ang = parseFloat(hp.get('angle'));
+    if (!isNaN(ang)) { spinning = false; root.rotation.y = ang; }
+  }
+}
 
 // A quick "full set" demo button.
 section('Demo');
