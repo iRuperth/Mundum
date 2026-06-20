@@ -90,10 +90,15 @@ export class MountSystem {
     this.scene.add(this._shadow);
 
     this.riding = true;
-    // Tell player.js to apply the +30% speed / +30% jump buff and sit the rider.
+    // Apply THIS mount's own bonus block (each mount differs). Fall back to the
+    // universal multipliers if a mount somehow lacks a bonus.
+    const b = def.bonus || {};
     this.player.mounted = true;                        // drives the seated pose
-    this.player.mountBonus = MOUNT_SPEED_MUL - 1;     // additive bonus → ×1.3
-    this.player.mountJumpMul = MOUNT_JUMP_MUL;
+    this.player.mountBonus = b.speed != null ? b.speed : (MOUNT_SPEED_MUL - 1);
+    this.player.mountJumpMul = 1 + (b.jump != null ? b.jump : (MOUNT_JUMP_MUL - 1));
+    this.player.mountShielding = b.shielding || 0;     // bear: flat shielding while ridden
+    this.player.mountHpRegen = b.hpRegen || null;      // scorpion: +N hp every M s
+    this.player.mountManaRegen = b.manaRegen || null;  // stag: +N mana every M s
     this.player.mountRiderY = seatY;                   // how high the rider sits
     return true;
   }
@@ -116,6 +121,9 @@ export class MountSystem {
     this.player.mounted = false;
     this.player.mountBonus = 0;
     this.player.mountJumpMul = 1;
+    this.player.mountShielding = 0;
+    this.player.mountHpRegen = null;
+    this.player.mountManaRegen = null;
     this.player.mountRiderY = 0;
   }
 

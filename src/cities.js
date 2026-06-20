@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WEAPONS, ARMORS, CONTAINERS, POTIONS, LIGHTS, QUIVERS } from './data/items.js';
-import { stallLayout, buildStall, STALL_RADIUS } from './market.js';
+import { buildStall, STALL_RADIUS } from './market.js';
+import { buildStatue, pickStatueLore } from './statueLore.js';
 
 // Fixed city layout. Nominal positions are deterministic; each is then snapped
 // to the nearest flat grassland so cities never sit underwater. Every city has
@@ -13,20 +14,34 @@ import { stallLayout, buildStall, STALL_RADIUS } from './market.js';
 // `id` stays stable (NPCs/quests/saves key off it); `name` is what players see.
 // `style` drives a distinct look per city (see CITY_STYLES below). Greenhollow is
 // the temperate capital with a castle; the others each have their own character.
+// `recLevel` is the RECOMMENDED player level to travel here by teleport, NOT a
+// hard gate. It's the AVERAGE level (midpoint of levelMin..levelMax) of the
+// toughest creature zone bordering each city — so it reflects the real difficulty
+// of the region you'd be dropped into, not just its gentle edge. Walking is always
+// free; the portal only WARNS when you're under it ("you're not strong enough for
+// this region yet — go anyway?"). Greenhollow is pinned to 1 (it's the safe
+// starter capital, even though the Elven Forest brushes its ring). Frostpeak is
+// highest (44) because the Dragon Mountains (lv 16-72, avg 44) border it. Tune
+// freely — advisory only.
 export const CITIES = [
-  { id: 'rivertown', name: 'Greenhollow', x: 0, z: 0, biome: 'forest', style: 'capital' },
-  { id: 'oakvale', name: 'Oakvale', x: -420, z: 280, biome: 'forest', style: 'village' },
-  { id: 'stonehaven', name: 'Stonehaven', x: -300, z: -1180, biome: 'snow', style: 'mountain' },
+  { id: 'rivertown', name: 'Greenhollow', x: 0, z: 0, biome: 'forest', style: 'capital', recLevel: 1 },
+  { id: 'oakvale', name: 'Oakvale', x: -420, z: 280, biome: 'forest', style: 'village', recLevel: 14 },
+  { id: 'stonehaven', name: 'Stonehaven', x: -300, z: -1180, biome: 'snow', style: 'mountain', recLevel: 14 },
   // Dragonreach is the desert (pharaonic) city — now out EAST where the desert is.
-  { id: 'dragonreach', name: 'Dragonreach', x: 1180, z: 260, biome: 'desert', style: 'desert' },
+  { id: 'dragonreach', name: 'Dragonreach', x: 1180, z: 260, biome: 'desert', style: 'desert', recLevel: 37 },
   // New distant cities, each in its own corner of the finite continent with a
   // distinct biome and character: a forest river-port to the west, a frozen
   // mining outpost to the far north, and a sun-baked oasis town in the far east
   // desert (south-east corner).
-  { id: 'westharbor', name: 'Westharbor', x: -1200, z: 120, biome: 'forest', style: 'harbor' },
-  { id: 'frostpeak', name: 'Frostpeak', x: 300, z: -1080, biome: 'snow', style: 'frost' },
-  { id: 'sandport', name: 'Sandport', x: 1080, z: 780, biome: 'desert', style: 'oasis' },
+  { id: 'westharbor', name: 'Westharbor', x: -1200, z: 120, biome: 'forest', style: 'harbor', recLevel: 18 },
+  { id: 'frostpeak', name: 'Frostpeak', x: 300, z: -1080, biome: 'snow', style: 'frost', recLevel: 44 },
+  { id: 'sandport', name: 'Sandport', x: 1080, z: 780, biome: 'desert', style: 'oasis', recLevel: 37 },
 ];
+
+// Recommended travel level for a city (advisory; defaults to 1 if unset).
+export function cityRecLevel(city) {
+  return (city && city.recLevel) || 1;
+}
 
 // Per-style look: wall/roof palette, roof shape, and how big the city pad is.
 // The capital is a huge Tibia-style grid city (radius covers its rectangle); the
@@ -225,9 +240,14 @@ function findLand(world, ox, oz, padR = 130, placed = []) {
 export const SHOP_LEVEL_CAP = 22;
 const buyable = (it) => it.shopTier === 'shop' && (it.levelReq || 1) <= SHOP_LEVEL_CAP;
 
-// Only the plain bags/backpacks are buyable; the fancy looted ones (fur, golden,
-// dragon, demon) are epic/legendary and stay loot-only.
+// Containers split into sale buckets:
+//   shop    — plain + coloured bags/backpacks: sold in EVERY city's bag vendor.
+//   premium — themed bling (star/pink/violet/scorpion/snowflake): each sold in
+//             ONE city only, surfaced via that vendor's `sells.only` allowlist —
+//             never in the generic stock.
+//   epic / legendary-tier — fur/golden/dragon/demon: loot-only, never sold.
 const buyableContainers = () => CONTAINERS.filter((c) => !c.shopTier || c.shopTier === 'shop');
+const premiumContainers = () => CONTAINERS.filter((c) => c.shopTier === 'premium');
 
 export function shopStock() {
   const weapons = WEAPONS.filter(buyable);
@@ -257,6 +277,12 @@ function itemKind(it) {
 // Does a shop descriptor accept this item (def or backpack instance)?
 function matchesDesc(desc, it) {
   if (!desc) return false;
+  // `also` is an extra id allowlist a vendor stocks ON TOP of its category rules
+  // — used to grant a single city its exclusive PREMIUM container(s).
+  if (desc.also && desc.also.includes(it.id)) return true;
+  // Premium containers are otherwise GATED out: a blanket kinds:['container']
+  // vendor never picks them up, so the bling stays city-exclusive and scarce.
+  if (it.shopTier === 'premium') return false;
   if (desc.all) return true;
   const kind = itemKind(it);
   if (desc.kinds && desc.kinds.includes(kind)) return true;
@@ -274,19 +300,54 @@ export function shopStockFor(shop) {
     ...ARMORS.filter(buyable),
     ...QUIVERS.filter(buyable),
     ...buyableContainers(),
+    ...premiumContainers(),   // city-exclusive; only surface where `sells.only` lists them
     ...POTIONS.filter((p) => !p.restorePct),
   ];
   return sellable.filter((d) => matchesDesc(shop.sells, d));
 }
 
+// The RARITY COLLECTOR: an exclusive buyer of rare gear that normal shops won't
+// touch (the value:0 epic/legendary tier). He does NOT sell anything. He pays by
+// the item's LEVEL — levelReq × 100 bronze — so a level-60 armor fetches 6000
+// (shown as 60 silver, since the coin pile auto-consolidates). Rings and amulets
+// are flat 1000. The price is intentionally generous so rare drops are worth real
+// money, but he only takes equippable gear (weapons/armor/jewelry), not junk.
+const COLLECTOR_GEAR_SLOTS = ['armor', 'legs', 'helmet', 'boots', 'shield'];
+export function isCollectorItem(item) {
+  if (!item) return false;
+  const slot = item.slot;
+  if (slot === 'amulet' || slot === 'ring') return true;
+  if (COLLECTOR_GEAR_SLOTS.includes(slot)) return true;
+  if (item.type && ['sword', 'axe', 'mace', 'club', 'lance', 'bow', 'wand'].includes(item.type)) return true;
+  return false;
+}
+export function collectorPrice(item) {
+  if (!item) return 0;
+  if (item.slot === 'amulet' || item.slot === 'ring') return 1000;
+  const lvl = item.levelReq || 1;
+  return Math.max(500, lvl * 100);   // lv60 → 6000, lv30 → 3000, floor 500
+}
+
 // Will this vendor buy the given backpack item from the player?
 export function vendorBuysItem(shop, item) {
+  if (shop && shop.rarity) return isCollectorItem(item);
   return !!(shop && matchesDesc(shop.buys, item));
 }
 
-// Coins the player receives when selling `item` to this vendor.
+// Standard shop buy-back rate: a vendor pays 10% of an item's value when the
+// player sells it back. (Was 40-60%.) A shop can still override with sellMult for
+// special cases, but the default — and what every weapon/armor/potion seller uses
+// — is 10%, so buying high and re-selling is a real sink, not a refund.
+export const SHOP_SELLBACK = 0.1;
+
+// Coins the player receives when selling `item` to this vendor. Regular shop
+// goods (weapons, armor, potions, food…) always buy back at 10%. The trophy/
+// materials "remains buyer" is a separate grind-income loop, so it keeps its own
+// (higher) sellMult — and the rarity collector prices by level, not by this.
 export function sellPrice(shop, item) {
-  const mult = shop && shop.sellMult != null ? shop.sellMult : 0.4;
+  const buysRemains = shop && shop.buys && shop.buys.kinds &&
+    (shop.buys.kinds.includes('trophy') || shop.buys.kinds.includes('material'));
+  const mult = buysRemains && shop.sellMult != null ? shop.sellMult : SHOP_SELLBACK;
   return Math.max(1, Math.floor((item.value || 0) * mult));
 }
 
@@ -314,22 +375,55 @@ export function nearestCity(x, z) {
 
 // The capital city (the starter town where brand-new level-1 players land).
 export const CAPITAL = CITIES.find((c) => c.style === 'capital') || CITIES[0];
-// How far PAST the capital walls counts as its protected "starter ring".
-const CAPITAL_SAFE_MARGIN = 130;
+// How far PAST a city's walls counts as its protected "safe ring".
+const CITY_SAFE_MARGIN = 150;
+// Creature level allowed right AT a city wall (the cap eases up to the zone's
+// natural difficulty by the ring's edge). The capital is the gentlest (it must
+// hold brand-new level-1 players); the other towns sit deeper in the world, so
+// their inner cap is a bit higher but still survivable for a fresh arrival who
+// teleported or walked in — no dragon one step out of the gate.
+const SAFE_CAP_AT_WALL_CAPITAL = 4;
+const SAFE_CAP_AT_WALL_OTHER = 7;
 
-// Level cap for creatures spawning in the capital's STARTER RING, or null when a
-// point is far enough out that normal zone difficulty applies. Brand-new level-1
-// players gather just outside Greenhollow, so anything that spawns within the
-// ring must be weak — no level-12 ambusher one step out of the gate. The cap
-// eases UP from 4 at the wall to ~8 at the ring's edge, so it's a gentle slope
-// out of the safe town, not a cliff.
-export function capitalSafeLevelCap(x, z) {
-  if (!CAPITAL) return null;
-  const wall = styleFor(CAPITAL).radius;
-  const d = Math.hypot(CAPITAL.x - x, CAPITAL.z - z);
-  if (d >= wall + CAPITAL_SAFE_MARGIN) return null;   // outside the ring: no cap
-  const t = Math.max(0, (d - wall) / CAPITAL_SAFE_MARGIN); // 0 at wall → 1 at edge
-  return Math.round(4 + t * 4);                        // 4 near the wall, ~8 at the edge
+// Level cap for creatures spawning in ANY city's SAFE RING, or null when the
+// point is far enough out that normal zone difficulty applies. EVERY city now
+// gets this protection (not just the capital): so a player who arrives at, say,
+// Frostpeak — whose Dragon Mountains zone (level 16-72) overlaps the wall — won't
+// be one-shot by a dragon spawning on the doorstep. The cap eases UP from a low
+// floor at the wall to the zone's own level by the ring edge, so it's a gentle
+// slope out of the safe town, not a cliff, and the strong creatures simply spawn
+// FARTHER from town (past the ring) instead of against the gate.
+export function citySafeLevelCap(x, z) {
+  let nearest = null, nd = Infinity;
+  for (const c of CITIES) {
+    const d = Math.hypot(c.x - x, c.z - z);
+    if (d < nd) { nd = d; nearest = c; }
+  }
+  if (!nearest) return null;
+  const wall = styleFor(nearest).radius;
+  if (nd >= wall + CITY_SAFE_MARGIN) return null;     // outside the ring: no cap
+  const t = Math.max(0, (nd - wall) / CITY_SAFE_MARGIN); // 0 at wall → 1 at edge
+  const isCapital = nearest.style === 'capital';
+  const floor = isCapital ? SAFE_CAP_AT_WALL_CAPITAL : SAFE_CAP_AT_WALL_OTHER;
+  // The cap climbs from `floor` at the wall to the zone's natural level at the
+  // ring edge (so the ring blends smoothly into the surrounding difficulty
+  // instead of ending in a sudden wall of dragons). We approximate the zone level
+  // at the ring edge with the wilderness curve, clamped so the ring is always at
+  // least a few levels of head-room above the wall floor.
+  const edgeLevel = Math.max(floor + 4, citySafeEdgeLevel(nearest));
+  return Math.round(floor + t * (edgeLevel - floor));
+}
+
+// Backwards-compatible alias: combat.js imported the capital-only name. Keep it
+// pointing at the generalised, all-cities ring so existing call sites still work.
+export const capitalSafeLevelCap = citySafeLevelCap;
+
+// Roughly how dangerous the open world is right at a city's safe-ring edge, used
+// as the upper end of that city's cap slope. Distance-from-origin curve (the same
+// shape wildernessLevelAt uses) so far-flung frontier towns get a higher ceiling
+// than cozy inner ones, without hard-coding a number per city.
+function citySafeEdgeLevel(city) {
+  return Math.max(6, Math.round(2 + Math.hypot(city.x, city.z) / 120));
 }
 
 // The wall outline of a city, for drawing on the map. Grid cities (the capital)
@@ -412,6 +506,109 @@ const DISTRICTS = [
   { key: 'library',  angle: Math.PI * 1.80, distF: 0.62, label: 'Great Library' },
 ];
 
+// Batch the city's hundreds of STATIC meshes into a few merged meshes — one per
+// (material × attribute-set) — to cut the draw-call count from ~300+ per city to
+// ~20. Purely a rendering optimisation: the merged result is byte-for-byte the
+// same geometry at the same world positions with the same materials, so it looks
+// identical. Collision is data-driven (world.addSolid), independent of these
+// meshes, so merging them changes nothing there.
+//
+// What we DON'T touch (left as individual objects):
+//   - anything that isn't a plain THREE.Mesh child of the group (Groups such as
+//     the temple aura, gate-guard knights, statues built as sub-groups);
+//   - meshes with their own userData (e.g. userData.templeAura);
+//   - transparent meshes (water, glow discs, lamps, portals) — merging them would
+//     break per-object draw ordering / additive blending;
+//   - MeshBasicMaterial meshes (portals, lamps, orbs) — kept so they can be
+//     animated/recoloured individually.
+// We only fold opaque MeshLambertMaterial meshes, grouped by their shared material
+// object AND by their exact attribute set (so vertex-coloured paving merges only
+// with paving, never with plain walls).
+function mergeCityStatics(group) {
+  const mesh = THREE.Mesh;
+  const fold = []; // meshes we will merge
+  for (const child of group.children) {
+    if (!child.isMesh) continue;                       // skip Groups (auras, guards…)
+    if (child.children && child.children.length) continue; // mesh with attachments — leave it
+    if (child.userData && Object.keys(child.userData).length) continue; // tagged — leave it
+    const m = child.material;
+    if (!m || Array.isArray(m)) continue;              // multi-material — skip
+    if (!m.isMeshLambertMaterial) continue;            // only fold lambert (skip Basic/glow)
+    if (m.transparent) continue;                       // skip water/glass/glow
+    if (!child.geometry || !child.geometry.attributes.position) continue;
+    fold.push(child);
+  }
+  if (fold.length < 2) return;                          // nothing worth merging
+
+  // Bucket by material object, then by the geometry's attribute signature, so
+  // every merged batch is safe to concatenate (same attributes, one material).
+  const buckets = new Map();
+  for (const child of fold) {
+    const attrs = Object.keys(child.geometry.attributes).sort().join(',');
+    const matKey = child.material.uuid + '|' + attrs;
+    let b = buckets.get(matKey);
+    if (!b) { b = { material: child.material, attrs, items: [] }; buckets.set(matKey, b); }
+    b.items.push(child);
+  }
+
+  const merged = [];
+  for (const b of buckets.values()) {
+    if (b.items.length < 2) continue;                  // a lone mesh: leave it as-is
+    const baked = [];
+    for (const child of b.items) {
+      child.updateMatrixWorld(true);
+      const g = child.geometry.clone();
+      g.applyMatrix4(child.matrixWorld);               // bake world transform into the verts
+      baked.push(g);
+    }
+    const mergedGeo = mergeBufferGeometriesLocal(baked, b.attrs);
+    for (const g of baked) g.dispose();
+    if (!mergedGeo) continue;
+    const mm = new mesh(mergedGeo, b.material);
+    mm.matrixAutoUpdate = false;                        // static — never moves
+    merged.push(mm);
+    // Remove the originals from the group and free their (now-redundant) geometry.
+    for (const child of b.items) {
+      group.remove(child);
+      if (child.geometry) child.geometry.dispose();
+    }
+  }
+  for (const mm of merged) group.add(mm);
+}
+
+// Minimal geometry merger using only core Three.js (the vendored build doesn't
+// ship BufferGeometryUtils). All inputs must be non-indexed-or-indexed with the
+// SAME attribute set (guaranteed by the caller's bucketing). Returns a single
+// non-indexed BufferGeometry, or null if the set is empty/mismatched.
+function mergeBufferGeometriesLocal(geos, attrSig) {
+  if (!geos.length) return null;
+  const names = attrSig.split(',').filter(Boolean);
+  // Expand any indexed geometry to non-indexed so we can simply concatenate.
+  const flat = geos.map((g) => (g.index ? g.toNonIndexed() : g));
+  // Validate every geometry exposes exactly the expected attributes.
+  for (const g of flat) {
+    for (const n of names) if (!g.attributes[n]) return null;
+  }
+  let total = 0;
+  for (const g of flat) total += g.attributes.position.count;
+  const out = new THREE.BufferGeometry();
+  for (const n of names) {
+    const itemSize = flat[0].attributes[n].itemSize;
+    const arr = new Float32Array(total * itemSize);
+    let offset = 0;
+    for (const g of flat) {
+      const a = g.attributes[n];
+      arr.set(a.array, offset);
+      offset += a.array.length;
+    }
+    out.setAttribute(n, new THREE.BufferAttribute(arr, itemSize));
+  }
+  // Dispose the throwaway non-indexed copies we created (but not the originals,
+  // which the caller disposes).
+  flat.forEach((g, i) => { if (g !== geos[i]) g.dispose(); });
+  return out;
+}
+
 export function buildCities(scene, world) {
   const group = new THREE.Group();
 
@@ -431,19 +628,24 @@ export function buildCities(scene, world) {
     // Two biome-themed soldiers stand watch at each gate of every city.
     buildGateGuards(group, c, flat);
 
-    // A healing statue just inside the main gate: talk to it to be patched up
-    // (low-level players only). Placed a couple of metres in from the first gate,
-    // facing into the town. Position returned for interaction + a map marker.
-    let healStatue = null;
-    const gates = cityGates(c);
-    if (gates.length) {
-      const g0 = gates[0];
-      const ox = g0.x - c.x, oz = g0.z - c.z;
+    // An entrance PLAZA with a central green healing fountain JUST INSIDE every
+    // gate: a themed paved circle with a glowing green heal-shrine in its middle,
+    // so whichever exit you arrive at has the same welcoming roundabout. Talk to
+    // the fountain to be patched up (low-level only). Centres returned for
+    // interaction + map markers.
+    const st0 = styleFor(c);
+    // The capital's gate corridors are wide; round towns have a narrower 5m road
+    // corridor through the wall, so use a smaller plaza there to avoid poking into
+    // the neighbouring house lots.
+    const plazaR = st0.grid ? 6 : 5;
+    const inset = st0.grid ? 9 : 8;              // how far inside the gate the centre sits
+    const healStatues = [];
+    for (const g of cityGates(c)) {
+      const ox = g.x - c.x, oz = g.z - c.z;
       const len = Math.hypot(ox, oz) || 1;
       const dx = ox / len, dz = oz / len;          // outward (centre -> gate)
-      const sx = g0.x - dx * 3.5, sz = g0.z - dz * 3.5;   // 3.5m inside the gate
-      const face = Math.atan2(-dx, -dz);            // look inward (toward centre)
-      healStatue = buildHealStatue(group, world, sx, sz, flat, face, mats);
+      const px = g.x - dx * inset, pz = g.z - dz * inset;   // INSIDE the gate (plaza centre)
+      healStatues.push(buildHealPlaza(group, world, px, pz, flat, mats, st0, plazaR));
     }
 
     for (const it of built.interiors) interiors.push(it);
@@ -456,10 +658,15 @@ export function buildCities(scene, world) {
       pois: built.pois || [],
       // Free-market stalls (ring of { stallId, x, z, rot }) for interaction.
       stalls: built.stalls || [],
-      // Gate healing statue ({ x, z }) — talk to it to heal (low level only).
-      healStatue,
+      // Gate healing statues (one per gate, each { x, z }) — talk to one to heal
+      // (low level only).
+      healStatues,
     });
   }
+  // Batch the static buildings/walls/decor into a handful of merged meshes before
+  // the group goes into the scene — big draw-call win, identical visuals. Runs
+  // after EVERY city + gate + plaza is built so it folds the whole batch at once.
+  mergeCityStatics(group);
   scene.add(group);
   return { group, props, portals, interiors, houses };
 }
@@ -480,14 +687,34 @@ export function houseLotAt(houses, x, z, radius = 2.2) {
   return best;
 }
 
-// Biome-themed soldier kit. Each city's guards wear gear that matches their
-// climate: temperate steel + green tabard in the forest, frost-blue plate with a
-// fur cloak up north, and warm brass with a sand cloak out in the desert. Picked
-// by city.biome so snow towns get snow soldiers, desert towns desert soldiers.
+// Soldier kits. Guards are now dressed for THEIR OWN CITY, not just their biome —
+// every town gets a distinct livery (its own tabard, trim and plume) echoing that
+// city's wall/roof palette, so two forest towns or two snow towns don't field
+// identical soldiers. GUARD_THEMES_BY_CITY is keyed by city id; GUARD_THEMES is
+// the per-biome fallback for any city without a bespoke kit.
 const GUARD_THEMES = {
   forest: { metal: 0xbfc4cc, metalDark: 0x6f7681, cloth: 0x3f6e34, trim: 0xd8c060, plume: 0xc23a2e, cape: false },
   snow:   { metal: 0xcfe0ec, metalDark: 0x7f97ad, cloth: 0x3a5e86, trim: 0xdfeaf4, plume: 0x9fd0ef, cape: true,  capeColor: 0xe8eef4 },
   desert: { metal: 0xd9b25a, metalDark: 0x9c7a32, cloth: 0xc28a3e, trim: 0x7a3320, plume: 0x3a8a7a, cape: true,  capeColor: 0xd8b97a },
+};
+const GUARD_THEMES_BY_CITY = {
+  // Greenhollow (capital): bright royal steel, crimson tabard, gold trim — the
+  // king's own guard, the grandest livery.
+  rivertown:  { metal: 0xcfd4dc, metalDark: 0x767d88, cloth: 0x8e2f2c, trim: 0xe8c84e, plume: 0xe8c84e, cape: true,  capeColor: 0x8e2f2c },
+  // Oakvale: a homelier forest town — burnished steel, deep-green tabard, no cape.
+  oakvale:    { metal: 0xb6bcc2, metalDark: 0x6a7178, cloth: 0x2f6f3a, trim: 0xc8a84a, plume: 0xc23a2e, cape: false },
+  // Westharbor: a teal-and-brass river port livery with a sea-green cloak.
+  westharbor: { metal: 0xc2cccb, metalDark: 0x6f7e7c, cloth: 0x1f6f68, trim: 0xd8c060, plume: 0x2f9d92, cape: true,  capeColor: 0x215c58 },
+  // Stonehaven: slate-grey mountain plate, steel-blue tabard, fur cloak.
+  stonehaven: { metal: 0xb9c2cc, metalDark: 0x6f7884, cloth: 0x49566a, trim: 0xbcc6d2, plume: 0x8fb4d6, cape: true,  capeColor: 0xc4cdd8 },
+  // Frostpeak: pale frost-blue plate, ice tabard, white fur cloak — distinct from
+  // Stonehaven's darker slate kit so the two snow towns differ at a glance.
+  frostpeak:  { metal: 0xdce8f2, metalDark: 0x88a0b6, cloth: 0x2f6aa0, trim: 0xeaf2fa, plume: 0x7fc8ef, cape: true,  capeColor: 0xeef4fa },
+  // Dragonreach: pharaonic gold plate, deep-red tabard, teal plume, sand cloak.
+  dragonreach:{ metal: 0xe0bd5c, metalDark: 0xa07e34, cloth: 0x8a2e22, trim: 0xf0d77a, plume: 0x2f9d8a, cape: true,  capeColor: 0xd8b97a },
+  // Sandport: warm brass with a turquoise oasis tabard and a light sand cloak —
+  // distinct from Dragonreach's red-and-gold pharaonic kit.
+  sandport:   { metal: 0xd8b96a, metalDark: 0x9a7e3a, cloth: 0x2f9d8a, trim: 0x7a3320, plume: 0x39a39a, cape: true,  capeColor: 0xe7cf93 },
 };
 
 // One stocky low-poly knight standing guard, facing `face` (radians). Built from
@@ -576,7 +803,7 @@ function buildSoldier(group, x, z, y, face, theme) {
 // reads as garrisoned. Falls back to the temperate forest kit for any biome we
 // don't have a theme for.
 function buildGateGuards(group, city, flat) {
-  const theme = GUARD_THEMES[city.biome] || GUARD_THEMES.forest;
+  const theme = GUARD_THEMES_BY_CITY[city.id] || GUARD_THEMES[city.biome] || GUARD_THEMES.forest;
   for (const g of cityGates(city)) {
     const ox = g.x - city.x, oz = g.z - city.z;
     const len = Math.hypot(ox, oz) || 1;
@@ -590,58 +817,88 @@ function buildGateGuards(group, city, flat) {
   }
 }
 
-// A benevolent HEALING STATUE for a city gate: a robed figure on a plinth
-// cradling a glowing green orb, with a soft green light and a faint aura ring, so
-// it reads as a shrine that tends weary low-level travellers. Talk to it (it's a
-// 'healStatue' interactable) to be patched up. Returns its position. `face` aims
-// the figure inward toward the city. Registers a small solid for the plinth.
-function buildHealStatue(group, world, x, z, y, face, mats) {
-  const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
+// A circular ENTRANCE PLAZA with a central green HEALING FOUNTAIN, built just
+// inside a city gate. Every city gets one at each gate, themed to its biome (the
+// paving uses the city's own stone colour, like the capital's central plaza), so
+// the exits all read as a proper paved roundabout with a glowing green shrine in
+// the middle. The fountain is the 'healStatue' interactable — stand in the circle
+// and talk to it to be patched up (low-level only). Returns the centre { x, z }.
+//
+// `radius` is the plaza disc radius; `st` carries the city style (for the themed
+// stone colour). The fountain sits dead-centre so you walk up to it from any side.
+function buildHealPlaza(group, world, x, z, y, mats, st, radius = 6) {
+  // --- The paved circular plaza (themed cobbles + a thin raised rim) ----------
+  const stoneHex = (st && st.stone) || 0xb9b2a2;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.3, 40), mats.stoneDark);
+  base.position.set(x, y - 0.04, z);
+  group.add(base);
+  // Cobbled top layer clipped to the disc (square paving scaled in like the
+  // capital's plaza, so it reads as laid stone, not a flat slab).
+  const pave = makePaving(radius * 2, radius * 2, stoneHex, cellSeed(Math.round(x), Math.round(z)), 0.5);
+  pave.position.set(x, y + 0.06, z);
+  pave.scale.set(0.86, 1, 0.86);
+  group.add(pave);
+  // A low rim ring around the plaza edge so the circle reads crisply.
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(radius - 0.2, 0.18, 8, 44), mats.stone);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.set(x, y + 0.12, z);
+  group.add(rim);
+
+  // --- The central green healing fountain -------------------------------------
+  buildHealFountain(group, world, x, z, y, mats);
+  return { x, z };
+}
+
+// The green healing fountain that sits at the centre of an entrance plaza: a
+// tiered stone basin with green water, a tapering spire, and a glowing green orb
+// on top with a halo + light, so it reads as a benevolent healing shrine from a
+// distance. Registers a solid so players circle it instead of standing inside it.
+function buildHealFountain(group, world, x, z, y, mats) {
   const g = new THREE.Group();
-  // Tiered pedestal.
-  const step = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 1.8), mats.stoneDark);
-  step.position.set(0, 0.15, 0);
+  const GREEN = 0x55ff88, ORB = 0x66ffa0;
+  // Stepped basin: a wide low bowl on a round pedestal.
+  const step = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.2, 0.4, 24), mats.stoneDark);
+  step.position.set(0, 0.2, 0);
   g.add(step);
-  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, 1.1, 12), mats.stone);
-  plinth.position.set(0, 0.85, 0);
-  g.add(plinth);
-  // A robed figure: a tapered robe body, rounded head, two arms cupped forward.
-  const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.62, 1.6, 12), mats.temple);
-  robe.position.set(0, 2.2, 0);
-  g.add(robe);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 10), mats.temple);
-  head.position.set(0, 3.15, 0);
-  g.add(head);
-  for (const s of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 8), mats.temple);
-    arm.position.set(s * 0.28, 2.45, 0.28);
-    arm.rotation.x = 1.1; arm.rotation.z = -s * 0.4;
-    g.add(arm);
-  }
-  // The glowing green healing orb cradled in the hands (additive so it reads as
-  // light), plus a soft halo and a point light.
-  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x66ffa0 }));
-  orb.position.set(0, 2.5, 0.55);
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.9, 0.6, 24), mats.stone);
+  basin.position.set(0, 0.7, 0);
+  g.add(basin);
+  // Green water surface inside the basin (tinted, glowing green so it reads as a
+  // magical heal-spring rather than ordinary water).
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 0.12, 24),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.55 }));
+  water.position.set(0, 0.96, 0);
+  g.add(water);
+  // A central tapering spire/pillar rising from the basin.
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.55, 2.4, 12), mats.stone);
+  pillar.position.set(0, 2.1, 0);
+  g.add(pillar);
+  // A small upper bowl that the "water" spills from.
+  const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.55, 0.4, 16), mats.stoneDark);
+  upper.position.set(0, 3.2, 0);
+  g.add(upper);
+  // The glowing green healing orb crowning the spire, with a soft halo + light.
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 14),
+    new THREE.MeshBasicMaterial({ color: ORB }));
+  orb.position.set(0, 4.0, 0);
   g.add(orb);
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x55ff88, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
-  halo.position.set(0, 2.5, 0.55);
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 18, 14),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
+  halo.position.set(0, 4.0, 0);
   g.add(halo);
-  const light = new THREE.PointLight(0x55ff88, 0.6, 8, 2);
-  light.position.set(0, 2.5, 0.55);
+  const light = new THREE.PointLight(GREEN, 0.8, 16, 2);
+  light.position.set(0, 3.6, 0);
   g.add(light);
-  // A faint aura ring on the ground so the heal zone reads from a distance.
-  const ring = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.7, 24),
-    new THREE.MeshBasicMaterial({ color: 0x55ff88, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  // A faint aura ring on the ground so the heal zone reads from across the plaza.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.8, 28),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(0, 0.05, 0);
+  ring.position.set(0, 0.06, 0);
   g.add(ring);
 
   g.position.set(x, y, z);
-  g.rotation.y = face;
   group.add(g);
-  if (world && world.addSolid) world.addSolid(x, z, 0.8);
+  if (world && world.addSolid) world.addSolid(x, z, 1.6);
   return { x, z };
 }
 
@@ -762,6 +1019,24 @@ function buildLandmark(group, world, x, z, y, kind, mats) {
 function roundHouseLots(c, R) {
   const rec = houseRecipeFor(c);
   const lots = [];
+  // The town's actual WALL polygon (same one buildWall traces, inset to R-3).
+  // Shaped towns (diamond/rectangle/pentagon…) pull the wall much closer to the
+  // centre along their edge midpoints than a circle would, so a house placed on a
+  // circular ring can poke straight THROUGH a wall edge (the "buildings outside
+  // Frostpeak" bug). We reject any lot whose footprint isn't fully inside this
+  // polygon, with a small margin so houses don't kiss the wall.
+  const shape = styleFor(c).shape;
+  const poly = shape ? townPolygon(c.x, c.z, R - 3, shape) : null;
+  // Bearings of the REAL gate openings, so we clear the right corridors for the
+  // gate roads (cardinal bearings miss the openings on shaped towns).
+  const gateBearings = cityGates(c).map((g) => Math.atan2(g.z - c.z, g.x - c.x));
+  const lotInsideWall = (x, z, w, d) => {
+    if (!poly) return true;                 // circular town: ring already fits
+    const hw = w / 2 + 1.5, hd = d / 2 + 1.5;   // footprint half-extents + margin
+    // All four footprint corners must sit inside the wall polygon.
+    return pointInPolygon(x - hw, z - hd, poly) && pointInPolygon(x + hw, z - hd, poly)
+        && pointInPolygon(x - hw, z + hd, poly) && pointInPolygon(x + hw, z + hd, poly);
+  };
   // FNV-ish stable hash of an index -> [0,1), so a town's mix is fixed per load.
   const rand = (k) => {
     let h = (k * 2654435761) ^ ((R | 0) * 40503) ^ 0x9e3779b9;
@@ -782,8 +1057,9 @@ function roundHouseLots(c, R) {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + ring.gap;
       // Keep the gate corridors clear on the two OUTER rings (inner houses sit
-      // well clear of the gate openings already).
-      if (rr > R * 0.6 && nearAnyGate(a, ROUND_GATE_BEARINGS, 0.22)) continue;
+      // well clear of the gate openings already). Clear against the REAL gate
+      // bearings so the corridor lines up with the actual openings/roads.
+      if (rr > R * 0.6 && nearAnyGate(a, gateBearings, 0.22)) continue;
       // Four INDEPENDENT hash draws per lot so size/floors/basement don't
       // correlate (a separate r4 for the basement, not the mansion roll).
       const r1 = rand(hi * 11 + 1), r2 = rand(hi * 11 + 3), r3 = rand(hi * 11 + 5), r4 = rand(hi * 11 + 7);
@@ -806,6 +1082,9 @@ function roundHouseLots(c, R) {
       const big = mansion || floors >= 3;
       if (big) bigCount++;
       const basement = big && (bigCount === 1 || r4 < rec.basement);
+      // Drop any lot whose footprint would cross the (shaped) wall — keeps every
+      // house inside the town instead of floating outside a diamond/rectangle edge.
+      if (!lotInsideWall(hx0, hz0, w, d)) { hi++; continue; }
       // Door world-pos: replicate buildHouse (front +z face at d/2, post-rotation).
       const fx = Math.sin(facing), fz = Math.cos(facing);
       lots.push({
@@ -831,25 +1110,29 @@ function buildRoundCity(group, world, c, flat, mats, st) {
 
   buildStreets(group, c.x, c.z, flat, R, mats, st);
   buildWall(group, world, c.x, c.z, flat, R - 3, mats, st.shape);
-  // Dress each of the three gates: a paved approach strip running out through the
-  // opening, flanked by a pair of lamps, so the exits read as real roads out of
-  // town (and match the gate markers drawn on the map).
-  for (const gateA of ROUND_GATE_BEARINGS) {
-    const dx = Math.cos(gateA), dz = Math.sin(gateA);
+  // Dress each REAL gate: a paved approach strip running out through the opening,
+  // flanked by a pair of lamps, so the exits read as real roads out of town (and
+  // match the gate markers, guards and heal statues). Use cityGates() — the actual
+  // wall openings (edge midpoints for shaped towns), NOT the cardinal bearings,
+  // which on a diamond/rectangle miss the openings and dressed solid wall instead.
+  for (const g of cityGates(c)) {
+    const ox = g.x - c.x, oz = g.z - c.z;
+    const len = Math.hypot(ox, oz) || 1;
+    const dx = ox / len, dz = oz / len;      // outward (centre -> gate)
     const px = -dz, pz = dx;                 // perpendicular (road width axis)
-    const gx = c.x + dx * (R - 3), gz = c.z + dz * (R - 3);
+    const gateA = Math.atan2(dz, dx);
     const road = new THREE.Mesh(new THREE.BoxGeometry(5, 0.2, 30), mats.stoneDark);
-    road.position.set(gx + dx * 9, flat - 0.04, gz + dz * 9);
+    road.position.set(g.x + dx * 9, flat - 0.04, g.z + dz * 9);
     road.rotation.y = -gateA + Math.PI / 2;
     group.add(road);
-    buildProp(group, world, gx + px * 3.5, gz + pz * 3.5, flat, 'lamp', mats);
-    buildProp(group, world, gx - px * 3.5, gz - pz * 3.5, flat, 'lamp', mats);
+    buildProp(group, world, g.x + px * 3.5, g.z + pz * 3.5, flat, 'lamp', mats);
+    buildProp(group, world, g.x - px * 3.5, g.z - pz * 3.5, flat, 'lamp', mats);
   }
   buildTemple(group, c.x, c.z, flat, mats.temple, mats.stone, world);
   pois.push({ x: c.x, z: c.z, icon: '🏛️', label: 'Temple' });
   buildTownHall(group, world, c.x, c.z + 18, flat, mats);
   pois.push({ x: c.x, z: c.z + 18, icon: '🏛️', label: 'Town Hall' });
-  buildNameLabel(group, c, flat + 15);
+  // (No floating city-name sprite — the name still shows on the minimap label.)
   // Each town's signature landmark, off to one side of the plaza, so the
   // skyline reads differently in every city — and it gets its own map marker.
   if (st.landmark) {
@@ -891,7 +1174,7 @@ function buildRoundCity(group, world, c, flat, mats, st) {
     });
     houses.push({
       id: `${c.id}:h${i}`, city: c.id, x: L.x, z: L.z, y: flat, rot: L.rot,
-      w: L.w, d: L.d, floors: L.floors, mansion: L.mansion, basement: L.basement,
+      w: L.w, d: L.d, wallH: L.wallH, floors: L.floors, mansion: L.mansion, basement: L.basement,
       style: c.style, doorX: L.doorX, doorZ: L.doorZ,
     });
   }
@@ -928,12 +1211,16 @@ function buildRoundCity(group, world, c, flat, mats, st) {
   const portalPos = { x: c.x, z: c.z + 13 };
   const portal = buildPortal(group, portalPos.x, portalPos.z, flat, mats);
 
-  // Free-market stalls ring the market hall (the 'market' interior). They sit at
-  // STALL_RING_R (9m), well outside SHOP_RADIUS (7m), so touching a stall never
-  // collides with the shop interaction.
-  const marketCenter = market ? { x: market.x, z: market.z } : { x: c.x + 12, z: c.z };
-  const stalls = stallLayout(marketCenter.x, marketCenter.z);
-  for (const s of stalls) group.add(buildStall(s, flat, mats, world));
+  // Free-market: one open-air MARKET SQUARE near the market hall — 12 stalls
+  // facing inward around a coin statue, same as the capital. A round town has a
+  // single square, so it's a MINIMARKET (the big market lives in the capital).
+  // The square sits a few metres off the hall's plaza side so it never overlaps
+  // the building's footprint.
+  const mc = market ? { x: market.x, z: market.z } : { x: c.x + 12, z: c.z };
+  const off = 16;                                  // push the square clear of the hall
+  const sq = { x: mc.x + (mc.x - c.x ? Math.sign(mc.x - c.x) * off : off), z: mc.z };
+  const stalls = [];
+  buildMarketSquare(group, world, sq.x, sq.z, flat, mats, stalls, 0, 'mini');
 
   return { interiors, shopPos, depotPos, portalPos, portalMesh: portal.mesh, pois, houses, stalls };
 }
@@ -1074,7 +1361,7 @@ function buildGridCity(group, world, c, flat, mats, st) {
     const tx = c.x + Math.cos(a + 0.5) * 13, tz = c.z + Math.sin(a + 0.5) * 13;
     if (clearOfPortal(tx, tz)) buildProp(group, world, tx, tz, flat, 'tree', mats);
   }
-  buildNameLabel(group, c, flat + 20);
+  // (No floating city-name sprite — the name still shows on the minimap label.)
   // The capital keeps its castle, set back in the northern keep spur.
   if (st.castle) buildCastle(group, world, c.x, c.z + (CAPITAL_CELLS.minR - 0.3) * cell, flat, mats);
 
@@ -1115,7 +1402,10 @@ function buildGridCity(group, world, c, flat, mats, st) {
   shopPos = shopPos || { x: c.x + 12, z: c.z };
   depotPos = depotPos || { x: c.x - 12, z: c.z };
 
-  // Fill the remaining masked cells with varied houses and lush garden lots.
+  // Fill the remaining masked cells with varied houses and lush garden lots. Market
+  // SQUARES collect their centres so we can drop INTERACTIVE free-market stalls on
+  // them afterwards (real stalls players sell on, replacing the old dead props).
+  const marketSquares = [];
   for (const { col, row } of CAPITAL_CELLS.list) {
     if (taken.has(`${col},${row}`)) continue;
     const p = cellPos(col, row);
@@ -1124,6 +1414,7 @@ function buildGridCity(group, world, c, flat, mats, st) {
     if (r < 0.26) {
       const garden = ['park', 'wellyard', 'market', 'orchard'][(seed >>> 3) % 4];
       buildGardenCell(group, world, p.x, p.z, flat, garden, mats);
+      if (garden === 'market') marketSquares.push({ x: p.x, z: p.z });
       continue;
     }
     const big = r > 0.72;
@@ -1148,7 +1439,7 @@ function buildGridCity(group, world, c, flat, mats, st) {
     const fx = Math.sin(rot), fz = Math.cos(rot);
     houses.push({
       id: `${c.id}:h${col}_${row}`, city: c.id, x: p.x, z: p.z, y: flat, rot,
-      w, d, floors: twoFloor ? 2 : 1, mansion: big,
+      w, d, wallH: twoFloor ? 5.6 : 3.4, twoFloor, floors: twoFloor ? 2 : 1, mansion: big,
       basement: big && ((seed >>> 7) % 10) < 3,
       style: c.style, doorX: p.x + fx * (d / 2 + 0.02), doorZ: p.z + fz * (d / 2 + 0.02),
     });
@@ -1177,11 +1468,158 @@ function buildGridCity(group, world, c, flat, mats, st) {
   // Decoration belt + a lamp-lit approach road outside the south gate.
   buildOutskirts(group, world, c.x, c.z, flat, cell, mats);
 
-  // Free-market stalls ring the market hall (shopPos), same as the round towns.
-  const stalls = stallLayout(shopPos.x, shopPos.z);
-  for (const s of stalls) group.add(buildStall(s, flat, mats, world));
+  // Free-market stalls (the INTERACTIVE ones players sell on) now form a real
+  // MARKET in the open-air squares — the garden cells that used to hold dead
+  // fruit-stall props. Each square is laid out as a proper bazaar: stalls line the
+  // FOUR sides of an open square, all FACING INWARD toward a central aisle, so
+  // shoppers must walk INTO the market between the counters. A coin-topped statue
+  // and lamps in the middle mark it as a market. stallIds run sequentially across
+  // all squares so the DB keys stay unique per city.
+  const stalls = [];
+  let stallId = 0;
+  // If the random masks produced no market square, fall back to one near the hall.
+  const squares = marketSquares.length ? marketSquares
+    : [{ x: shopPos.x + 16, z: shopPos.z }];
+  // Group ADJACENT squares into one market: a lone square is a "mini" market, a
+  // cluster of 2+ neighbouring squares is a "big" market. The title shown on a
+  // stall reads the cluster size (see openMarketStall).
+  const clusters = clusterMarketSquares(squares);
+  for (const cluster of clusters) {
+    const kind = cluster.length >= 2 ? 'big' : 'mini';
+    for (const sq of cluster) {
+      stallId = buildMarketSquare(group, world, sq.x, sq.z, flat, mats, stalls, stallId, kind);
+    }
+  }
 
   return { interiors, shopPos, depotPos, portalPos, portalMesh: portal.mesh, pois, houses, stalls };
+}
+
+// Group market squares that sit next to each other into clusters. Two squares are
+// "adjacent" when their centres are within MARKET_ADJ metres (a bit over one grid
+// cell). A 1-square cluster is a minimarket; a 2+ cluster is a big market.
+const MARKET_ADJ = 30;
+function clusterMarketSquares(squares) {
+  const clusters = [];
+  const used = new Array(squares.length).fill(false);
+  for (let i = 0; i < squares.length; i++) {
+    if (used[i]) continue;
+    const cluster = [squares[i]]; used[i] = true;
+    // Flood-fill neighbours (and neighbours of neighbours) into this cluster.
+    for (let a = 0; a < cluster.length; a++) {
+      for (let j = 0; j < squares.length; j++) {
+        if (used[j]) continue;
+        if (Math.hypot(cluster[a].x - squares[j].x, cluster[a].z - squares[j].z) <= MARKET_ADJ) {
+          cluster.push(squares[j]); used[j] = true;
+        }
+      }
+    }
+    clusters.push(cluster);
+  }
+  return clusters;
+}
+
+// Lay out ONE open-air market square: 12 free-market stalls lining the four sides
+// of a square, every counter FACING INWARD toward the central aisle so shoppers
+// walk into the market to browse. A coin-topped market statue and lamps mark the
+// centre. Appends each stall (with a unique sequential stallId) to `stalls` and
+// builds it. Returns the next free stallId.
+function buildMarketSquare(group, world, cx, cz, y, mats, stalls, startId, marketKind = 'mini') {
+  let stallId = startId;
+  const isClear = (x, z) => !(world && world.solidAt && world.solidAt(x, z, 1.6));
+  const HALF = 9;          // half-width of the square; stalls sit on its edges
+  const PER_SIDE = 3;      // 3 stalls × 4 sides = 12 stalls per market
+  const spread = HALF - 1.5;
+  // Each side: a fixed coordinate on one axis, the stalls spread along the other,
+  // and an inward facing so the counter (local +Z front) points to the centre.
+  const sides = [
+    { fixed: 'z', at: -HALF, face: 0 },           // north edge, faces +z (inward)
+    { fixed: 'z', at: +HALF, face: Math.PI },     // south edge, faces -z
+    { fixed: 'x', at: -HALF, face: Math.PI / 2 }, // west edge,  faces +x
+    { fixed: 'x', at: +HALF, face: -Math.PI / 2 },// east edge,  faces -x
+  ];
+  for (const side of sides) {
+    for (let i = 0; i < PER_SIDE; i++) {
+      const along = (i - (PER_SIDE - 1) / 2) * (spread * 2 / (PER_SIDE - 1 || 1));
+      const x = cx + (side.fixed === 'z' ? along : side.at);
+      const z = cz + (side.fixed === 'z' ? side.at : along);
+      if (!isClear(x, z)) continue;
+      // `market` tags whether this stall belongs to a mini or a big market, so the
+      // interaction title can read "Minimarket"/"Big Market".
+      const s = { stallId: stallId++, x, z, rot: side.face, market: marketKind };
+      stalls.push(s);
+      group.add(buildStall(s, y, mats, world));
+    }
+  }
+  // The market's centrepiece: a stone statue holding up a giant mm-coin, plus a
+  // ring of lamps lighting the aisle and corner planters dressing the square.
+  group.add(buildMarketStatue(cx, cz, y, mats));
+  world && world.addSolid(cx, cz, 1.0);
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + Math.PI / 4;
+    buildProp(group, world, cx + Math.cos(a) * 4.5, cz + Math.sin(a) * 4.5, y, 'lamp', mats);
+    buildProp(group, world, cx + Math.cos(a) * (HALF - 0.5), cz + Math.sin(a) * (HALF - 0.5), y, 'planter', mats);
+  }
+  return stallId;
+}
+
+// Coin-denomination colours, matching the game's currency tiers (see COINS in
+// data/items.js): bronze → silver → gold → platinum → diamond. The market coin
+// atop the statue cycles through these every few seconds; diamond glows brightest.
+export const MARKET_COIN_TIERS = [
+  { color: 0xcd7f32, glow: 0.25 },   // bronze
+  { color: 0xc0c0c0, glow: 0.3 },    // silver
+  { color: 0xf1c40f, glow: 0.4 },    // gold
+  { color: 0xe5e4e2, glow: 0.5 },    // platinum
+  { color: 0x7ec9ff, glow: 0.95 },   // diamond — the top tier, glows the most (blue)
+];
+
+// The market centrepiece: a stepped stone pedestal topped by a big mm-coin that
+// SPINS and cycles through the currency tiers' colours (animated by the city tick
+// via userData.marketCoin). So the square unmistakably reads as a MARKET.
+function buildMarketStatue(cx, cz, y, mats) {
+  const g = new THREE.Group();
+  // Stepped stone base.
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.6, 0.5, 16), mats.stone);
+  base.position.set(cx, y + 0.25, cz); g.add(base);
+  const step = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.25, 0.4, 16), mats.stoneDark);
+  step.position.set(cx, y + 0.7, cz); g.add(step);
+  // A tapering column.
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 2.6, 12), mats.stone);
+  col.position.set(cx, y + 2.2, cz); g.add(col);
+
+  // The mm-coin sits on a PIVOT at the top of the column so it can spin in place.
+  // Its own material is emissive (so it glows) and is the one the tick recolours.
+  const pivot = new THREE.Group();
+  pivot.position.set(cx, y + 4.2, cz);
+  const t0 = MARKET_COIN_TIERS[0];
+  const coinMat = new THREE.MeshStandardMaterial({
+    color: t0.color, emissive: t0.color, emissiveIntensity: t0.glow, metalness: 0.7, roughness: 0.35,
+  });
+  // A thick disc standing UPRIGHT (face toward +Z); spinning the pivot around Y
+  // shows both faces, like a coin spinning on its edge.
+  const coin = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.22, 28), coinMat);
+  coin.rotation.x = Math.PI / 2; pivot.add(coin);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.1, 10, 28), coinMat);
+  pivot.add(rim);
+  // Two raised "m" bars stamped on EACH face so it reads as an mm-coin from front
+  // and back as it spins. Same emissive material so they glow with the coin.
+  for (const zf of [0.12, -0.12]) {
+    for (const dx of [-0.3, 0.3]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.52, 0.05), coinMat);
+      m.position.set(dx, 0, zf); pivot.add(m);
+    }
+    // the little hump that joins the two m-strokes into an "m" pair
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.14, 0.05), coinMat);
+    bridge.position.set(0, 0.2, zf); pivot.add(bridge);
+  }
+  // A soft point light so the diamond tier visibly lights the square.
+  const glow = new THREE.PointLight(t0.color, t0.glow, 9, 1.6);
+  pivot.add(glow);
+
+  g.add(pivot);
+  // Tagged so the tick can spin the pivot + cycle coinMat/glow through the tiers.
+  g.userData.marketCoin = { pivot, mat: coinMat, light: glow };
+  return g;
 }
 
 // A cell with no house: a themed little open lot full of greenery / props.
@@ -1201,13 +1639,13 @@ function buildGardenCell(group, world, x, z, y, kind, mats) {
       buildProp(group, world, x + cI * 4.5, z + r * 4.5, y, (r + cI) % 2 ? 'tree' : 'bush', mats);
     }
   } else if (kind === 'market') {
-    // An open-air market square: several stalls, crates and a lamp.
-    buildProp(group, world, x - 4, z - 3, y, 'stall', mats);
-    buildProp(group, world, x + 4, z - 3, y, 'stall', mats);
-    buildProp(group, world, x, z + 4, y, 'stall', mats);
+    // An open-air market SQUARE. The actual stalls placed here are the INTERACTIVE
+    // free-market stalls (the caller fills MARKET_SQUARE_SLOTS with real ones so
+    // players can sell on them) — here we only add the surrounding dressing (a
+    // central lamp + a few crates/barrels) so the square reads as a busy market.
     buildProp(group, world, x, z, y, 'lamp', mats);
-    buildProp(group, world, x - 3, z + 2, y, 'crate', mats);
-    buildProp(group, world, x + 3, z + 2, y, 'barrel', mats);
+    buildProp(group, world, x - 4.5, z + 3, y, 'crate', mats);
+    buildProp(group, world, x + 4.5, z + 3, y, 'barrel', mats);
   } else { // wellyard
     buildProp(group, world, x, z, y, 'well', mats);
     buildProp(group, world, x - 4, z - 4, y, 'tree', mats);
@@ -1515,6 +1953,37 @@ function makeStyleMats(st) {
   };
 }
 
+// The world positions of the two GROUND-FLOOR front windows of a house lot, plus
+// the wall height — so the facade shelves can sit just BELOW each real window and
+// the name sign can be centred at the top of the front wall. Mirrors the exact
+// window-placement math in buildHouse (rows/cols), using the fields the lot record
+// carries (w, wallH, floors/twoFloor). Returns { wallH, winY, windows:[{x,z}] }
+// in WORLD space. Used by buildFacadeDisplay + buildNameSign in house.js.
+export function houseFrontGeometry(lot) {
+  const w = lot.w || 5, d = lot.d || 5;
+  const rot = lot.rot || 0;
+  const floors = Math.max(1, Math.min(3, lot.floors || (lot.twoFloor ? 2 : 1)));
+  const wallH = lot.floors ? (lot.wallH || 3.2) * floors : (lot.wallH || 3.2);
+  const perFloor = wallH / floors;
+  // Ground-floor window row height (matches buildHouse's `rows` for floor 0).
+  let winY;
+  if (lot.floors) winY = perFloor * 0.6;
+  else winY = lot.twoFloor ? wallH * 0.42 : wallH * 0.62;
+  // Front normal + side axis (same as buildHouse).
+  const fx = Math.sin(rot), fz = Math.cos(rot);
+  const sx = Math.cos(rot), sz = -Math.sin(rot);
+  const cols = lot.mansion && w > 8 ? [-1, 1] : [-1, 1]; // the two side windows
+  const ox = w * (lot.mansion && w > 8 ? 0.32 : 0.28);
+  const baseX = lot.x + fx * (d / 2 + 0.02);
+  const baseZ = lot.z + fz * (d / 2 + 0.02);
+  const windows = cols.map((s) => ({
+    x: baseX + sx * (s * ox),
+    z: baseZ + sz * (s * ox),
+    s,
+  }));
+  return { wallH, winY, windows, fx, fz, sx, sz, depthOff: d / 2 + 0.02 };
+}
+
 // A house: a solid box (or a stacked tower) with a roof, door and windows. Not
 // enterable in the mesh, so when `solid` is set it registers collision circles
 // over its footprint. Supports SIZE/HEIGHT variety for the bigger round towns:
@@ -1753,6 +2222,49 @@ function nearAnyGate(a, bearings = ROUND_GATE_BEARINGS, half = GATE_HALF_ANGLE) 
   return false;
 }
 
+// The SINGLE source of truth for which polygon edges a shaped town opens as
+// gates — used by BOTH the wall builder (where to leave a gap) and cityGates()
+// (where to put roads, guards, heal statues and map markers), so they can never
+// drift apart. Picks the edge nearest each cardinal bearing; then, if that
+// collapsed to fewer than 3 distinct edges (an axis-aligned square maps all four
+// cardinals onto just two diagonal edges, which left Frostpeak with only two
+// gates — both north), it opens the remaining widest edges until there are at
+// least min(3, edgeCount) gates, so every town has a proper spread of exits.
+function gateEdgesFor(pts, cx, cz) {
+  const n = pts.length;
+  const edgeBearing = (i) => Math.atan2(
+    (pts[i].z + pts[(i + 1) % n].z) / 2 - cz,
+    (pts[i].x + pts[(i + 1) % n].x) / 2 - cx);
+  const gateEdges = new Set();
+  for (const gA of ROUND_GATE_BEARINGS) {
+    let edge = 0, bestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = Math.abs(((edgeBearing(i) - gA + Math.PI) % (Math.PI * 2)) - Math.PI);
+      if (d < bestD) { bestD = d; edge = i; }
+    }
+    gateEdges.add(edge);
+  }
+  // Guarantee at least 3 exits (or all edges, if the shape has fewer): add the
+  // not-yet-open edges most evenly spaced from the ones already chosen.
+  const want = Math.min(3, n);
+  while (gateEdges.size < want) {
+    let best = -1, bestSpread = -1;
+    for (let i = 0; i < n; i++) {
+      if (gateEdges.has(i)) continue;
+      // Prefer the candidate whose bearing is farthest from every open gate.
+      let nearest = Infinity;
+      for (const j of gateEdges) {
+        const d = Math.abs(((edgeBearing(i) - edgeBearing(j) + Math.PI) % (Math.PI * 2)) - Math.PI);
+        if (d < nearest) nearest = d;
+      }
+      if (nearest > bestSpread) { bestSpread = nearest; best = i; }
+    }
+    if (best < 0) break;
+    gateEdges.add(best);
+  }
+  return gateEdges;
+}
+
 // World-space gate points for a city, for the map to mark its exits. Round towns
 // report their four cardinal gates on the wall; the grid capital reports its
 // three usable gates (south, east, west — the north gate is a decorative keep
@@ -1817,8 +2329,23 @@ export function cityGates(city) {
       return { x: city.x + (g.col + dx * 0.5) * cell, z: city.z + (g.row + dz * 0.5) * cell };
     });
   }
-  const r = st.radius - 3;
-  return ROUND_GATE_BEARINGS.map((a) => ({ x: city.x + Math.cos(a) * r, z: city.z + Math.sin(a) * r }));
+  // Shaped round towns: the wall (buildWall) opens a gap in the MIDDLE of the
+  // polygon edge nearest each cardinal bearing — NOT at the cardinal bearing
+  // itself. A diamond/rectangle has its edges on the diagonals, so a gate sits at
+  // an edge midpoint that can be ~45° away from the cardinal. Return those exact
+  // edge midpoints so heal statues, gate guards and the map markers all land in
+  // the REAL openings (the old cardinal-bearing points missed the gaps entirely,
+  // leaving Frostpeak's exits with no statue or guards). Dedupe by edge so two
+  // cardinals that pick the same edge (e.g. the diamond's N & W) yield ONE gate,
+  // matching the wall's gateEdges Set.
+  const cx = city.x, cz = city.z;
+  const pts = townPolygon(cx, cz, st.radius - 3, st.shape);
+  const n = pts.length;
+  const gateEdges = gateEdgesFor(pts, cx, cz);
+  return [...gateEdges].map((i) => ({
+    x: (pts[i].x + pts[(i + 1) % n].x) / 2,
+    z: (pts[i].z + pts[(i + 1) % n].z) / 2,
+  }));
 }
 
 // A stone wall around the town. When `shape` is given the wall traces a POLYGON
@@ -1833,18 +2360,9 @@ function buildWall(group, world, cx, cz, y, radius, mats, shape) {
     // edges nearest the four cardinals so the town has a way out each direction.
     const pts = townPolygon(cx, cz, radius, shape);
     const n = pts.length;
-    // Pick the edge nearest each gate bearing; open all of them.
-    const gateEdges = new Set();
-    for (const gA of ROUND_GATE_BEARINGS) {
-      let edge = 0, bestD = Infinity;
-      for (let i = 0; i < n; i++) {
-        const mx = (pts[i].x + pts[(i + 1) % n].x) / 2, mz = (pts[i].z + pts[(i + 1) % n].z) / 2;
-        const a = Math.atan2(mz - cz, mx - cx);
-        const d = Math.abs(((a - gA + Math.PI) % (Math.PI * 2)) - Math.PI);
-        if (d < bestD) { bestD = d; edge = i; }
-      }
-      gateEdges.add(edge);
-    }
+    // Open the SAME edges cityGates() reports, so the gaps in the wall line up
+    // exactly with the roads, guards, heal statues and map markers.
+    const gateEdges = gateEdgesFor(pts, cx, cz);
     for (let i = 0; i < n; i++) {
       const a = pts[i], b = pts[(i + 1) % n];
       const ex = b.x - a.x, ez = b.z - a.z;
@@ -2133,6 +2651,10 @@ function buildShop(group, world, x, z, y, facing, lot, mats, st) {
   buildProp(group, world, x + fx * (D / 2 + 2.5) + sx * 2.6, z + fz * (D / 2 + 2.5) + sz * 2.6, y, 'lamp', mats);
   buildProp(group, world, x + fx * (D / 2 + 2.5) - sx * 2.6, z + fz * (D / 2 + 2.5) - sz * 2.6, y, 'lamp', mats);
 
+  // Themed storefront details so the building reads as this vendor's shop, not a
+  // plain green-roofed house.
+  decorateShopExterior(group, world, x, z, y, facing, look.decor, mats, W, D, H);
+
   decorateInterior(group, x, z, y, facing, look.decor, mats);
   return { x, z };
 }
@@ -2213,6 +2735,10 @@ function buildEnterable(group, world, x, z, y, facing, key, mats, st) {
   const plate = makeSignText(labelText, facing);
   plate.position.set(x + fx * (D / 2 + 0.05), y + H - 0.4, z + fz * (D / 2 + 0.05));
   group.add(plate);
+
+  // Themed storefront details on the outside so each district building reads as
+  // its vendor's shop, not a plain box.
+  decorateShopExterior(group, world, x, z, y, facing, key, mats, W, D, H);
 
   // Interior decor + a counter near the back, themed by trade.
   decorateInterior(group, x, z, y, facing, key, mats);
@@ -2402,6 +2928,289 @@ function decorateInterior(group, x, z, y, facing, key, mats) {
       crate.position.set(p.x, y + 0.45, p.z); group.add(crate);
     }
   }
+
+  // Side-wall and entrance dressing shared by every shop, themed per trade, so the
+  // INSIDE reads as that vendor's workplace from wall to wall — not a bare box with
+  // a counter. Hung on the left/right walls and flanking the door.
+  decorateInteriorWalls(group, x, z, y, facing, key, mats, at, fx, fz, sx, sz);
+}
+
+// Hang trade-themed dressing on the SIDE WALLS and around the doorway of a shop
+// interior, so decor covers the room "por todas partes", not just the back. `at`
+// maps a local (side, front) offset to world coords; fx/fz/sx/sz are the facing
+// axes. Kept separate from decorateInterior so the back-wall wares and the wall
+// dressing read as one themed room.
+function decorateInteriorWalls(group, x, z, y, facing, key, mats, at, fx, fz, sx, sz) {
+  // A framed picture / plaque flat against a side wall at (lx≈±5.2), facing inward.
+  const wallPlaque = (lx, lz, w, h, mat) => {
+    const p = at(lx, lz);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, w), mat);
+    m.position.set(p.x, y + 1.9, p.z); m.rotation.y = facing; group.add(m);
+    return m;
+  };
+  // A wall TORCH bracket with a glowing flame — every shop gets warm light by the
+  // door so the interior never reads pitch-dark.
+  const torch = (lx, lz) => {
+    const p = at(lx, lz);
+    const bracket = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 6), mats.wood);
+    bracket.position.set(p.x, y + 2.2, p.z); group.add(bracket);
+    const flame = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), mats.lamp);
+    flame.position.set(p.x, y + 2.5, p.z); flame.scale.y = 1.4; group.add(flame);
+  };
+  // Torches flank the inside of the doorway for every trade.
+  torch(-2.0, 5.0); torch(2.0, 5.0);
+
+  // A runner RUG leading from the door to the counter, tinted to the trade.
+  const rugCol = key === 'mage' ? mats.portal : key === 'bank' ? mats.gold
+    : key === 'knight' || key === 'keep' ? mats.metal : key === 'library' ? mats.book
+    : key === 'jeweler' ? mats.potionB : key === 'archer' ? mats.leaf
+    : key === 'potion' ? mats.potionR : mats.roof;
+  const rp = at(0, 1.5);
+  const rug = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.04, 7), rugCol);
+  rug.position.set(rp.x, y + 0.04, rp.z); rug.rotation.y = facing; group.add(rug);
+
+  // Per-trade side-wall pieces.
+  if (key === 'potion') {
+    // Hanging herb bundles + a shelf of spare bottles on each side wall.
+    for (const sgn of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const herb = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 6), mats.leaf);
+        const p = at(sgn * 5.2, -2 + i * 2); herb.position.set(p.x, y + 2.6, p.z); herb.rotation.x = Math.PI; group.add(herb);
+      }
+      wallPlaque(sgn * 5.4, 0, 3.2, 0.5, mats.wood);   // a long shelf board
+      for (let i = 0; i < 4; i++) {
+        const b = at(sgn * 5.1, -1.2 + i * 0.9);
+        const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.4, 8), i % 2 ? mats.potionB : mats.potionR);
+        bottle.position.set(b.x, y + 2.05, b.z); group.add(bottle);
+      }
+    }
+  } else if (key === 'knight' || key === 'keep') {
+    // Crossed weapons + a shield mounted on each side wall, like an armory hall.
+    for (const sgn of [-1, 1]) {
+      for (const ang of [0.5, -0.5]) {
+        const p = at(sgn * 5.3, 0);
+        const sw = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.8, 0.06), mats.metal);
+        sw.position.set(p.x, y + 2.2, p.z); sw.rotation.y = facing; sw.rotation.x = ang; group.add(sw);
+      }
+      const sh = at(sgn * 5.25, 2.4);
+      const shield = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.12, 12), mats.metal);
+      shield.position.set(sh.x, y + 1.9, sh.z); shield.rotation.z = Math.PI / 2; shield.rotation.y = facing; group.add(shield);
+    }
+  } else if (key === 'mage') {
+    // Floating runes + tall candles line the walls of the arcane shop.
+    for (const sgn of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const p = at(sgn * 5.2, -2 + i * 2);
+        const rune = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.04, 6, 10), mats.portal);
+        rune.position.set(p.x, y + 1.6 + i * 0.4, p.z); rune.rotation.y = facing; group.add(rune);
+      }
+      const cp = at(sgn * 4.8, 3);
+      const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.4, 8), mats.cloth);
+      candle.position.set(cp.x, y + 0.7, cp.z); group.add(candle);
+      const fl = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), mats.portal);
+      fl.position.set(cp.x, y + 1.5, cp.z); group.add(fl);
+    }
+  } else if (key === 'library') {
+    // The side walls are floor-to-ceiling bookcases too.
+    for (const sgn of [-1, 1]) {
+      const p = at(sgn * 5.2, 0);
+      const bc = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.2, 6), mats.wood);
+      bc.position.set(p.x, y + 1.6, p.z); bc.rotation.y = facing; group.add(bc);
+      const books = new THREE.Mesh(new THREE.BoxGeometry(0.25, 2.8, 5.6), mats.book);
+      books.position.set(p.x - sgn * 0.2, y + 1.6, p.z); books.rotation.y = facing; group.add(books);
+    }
+  } else if (key === 'bank') {
+    // Gold-framed plaques + a candelabra on the marble walls.
+    for (const sgn of [-1, 1]) { wallPlaque(sgn * 5.3, 0, 2, 1.4, mats.gold); }
+  } else if (key === 'archer') {
+    // Mounted bows and a target on the side walls.
+    for (const sgn of [-1, 1]) {
+      const p = at(sgn * 5.3, -1);
+      const bow = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.06, 6, 12, Math.PI), mats.wood);
+      bow.position.set(p.x, y + 2.1, p.z); bow.rotation.z = Math.PI / 2; bow.rotation.y = facing; group.add(bow);
+      const tp = at(sgn * 5.2, 2.5);
+      for (let r = 3; r >= 1; r--) {
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * r, 0.12 * r, 0.05, 14), r % 2 ? mats.potionR : mats.cloth);
+        ring.position.set(tp.x, y + 1.9, tp.z); ring.rotation.z = Math.PI / 2; ring.rotation.y = facing; group.add(ring);
+      }
+    }
+  } else if (key === 'jeweler') {
+    // Velvet wall cases sparkling with gems.
+    for (const sgn of [-1, 1]) {
+      wallPlaque(sgn * 5.3, 0, 3, 1.6, mats.potionB);
+      for (let i = 0; i < 3; i++) {
+        const p = at(sgn * 5.1, -1 + i);
+        const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), i % 2 ? mats.portal : mats.gold);
+        gem.position.set(p.x, y + 1.9, p.z); group.add(gem);
+      }
+    }
+  } else if (key === 'tavern' || key === 'food') {
+    // Barrels stacked along the walls + a hanging sign.
+    for (const sgn of [-1, 1]) {
+      for (let i = 0; i < 2; i++) {
+        const p = at(sgn * 4.8, -3 + i * 1.4);
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 12), mats.wood);
+        barrel.position.set(p.x, y + 0.5, p.z); group.add(barrel);
+      }
+    }
+  } else if (key === 'stable') {
+    // Horseshoes and hanging tack on the walls.
+    for (const sgn of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const p = at(sgn * 5.3, -2 + i * 2);
+        const shoe = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.05, 6, 10, Math.PI * 1.3), mats.metal);
+        shoe.position.set(p.x, y + 2.2 - i * 0.1, p.z); shoe.rotation.y = facing; group.add(shoe);
+      }
+    }
+  } else if (key === 'bag') {
+    // Spare sacks hung from wall pegs.
+    for (const sgn of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const p = at(sgn * 5.2, -2 + i * 2);
+        const sack = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), i % 2 ? mats.cloth : mats.leaf);
+        sack.position.set(p.x, y + 2.2, p.z); sack.scale.y = 1.3; group.add(sack);
+      }
+    }
+  }
+}
+
+// Dress the OUTSIDE of a shop so the building reads as that trade's storefront —
+// not just another green-roofed house. Adds a hanging trade emblem over the door,
+// flanking props, awnings/window-boxes and a roof feature keyed to the vendor.
+// `W,D,H` are the building footprint/height; `facing` points out the front door.
+function decorateShopExterior(group, world, x, z, y, facing, kind, mats, W, D, H) {
+  const fx = Math.sin(facing), fz = Math.cos(facing);
+  const sx = Math.cos(facing), sz = -Math.sin(facing);
+  // World point at a local (side, out-from-front, up) offset, where `out` is how
+  // far in FRONT of the door face it sits (front face is at +D/2).
+  const front = (lx, out, up) => ({
+    x: x + sx * lx + fx * (D / 2 + out),
+    z: z + sz * lx + fz * (D / 2 + out),
+    y: y + up,
+  });
+  const add = (geo, mat, p, rotY = facing) => {
+    const m = new THREE.Mesh(geo, mat); m.position.set(p.x, p.y, p.z); m.rotation.y = rotY; group.add(m); return m;
+  };
+  // A big 3D trade EMBLEM mounted on a post beside the door — the storefront's
+  // shop sign, readable from across the plaza.
+  const emblemBase = front(W / 2 - 1.0, 0.3, 0);
+  const post = add(new THREE.CylinderGeometry(0.1, 0.1, H * 0.8, 8), mats.wood, { x: emblemBase.x, y: y + H * 0.4, z: emblemBase.z });
+  const ey = y + H * 0.8;
+  const emblemAt = { x: emblemBase.x + fx * 0.1, y: ey, z: emblemBase.z + fz * 0.1 };
+
+  switch (kind) {
+    case 'potion': {
+      // A giant potion bottle on the sign post + window herb boxes.
+      add(new THREE.CylinderGeometry(0.35, 0.45, 0.7, 10), mats.potionR, emblemAt);
+      add(new THREE.CylinderGeometry(0.18, 0.22, 0.3, 8), mats.wood, { ...emblemAt, y: ey + 0.5 });
+      break;
+    }
+    case 'knight': case 'keep': {
+      // Crossed swords emblem + a barrel of weapons by the door.
+      for (const a of [0.6, -0.6]) {
+        const sw = add(new THREE.BoxGeometry(0.1, 1.3, 0.06), mats.metal, emblemAt); sw.rotation.z = a;
+      }
+      const bp = front(-W / 2 + 1, 1.0, 0);
+      add(new THREE.CylinderGeometry(0.4, 0.4, 1, 12), mats.wood, { x: bp.x, y: y + 0.5, z: bp.z });
+      for (let i = -1; i <= 1; i++) {
+        const sw = add(new THREE.BoxGeometry(0.06, 1.2, 0.04), mats.metal, { x: bp.x + sx * i * 0.12, y: y + 1.4, z: bp.z + sz * i * 0.12 });
+        sw.rotation.x = 0.1 * i;
+      }
+      break;
+    }
+    case 'mage': {
+      // A glowing orb on the post + arcane banners either side of the door.
+      add(new THREE.SphereGeometry(0.4, 12, 10), mats.portal, emblemAt);
+      for (const sgn of [-1, 1]) {
+        const p = front(sgn * (W / 2 - 0.6), 0.1, 0);
+        add(new THREE.BoxGeometry(0.6, 2.2, 0.06), mats.portal, { x: p.x, y: y + H - 1.4, z: p.z });
+      }
+      break;
+    }
+    case 'archer': {
+      // A big bow emblem + a fletcher's target on a stand beside the door.
+      const bow = add(new THREE.TorusGeometry(0.5, 0.07, 6, 14, Math.PI), mats.wood, emblemAt); bow.rotation.z = Math.PI / 2;
+      const tp = front(-W / 2 + 1, 1.2, 0);
+      for (let r = 3; r >= 1; r--) {
+        const ring = add(new THREE.CylinderGeometry(0.18 * r, 0.18 * r, 0.06, 16), r % 2 ? mats.potionR : mats.cloth, { x: tp.x, y: y + 1.5, z: tp.z });
+        ring.rotation.x = Math.PI / 2;
+      }
+      break;
+    }
+    case 'bank': {
+      // A gold coin emblem + two stone urns flanking a grand entrance.
+      add(new THREE.CylinderGeometry(0.45, 0.45, 0.16, 16), mats.gold, { ...emblemAt, }).rotation.x = Math.PI / 2;
+      for (const sgn of [-1, 1]) {
+        const p = front(sgn * (W / 2 - 1.2), 1.0, 0);
+        add(new THREE.CylinderGeometry(0.3, 0.45, 1.3, 12), mats.stone, { x: p.x, y: y + 0.65, z: p.z });
+        add(new THREE.SphereGeometry(0.3, 10, 8), mats.gold, { x: p.x, y: y + 1.4, z: p.z });
+      }
+      break;
+    }
+    case 'library': {
+      // A big open book emblem + a reading lectern outside.
+      for (const sgn of [-1, 1]) {
+        const pg = add(new THREE.BoxGeometry(0.5, 0.7, 0.06), mats.book, emblemAt); pg.rotation.y = facing + sgn * 0.4;
+      }
+      break;
+    }
+    case 'jeweler': {
+      // A faceted gem emblem that catches the light.
+      add(new THREE.OctahedronGeometry(0.4, 0), mats.portal, emblemAt);
+      break;
+    }
+    case 'tavern': case 'food': {
+      // A foaming mug / bread emblem + barrels and a bench by the door.
+      add(new THREE.CylinderGeometry(0.3, 0.3, 0.55, 10), mats.gold, emblemAt);
+      for (const sgn of [-1, 1]) {
+        const p = front(sgn * (W / 2 - 1), 0.9, 0);
+        add(new THREE.CylinderGeometry(0.42, 0.42, 1, 12), mats.wood, { x: p.x, y: y + 0.5, z: p.z });
+      }
+      break;
+    }
+    case 'stable': {
+      // A horseshoe emblem + a hay bale and a hitching post outside.
+      const shoe = add(new THREE.TorusGeometry(0.32, 0.08, 6, 12, Math.PI * 1.3), mats.metal, emblemAt);
+      const hp = front(-W / 2 + 1, 1.0, 0);
+      const bale = add(new THREE.CylinderGeometry(0.55, 0.55, 1, 10), mats.gold, { x: hp.x, y: y + 0.55, z: hp.z }); bale.rotation.z = Math.PI / 2;
+      break;
+    }
+    case 'bag': {
+      // A bulging sack emblem + a pile of sacks by the door.
+      const sk = add(new THREE.SphereGeometry(0.4, 10, 8), mats.cloth, emblemAt); sk.scale.y = 1.3;
+      const pp = front(-W / 2 + 1, 0.9, 0);
+      for (let i = 0; i < 3; i++) add(new THREE.SphereGeometry(0.3, 8, 6), i % 2 ? mats.leaf : mats.cloth, { x: pp.x + sx * (i - 1) * 0.3, y: y + 0.4, z: pp.z }).scale.y = 1.2;
+      break;
+    }
+    case 'townhall': {
+      // A wreathed crest + two banners by a civic entrance.
+      add(new THREE.TorusGeometry(0.32, 0.07, 8, 16), mats.leaf, emblemAt);
+      for (const sgn of [-1, 1]) {
+        const p = front(sgn * (W / 2 - 0.6), 0.1, 0);
+        add(new THREE.BoxGeometry(0.5, 2, 0.05), mats.roof, { x: p.x, y: y + H - 1.3, z: p.z });
+      }
+      break;
+    }
+    default: {  // market / general
+      // A market awning over the door + a couple of produce crates.
+      const awn = add(new THREE.BoxGeometry(W * 0.6, 0.12, 1.6), mats.awning, front(0, 0.9, H - 1.2));
+      awn.rotation.x = -0.2;
+      for (const sgn of [-1, 1]) {
+        const p = front(sgn * (W / 2 - 1.2), 1.2, 0);
+        add(new THREE.BoxGeometry(0.8, 0.8, 0.8), mats.wood, { x: p.x, y: y + 0.4, z: p.z });
+      }
+    }
+  }
+  // Window flower boxes under the front windows give every storefront a lived-in
+  // touch (skipped for the austere bank/keep, which keep a grander stone look).
+  if (kind !== 'bank' && kind !== 'keep') {
+    for (const sgn of [-1, 1]) {
+      const p = front(sgn * (W * 0.28), 0.18, 0);
+      const box = add(new THREE.BoxGeometry(1.1, 0.3, 0.3), mats.wood, { x: p.x, y: y + H * 0.5, z: p.z });
+      const blooms = add(new THREE.SphereGeometry(0.18, 8, 6), mats.leaf, { x: p.x, y: y + H * 0.5 + 0.22, z: p.z });
+      blooms.scale.set(2.6, 0.7, 0.7);
+    }
+  }
 }
 
 // Small standalone decorations. `kind` selects the shape.
@@ -2549,37 +3358,13 @@ function buildProp(group, world, x, z, y, kind, mats) {
       group.add(leg);
     }
   } else if (kind === 'statue') {
-    // A heroic statue on a plinth at a junction or plaza corner. A wider, low
-    // base step grounds the plinth so it reads as a tiered pedestal.
-    const step = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.3, 2.1), mats.stoneDark);
-    step.position.set(x, y + 0.15, z);
-    group.add(step);
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1, 1.6), mats.stone);
-    plinth.position.set(x, y + 0.8, z);
-    // A recessed dedication panel on the plinth's front, for carved relief.
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.06), mats.stoneDark);
-    panel.position.set(x, y + 0.85, z + 0.82);
-    // A heroic knight: a tapered torso, rounded shoulder caps, a helmeted head,
-    // a raised sword and a kite shield — far more sculptural than the old peg.
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.5, 1.5, 10), mats.stoneDark);
-    body.position.set(x, y + 2.05, z);
-    for (const s of [-1, 1]) {
-      const pa = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), mats.stoneDark);
-      pa.position.set(x + s * 0.42, y + 2.55, z);
-      group.add(pa);
-    }
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 10), mats.stoneDark);
-    head.position.set(x, y + 3.05, z);
-    const helm = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.6), mats.stone);
-    helm.position.set(x, y + 3.12, z);
-    const sword = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.6, 0.05), mats.metal);
-    sword.position.set(x + 0.5, y + 2.9, z);
-    const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.08), mats.stoneDark);
-    hilt.position.set(x + 0.5, y + 2.15, z);
-    const shield = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.75, 0.08), mats.stone);
-    shield.position.set(x - 0.46, y + 2.1, z + 0.12);
-    group.add(plinth, panel, body, head, helm, sword, hilt, shield);
-    world && world.addSolid(x, z, 1.0);
+    // A commemorated hero — one of many carved variants (warrior, archer, mage,
+    // queen, the rotund brewer…), picked deterministically from this corner's
+    // world position so it's stable for everyone. Press it to read its legend; it
+    // glows softly from the base upward at night. (statueLore.js owns the models +
+    // the fixed lore.)
+    const lore = pickStatueLore(x, z);
+    buildStatue(group, world, x, y, z, mats, lore);
   } else if (kind === 'stall') {
     // A market stall: a counter under a striped awning, with crates of goods.
     const counter = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 1), mats.wood);
@@ -2661,32 +3446,6 @@ function buildDepot(group, world, x, z, y, mats) {
   world && world.addSolid(x, z, 2.6);
 }
 
-// Floating city name above the town hall, rendered to a canvas sprite.
-function buildNameLabel(group, city, y) {
-  const pad = 16, fontPx = 52;
-  const cv = document.createElement('canvas');
-  const ctx = cv.getContext('2d');
-  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
-  const w = Math.ceil(ctx.measureText(city.name).width) + pad * 2;
-  const h = fontPx + pad * 2;
-  cv.width = w; cv.height = h;
-  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineWidth = 7;
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeText(city.name, w / 2, h / 2);
-  ctx.fillStyle = '#ffe9b0';
-  ctx.fillText(city.name, w / 2, h / 2);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.minFilter = THREE.LinearFilter;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: true, transparent: true }));
-  const scale = 1.6;
-  sprite.scale.set((w / h) * scale, scale, 1);
-  sprite.position.set(city.x, y, city.z + 16);
-  group.add(sprite);
-}
-
 // A small marble temple at the city center: stepped base, columns and a roof.
 //
 // OPEN PAVILION collision. The old design had two bugs the user hit: (1) an
@@ -2756,6 +3515,13 @@ function buildTemple(group, cx, cz, flat, matTemple, matStone, world) {
 function buildTempleAura(group, cx, cz, flat) {
   const aura = new THREE.Group();
   aura.userData.templeAura = true;
+  // The aura GROUP sits at the temple; its children are positioned in LOCAL space
+  // (relative to the group). main.js spins this group on its Y axis every frame —
+  // if the children carried world coords (cx,cz), that spin would orbit them
+  // around the world origin, flinging the aura across the map for any city not at
+  // (0,0) (the Frostpeak "heal circle racing through town" bug). Local coords keep
+  // the rotation in place: the motes drift around the temple, nothing flies off.
+  aura.position.set(cx, flat, cz);
   const GREEN = 0x55ff88;
   // A glowing disc lying on the temple floor (additive so it reads as light, not
   // paint). Slightly above the marble to avoid z-fighting.
@@ -2765,7 +3531,7 @@ function buildTempleAura(group, cx, cz, flat) {
   });
   const disc = new THREE.Mesh(new THREE.CircleGeometry(4.6, 32), discMat);
   disc.rotation.x = -Math.PI / 2;
-  disc.position.set(cx, flat + 0.06, cz);
+  disc.position.set(0, 0.06, 0);
   aura.add(disc);
   // A soft translucent dome of light enclosing the gazebo.
   const domeMat = new THREE.MeshBasicMaterial({
@@ -2773,7 +3539,7 @@ function buildTempleAura(group, cx, cz, flat) {
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
   });
   const dome = new THREE.Mesh(new THREE.SphereGeometry(5, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
-  dome.position.set(cx, flat + 0.05, cz);
+  dome.position.set(0, 0.05, 0);
   aura.add(dome);
   // A ring of floating motes (little glowing specks) for a "blessing" feel.
   const moteMat = new THREE.MeshBasicMaterial({ color: 0xbfffd4, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -2781,12 +3547,12 @@ function buildTempleAura(group, cx, cz, flat) {
     const a = (i / 14) * Math.PI * 2;
     const rr = 3.6 + (i % 3) * 0.4;
     const mote = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 6), moteMat);
-    mote.position.set(cx + Math.cos(a) * rr, flat + 0.6 + (i % 4) * 0.5, cz + Math.sin(a) * rr);
+    mote.position.set(Math.cos(a) * rr, 0.6 + (i % 4) * 0.5, Math.sin(a) * rr);
     aura.add(mote);
   }
   // A warm green point light so nearby surfaces tint toward the heal colour.
   const light = new THREE.PointLight(GREEN, 0.7, 14, 2);
-  light.position.set(cx, flat + 2.2, cz);
+  light.position.set(0, 2.2, 0);
   aura.add(light);
   group.add(aura);
 }
@@ -2797,16 +3563,21 @@ export function interactableAt(props, x, z) {
     if (Math.hypot(p.shop.x - x, p.shop.z - z) < SHOP_RADIUS) return { kind: 'shop', city: p.city };
     if (Math.hypot(p.depot.x - x, p.depot.z - z) < DEPOT_RADIUS) return { kind: 'depot', city: p.city };
     if (Math.hypot(p.portal.x - x, p.portal.z - z) < PORTAL_RADIUS) return { kind: 'portal', city: p.city };
-    // Gate healing statue — talk to it to be patched up (low-level only).
-    if (p.healStatue && Math.hypot(p.healStatue.x - x, p.healStatue.z - z) < HEAL_STATUE_RADIUS) {
-      return { kind: 'healStatue', city: p.city };
+    // Gate healing statues — talk to one to be patched up (low-level only). One
+    // stands outside every gate, so any nearby qualifies.
+    if (p.healStatues) {
+      for (const hs of p.healStatues) {
+        if (Math.hypot(hs.x - x, hs.z - z) < HEAL_STATUE_RADIUS) {
+          return { kind: 'healStatue', city: p.city };
+        }
+      }
     }
     // Free-market stalls sit on a ring outside SHOP_RADIUS, so they never clash
     // with the shop interaction. Touch one to open / browse it.
     if (p.stalls) {
       for (const s of p.stalls) {
         if (Math.hypot(s.x - x, s.z - z) < STALL_RADIUS) {
-          return { kind: 'stall', stallId: s.stallId, city: p.city };
+          return { kind: 'stall', stallId: s.stallId, city: p.city, market: s.market || 'mini' };
         }
       }
     }

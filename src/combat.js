@@ -4,11 +4,12 @@ import './creatureDesigns.js';        // side effect: registers the authored cre
 import './creatureDesignsExtra.js';   // side effect: hand-authored vermin + dragon designs
 import './mountDesigns.js';           // side effect: mount + tiger + ice-dragon designs
 import { buildLootBagMesh } from './itemMeshes.js';
+import { buildItemMesh } from './itemDisplay.js';
 import { CreatureStatus } from './statusEffects.js';
 import { buildCreatureLairDecor, disposeLairDecor } from './creatureDecor.js';
 import { creaturesForLevel, CREATURES, getCreature } from './data/creatures.js';
 import { zonePoolAt, wildernessLevelAt } from './zones.js';
-import { elementMultiplier, getWeapon, getArmor, getQuiver, RARITY } from './data/items.js';
+import { elementMultiplier, getWeapon, getArmor, getQuiver, RARITY, instanceFromCoin, getCoin, coinsFromValue } from './data/items.js';
 import { resolveItem } from './inventory.js';
 import { getLang } from './i18n.js';
 import { cityAt, capitalSafeLevelCap } from './cities.js';
@@ -28,11 +29,12 @@ const LEASH_RADIUS = 100;    // max chase distance from home (~100m): a creature
 
 // --- Loot rules ------------------------------------------------------------
 // Drop-chance caps by item level: low-level gear (< DROP_CAP_LEVEL) never exceeds
-// DROP_CAP_LO (8%); higher-level gear (>= DROP_CAP_LEVEL) never exceeds DROP_CAP_HI
-// (3%) so strong gear stays a rare prize. Legendary gear never drops from
-// creatures at all — only the Game Master grants it.
+// DROP_CAP_LO (6%); higher-level gear (>= DROP_CAP_LEVEL) never exceeds DROP_CAP_HI
+// (3%) so strong gear stays a rare prize. 6% is the HARD ceiling for ANY gear
+// drop — even a strong creature with a level-boosted dropMult can't push a gear
+// item past 6%. Legendary gear never drops — only the Game Master grants it.
 const DROP_CAP_LEVEL = 25;
-const DROP_CAP_LO = 0.08;   // items under level 25
+const DROP_CAP_LO = 0.06;   // items under level 25 (hard ceiling for all gear)
 const DROP_CAP_HI = 0.03;   // items level 25 and up
 
 // Whether a loot id is EQUIPMENT (weapon / armor / quiver) — only gear is subject
@@ -40,6 +42,31 @@ const DROP_CAP_HI = 0.03;   // items level 25 and up
 // grind/economy drops and keep their authored chances (silk 50%, trophy 60%…).
 function isGearDrop(itemId) {
   return !!(getWeapon(itemId) || getArmor(itemId) || getQuiver(itemId));
+}
+
+// The floating label for a dropped stack: "100 × Bronze Coin", "12 × Mana Potion".
+// A single item keeps its plain name. We use "N × name" (not pluralising) so it's
+// correct in both ES and EN — Spanish names like "Moneda de Plata" don't take +s.
+function dropLabel(name, count) {
+  if (!count || count <= 1) return name;
+  return count + ' × ' + name;
+}
+
+// Target ground SIZE (max-dimension, world units) for a dropped item's 3D model,
+// so small things look small and big things look big: a ring/coin is tiny, a
+// potion small, a weapon/armor near full size. Keeps the loot readable on the
+// floor without one type dwarfing the others.
+function dropGroundSize(item) {
+  const slot = item.slot, type = item.type, kind = item.kind;
+  if (kind === 'coin' || type === 'coin') return 0.32;          // a little coin stack
+  if (slot === 'ring' || slot === 'amulet') return 0.26;        // jewelry, tiny
+  if (kind === 'potion' || type === 'potion') return 0.34;      // potion/fruit, small
+  if (kind === 'material' || kind === 'trophy') return 0.34;    // scrap, small
+  if (slot === 'armor' || slot === 'legs') return 0.7;          // big gear
+  if (type && ['sword', 'axe', 'mace', 'lance', 'bow', 'crossbow'].includes(type)) return 0.85; // weapons read long
+  if (slot === 'helmet' || slot === 'boots' || type === 'shield' || type === 'wand') return 0.5;
+  if (slot === 'bag' || type === 'container') return 0.5;
+  return 0.45;
 }
 
 // The base item's required level (for the drop-chance cap), 0 if unknown.
@@ -456,7 +483,9 @@ class Creature {
           this.combatHooks.spawnEnemyArea(this.pos, a.kind, a.radius);
           if (dist <= a.radius) {
             let dmg = this.def.attack * a.damageMul * (isNight ? 1.3 : 1);
-            dmg = Math.max(1, Math.round(dmg - player.defense * 0.35));
+            // Mounted shielding (the bear's +5) adds to the player's defense.
+            const pdef = player.defense + (player.mountShielding || 0);
+            dmg = Math.max(1, Math.round(dmg - pdef * 0.35));
             // The burst's own element drives the status it inflicts (a poison
             // cloud poisons even if the creature's base element differs).
             this.areaKind = a.kind;
@@ -465,7 +494,8 @@ class Creature {
           }
         } else {
           let dmg = this.def.attack * (isNight ? 1.3 : 1);
-          dmg = Math.max(1, Math.round(dmg - player.defense * 0.35));
+          const pdef = player.defense + (player.mountShielding || 0);
+          dmg = Math.max(1, Math.round(dmg - pdef * 0.35));
           // Ranged shows a flying projectile; melee/caster hit directly.
           if (ranged) this.combatHooks.spawnEnemyShot(this.pos, player.pos, dmg, this);
           else onPlayerHit(dmg, this);
@@ -538,9 +568,13 @@ class Creature {
     this.bar.group.lookAt(player.pos.x, this.bar.group.getWorldPosition(_barWorld).y, player.pos.z);
   }
 
-  takeDamage(amount) {
+  takeDamage(amount, attackerId = 'self') {
     if (this.dying) return false;
     this.hp -= amount;
+    // Log who dealt how much, so a kill's XP can be split among everyone who
+    // helped (party play). Single-player: only 'self' ever appears → gets it all.
+    if (!this._dmgBy) this._dmgBy = {};
+    this._dmgBy[attackerId] = (this._dmgBy[attackerId] || 0) + Math.max(0, amount);
     // Being attacked provokes a passive into fighting back, and interrupts any
     // leash-home regeneration (you can't farm a fleeing creature's heal).
     this.provoked = true;
@@ -720,10 +754,12 @@ export class CombatSystem {
         list = pool.length ? pool : creaturesForLevel(lv).filter((c) => !c.supreme);
       }
 
-      // STARTER-RING SAFETY: brand-new level-1 players gather just outside the
-      // capital, so no strong creature may spawn there — cap the pool to weak
-      // foes within the capital's protected ring (even if a tougher zone disc
-      // happens to reach this close). Outside the ring the cap is null = no limit.
+      // CITY SAFE-RING SAFETY: EVERY city has a protected ring just outside its
+      // walls — no strong creature may spawn there, so a fresh arrival (walked or
+      // teleported in) isn't one-shot by a dragon on the doorstep, even where a
+      // tough zone disc overlaps the town. The cap eases up to the zone's natural
+      // level by the ring edge; outside the ring it's null = no limit, so the
+      // strong creatures simply live FARTHER from town.
       const cap = capitalSafeLevelCap(x, z);
       if (cap != null) {
         const safe = list.filter((c) => (c.level || 1) <= cap);
@@ -789,13 +825,23 @@ export class CombatSystem {
   }
 
   // A flying enemy projectile (arrow/spear/bolt) that travels to the player and
-  // applies its damage on arrival via the onPlayerHit hook.
+  // applies its damage on arrival via the onPlayerHit hook. All shots look
+  // identical (small yellow sphere), so the mesh objects are pooled and reused
+  // instead of created/disposed per shot — this avoids GC stutters when several
+  // ranged enemies fire at once. Visually unchanged.
   spawnEnemyShot(from, to, dmg, src) {
-    const geo = new THREE.SphereGeometry(0.12, 6, 5);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffe066 }));
-    mesh.position.set(from.x, from.y + 1.0, from.z);
-    this.scene.add(mesh);
     if (!this._enemyShots) this._enemyShots = [];
+    if (!this._enemyShotPool) this._enemyShotPool = [];
+    // Shared geometry + material across every enemy shot (all are the same).
+    if (!this._enemyShotGeo) this._enemyShotGeo = new THREE.SphereGeometry(0.12, 6, 5);
+    if (!this._enemyShotMat) this._enemyShotMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+    let mesh = this._enemyShotPool.pop();
+    if (!mesh) {
+      mesh = new THREE.Mesh(this._enemyShotGeo, this._enemyShotMat);
+      this.scene.add(mesh);
+    }
+    mesh.visible = true;
+    mesh.position.set(from.x, from.y + 1.0, from.z);
     this._enemyShots.push({
       mesh, dmg, src,
       target: { x: to.x, y: to.y + 1.0, z: to.z },
@@ -857,10 +903,11 @@ export class CombatSystem {
         const d = Math.hypot(mx, my, mz);
         const step = s.speed * dt;
         if (d <= step || d < 0.4) {
-          // Arrived: apply the shot's damage and remove it.
+          // Arrived: apply the shot's damage and return the mesh to the pool
+          // (hidden, kept in the scene) instead of disposing it.
           this.hooks.onPlayerHit(s.dmg, s.src);
-          this.scene.remove(s.mesh);
-          s.mesh.geometry.dispose(); s.mesh.material.dispose();
+          s.mesh.visible = false;
+          this._enemyShotPool.push(s.mesh);
           this._enemyShots.splice(i, 1);
         } else {
           s.mesh.position.x += (mx / d) * step;
@@ -1268,7 +1315,15 @@ export class CombatSystem {
     for (const entry of c.def.loot) {
       if (entry.itemId === 'gold') {
         const amount = entry.min + Math.floor(this.rng() * (entry.max - entry.min + 1));
-        if (amount > 0) this.hooks.onLoot({ gold: amount });
+        if (amount > 0) {
+          // Money DROPS on the ground as 3D coin stacks (highest denomination
+          // first), instead of going straight to the wallet — pick it up by walking
+          // over it, same as any item. Each tier is its own little stack.
+          for (const part of coinsFromValue(amount)) {
+            const def = getCoin(part.id);
+            if (def) this._dropAt(c.pos, instanceFromCoin(def, part.count, lang));
+          }
+        }
         continue;
       }
       // Potions are handled by a dedicated roll below (1-3, size mix), so the
@@ -1341,9 +1396,32 @@ export class CombatSystem {
   // (seconds) blocks pickup until it settles.
   spawnDrop(pos, item, opts = {}) {
     const world = this.world;
-    // A loot BAG (jute drawstring sack) instead of a plain crate — tinted by the
-    // item's rarity so kids read its tier, with a glow on rare drops.
-    const mesh = buildLootBagMesh(item.rarity || 'normal');
+    // The actual ITEM as a small 3D model on the ground (a sword, a potion, a coin
+    // stack…), not a generic bag — so you see exactly what dropped. We wrap it so we
+    // can scale it to a sensible ground size by category (tiny for rings/coins,
+    // bigger for weapons/armor). Falls back to the loot bag only if the item has no
+    // 3D form for some reason.
+    let mesh;
+    try {
+      const itemMesh = buildItemMesh(item);
+      if (itemMesh) {
+        mesh = new THREE.Group();
+        // Frame the item to a target ground HEIGHT by its category, then drop it so
+        // it rests ON the ground (not half-buried / floating).
+        const target = dropGroundSize(item);
+        const box = new THREE.Box3().setFromObject(itemMesh);
+        const size = new THREE.Vector3(); box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z) || 0.3;
+        const s = target / maxDim;
+        itemMesh.scale.setScalar(s);
+        // re-measure after scaling to sit it on the ground
+        const box2 = new THREE.Box3().setFromObject(itemMesh);
+        itemMesh.position.y -= box2.min.y;             // lowest point at y=0
+        mesh.add(itemMesh);
+        mesh.userData.itemModel = itemMesh;
+      }
+    } catch (_) { mesh = null; }
+    if (!mesh) mesh = buildLootBagMesh(item.rarity || 'normal');
     const startY = world.heightAt(pos.x, pos.z) + 0.4;
     mesh.position.set(pos.x, startY, pos.z);
     this.scene.add(mesh);
@@ -1361,13 +1439,18 @@ export class CombatSystem {
       new THREE.MeshBasicMaterial({ color: tierCol, transparent: true, opacity: 0.5,
         side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
     halo.rotation.x = -Math.PI / 2;
-    halo.position.y = -0.28;            // sits just under the bag, on the ground
+    // The item wrapper's base is at the wrapper origin (item lowest point = y 0),
+    // so the halo sits right at the wrapper's foot, on the ground.
+    halo.position.y = mesh.userData.itemModel ? 0.02 : -0.28;
     halo.renderOrder = 2;
     mesh.add(halo);
     mesh.userData.halo = halo;
-    // Floating name label above the drop, coloured by tier.
-    const labelText = typeof item.name === 'string' ? item.name
+    // Floating name label above the drop, coloured by tier. Stacked items (coins,
+    // potions, fruit, materials…) show the COUNT and pluralise — e.g. "100 Bronze
+    // Coins", "12 Mana Potions" — so you read the amount at a glance.
+    const baseName = typeof item.name === 'string' ? item.name
       : (item.name && (item.name.es || item.name.en)) || '';
+    const labelText = dropLabel(baseName, item.count || 1);
     const nameTag = makeNameTag(labelText, false, '#' + tierCol.toString(16).padStart(6, '0'), 0.42);
     nameTag.position.y = 0.85;
     mesh.add(nameTag);
@@ -1389,14 +1472,18 @@ export class CombatSystem {
       phase: pos.x, // de-syncs the idle bob between nearby drops
       // Per-frame motion: ballistic flight while tossed, gentle idle bob once
       // it has settled on the ground.
+      // An item model's base is at the wrapper origin, so it rests almost ON the
+      // ground (small clearance for the idle bob); the bag's pivot is centred, so
+      // it needs the old 0.3 lift.
+      _lift: mesh.userData.itemModel ? 0.06 : 0.3,
       spin(dt) {
-        mesh.rotation.y += dt * 1.6;
+        mesh.rotation.y += dt * 1.4;
         if (this.flying) {
           this.vel.y -= 16 * dt; // gravity
           mesh.position.x += this.vel.x * dt;
           mesh.position.y += this.vel.y * dt;
           mesh.position.z += this.vel.z * dt;
-          const ground = world.heightAt(mesh.position.x, mesh.position.z) + 0.3;
+          const ground = world.heightAt(mesh.position.x, mesh.position.z) + this._lift;
           if (mesh.position.y <= ground && this.vel.y <= 0) {
             // Land: small bounce, bleed off horizontal speed; settle when slow.
             mesh.position.y = ground;
@@ -1469,8 +1556,15 @@ export class CombatSystem {
     // so a zone transition (descend/ascend/teleport) can't deal "phantom" damage
     // in the new context or leak their meshes into the scene.
     if (this._enemyShots) {
-      for (const s of this._enemyShots) { this.scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
+      // Enemy shots share one geometry/material and are pooled; remove every
+      // mesh (in-flight + idle pool) from the scene and dispose the shared
+      // resources once, then reset so the pool rebuilds lazily next zone.
+      for (const s of this._enemyShots) this.scene.remove(s.mesh);
+      if (this._enemyShotPool) for (const m of this._enemyShotPool) this.scene.remove(m);
+      if (this._enemyShotGeo) { this._enemyShotGeo.dispose(); this._enemyShotGeo = null; }
+      if (this._enemyShotMat) { this._enemyShotMat.dispose(); this._enemyShotMat = null; }
       this._enemyShots = [];
+      this._enemyShotPool = [];
     }
     if (this._fxRings) {
       for (const r of this._fxRings) { this.scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); }

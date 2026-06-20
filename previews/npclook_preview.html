@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="../freshreg.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NPC Looks — Mundum</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<style>
+  html, body { margin:0; background:#161b21; color:#e7ecf2; font:13px system-ui, sans-serif; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px,1fr)); gap:10px; padding:14px; }
+  .cell { background:#20262d; border:1px solid #3a434d; border-radius:10px; overflow:hidden; }
+  .cell canvas { display:block; width:100%; height:200px; background:radial-gradient(ellipse at 50% 40%, #2b333d, #161b21); }
+  .cell .cap { padding:6px 8px; font-size:11.5px; border-top:1px solid #3a434d; }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<script type="module">
+import * as THREE from 'three';
+import { buildNpcModel } from '../src/npcModels.js';
+
+// A spread of distinct NPC looks to verify every appearance feature renders.
+const LOOKS = [
+  ['Enano herrero', 'smith', { build:'dwarf', beard:'full', hair:0x6a4a2a }],
+  ['Gordo comprador', 'merchant', { build:'fat', beard:'short', bald:true, hat:'cap' }],
+  ['Flaco vendedor', 'man', { build:'slim', beard:'goatee', hat:'feather' }],
+  ['Mago con báculo', 'wizard', {}],
+  ['Loco con canas', 'man', { beard:'wild', hair:0xe8e4dc, bushyBrows:true, build:'slim' }],
+  ['Tuerto del parche', 'man', { eyepatch:1, beard:'short', bandana:true, hat:'bandana', scar:true }],
+  ['Medio-orco', 'guard', { tusks:true, pointed_ears:true, skin:0xb8a06a, build:'broad', hat:'none' }],
+  ['Vieja con moño', 'woman', { hair:0xdedede, glasses:true }],
+  ['Calvo barbudo', 'man', { bald:true, beard:'long' }],
+  ['Monóculo elegante', 'man', { monocle:true, beard:'goatee', hat:'feather', build:'slim' }],
+  ['Sombrero paja', 'man', { hat:'straw', beard:'short', skin:0x9c6b43 }],
+  ['Encapuchado', 'man', { hat:'hood', beard:'none' }],
+  ['Rey barbudo', 'king', {}],
+  ['Sacerdote', 'priest', {}],
+  ['Calvo cejudo', 'smith', { bald:true, bushyBrows:true, build:'broad', beard:'none' }],
+  ['Pelirroja', 'woman', { hair:0x992222, build:'slim' }],
+];
+
+const grid = document.getElementById('grid');
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio||1));
+
+const cells = [];
+for (const [name, model, look] of LOOKS) {
+  const cell = document.createElement('div'); cell.className='cell';
+  const cv = document.createElement('canvas'); cv.width=320; cv.height=400;
+  const cap = document.createElement('div'); cap.className='cap'; cap.textContent = name + ' · ' + model;
+  cell.appendChild(cv); cell.appendChild(cap); grid.appendChild(cell);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x2a2f48, 1.1));
+  const key=new THREE.DirectionalLight(0xffffff,1.1); key.position.set(2,3,3); scene.add(key);
+  const m = buildNpcModel(model, { look });
+  scene.add(m.group);
+  const cam = new THREE.PerspectiveCamera(32, cv.width/cv.height, 0.1, 50);
+  cam.position.set(0, 1.1, 2.7); cam.lookAt(0, 0.95, 0);
+  cells.push({ cv, ctx:cv.getContext('2d'), scene, cam, m, yaw:0 });
+}
+
+let last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  for(const c of cells){
+    c.yaw += dt*0.5; c.m.group.rotation.y = c.yaw;
+    c.m.update(dt, false);
+    renderer.setSize(c.cv.width, c.cv.height, false);
+    renderer.render(c.scene, c.cam);
+    c.ctx.clearRect(0,0,c.cv.width,c.cv.height);
+    c.ctx.drawImage(renderer.domElement,0,0);
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

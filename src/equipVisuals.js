@@ -16,6 +16,7 @@ export class EquipVisuals {
     this.helmetMesh = null;
     this.bagMesh = null;
     this.armorMesh = null;   // worn chest/shoulder overlay (plate-tier armor)
+    this._pauldrons = null;  // metal shoulder caps added with plate armor
     this.amuletMesh = null;  // pendant on the neck
     this.weaponType = null; // drives the per-weapon hold pose and attack motion
     this.armorTintActive = false;
@@ -72,6 +73,10 @@ export class EquipVisuals {
     if (!item) return;
     const detail = AMULET_BUILDERS[item.baseId];
     this.amuletMesh = detail ? detail(item.color || 0xf1c40f) : buildAmuletMesh(item.color || 0xf1c40f);
+    // The amulet builders place their chain ring up near local y=0.4, which on the
+    // chestArmor anchor (y≈0.95) lands at the chin/mouth (~1.35) and snags it. Drop
+    // the whole pendant so the chain rests at the throat and the medal on the chest.
+    this.amuletMesh.position.y -= 0.14;
     this.char.parts.chestArmor.add(this.amuletMesh);
   }
 
@@ -150,45 +155,112 @@ export class EquipVisuals {
   // (cloth, leather, robes) stays as a recolour to keep the rounded look light.
   setArmor(item) {
     if (this.armorMesh) { this.char.parts.chestArmor.remove(this.armorMesh); disposeTree(this.armorMesh); this.armorMesh = null; }
+    // Clear any shoulder pauldrons from the previous armor.
+    this._clearPauldrons();
     if (!item) {
       this.char.mats.shirt.color.copy(this._origColors.shirt);
+      // No armor → show the bare shirt/shoulders again.
+      if (this.char.parts.setBodyClothesHidden) this.char.parts.setBodyClothesHidden(false);
       return;
     }
     const color = item.color || 0x9aa0a6;
-    this.char.mats.shirt.color.set(color);
-    // Prefer the detailed per-item breastplate; fall back to the generic plate
-    // overlay for plate-tier items, and nothing (tint only) for soft cloth.
     const detail = ARMOR_BUILDERS[item.baseId];
     const female = !!this.char.parts.isFemale;
-    if (detail) {
-      this.armorMesh = detail(color);
-      // The detailed builders are authored for the male torso/shoulder width.
-      // The female trunk is narrower (body scale ~0.95x, shoulders pulled in),
-      // so squeeze the whole overlay slightly in X/Z and drop it a touch so the
-      // breastplate hugs the chest and the pauldrons sit on the shoulders rather
-      // than floating off them. Y is left alone so collars/halos stay placed.
-      if (female) { this.armorMesh.scale.set(0.9, 0.97, 0.94); this.armorMesh.position.y = -0.01; }
-      this.char.parts.chestArmor.add(this.armorMesh);
-    } else if (isPlateArmor(item)) {
-      this.armorMesh = buildArmorMesh(color, female);
-      this.char.parts.chestArmor.add(this.armorMesh);
+    const plate = isPlateArmor(item);
+    // EVERY worn armor — plate AND soft (cloth/leather/robe) — now puts a real
+    // COVERING LAYER over the body and HIDES the base shirt, instead of just
+    // recolouring the shirt (which left the shirt peeking out where the armor
+    // didn't reach). The shell is metal for plate, a matte cloth layer for soft
+    // armor, so a leather tunic still reads soft. The base shirt is hidden in both
+    // cases, so the armor's colour is the ONLY thing seen on the torso.
+    if (this.char.parts.setBodyClothesHidden) this.char.parts.setBodyClothesHidden(true);
+    this._addPauldrons(color, female, !plate);
+    this.armorMesh = new THREE.Group();
+    // One continuous covering shell over the whole torso (front, back, sides).
+    this.armorMesh.add(buildArmorShell(color, female, !plate));
+    // The detailed breastplate/trim sits on top of the shell (plate-tier items);
+    // soft armor with no detail just shows the clean cloth shell.
+    if (detail) this.armorMesh.add(detail(color));
+    else if (plate) this.armorMesh.add(buildArmorMesh(color, female));
+    // The detailed builders are authored for the male torso/shoulder width. The
+    // female trunk is narrower, so squeeze the overlay slightly so the breastplate
+    // hugs the chest and the pauldrons sit on the shoulders.
+    if (female) { this.armorMesh.scale.set(0.9, 0.97, 0.94); this.armorMesh.position.y = -0.01; }
+    this.char.parts.chestArmor.add(this.armorMesh);
+  }
+
+  // A metal pauldron capping each shoulder, parented to the ARM pivot so it stays
+  // on the shoulder through the walk/attack swing and replaces the hidden shirt
+  // shoulder. Tinted to the armor colour so it matches the breastplate.
+  _addPauldrons(color, female, soft) {
+    this._clearPauldrons();
+    this._pauldrons = [];
+    // Plate armor gets metal pauldrons; soft armor (cloth/leather) gets matte
+    // fabric shoulder sleeves so the cover still reads soft, not plated.
+    const matFn = soft ? (c) => mat(c) : (c) => metalMat(c);
+    for (const arm of [this.char.parts.armL, this.char.parts.armR]) {
+      const g = new THREE.Group();
+      const pad = new THREE.Mesh(new THREE.SphereGeometry(soft ? 0.115 : 0.125, 14, 12), matFn(color));
+      pad.scale.set(1, 0.88, 1);
+      pad.position.y = 0.0;
+      g.add(pad);
+      if (!soft) {
+        // a darker rim cap so plate reads as layered, not a ball
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), metalMat(shade(color, 0.78)));
+        cap.position.y = 0.05;
+        g.add(cap);
+      }
+      // a short upper-arm sleeve in the armor colour so the gap between pauldron and
+      // forearm isn't bare skin (the sleeve of the armor running onto the arm).
+      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.1, 6, 12), matFn(shade(color, 0.9)));
+      sleeve.position.y = -0.11;
+      g.add(sleeve);
+      arm.pivot.add(g);
+      this._pauldrons.push({ pivot: arm.pivot, mesh: g });
+    }
+  }
+
+  _clearPauldrons() {
+    if (this._pauldrons) {
+      for (const p of this._pauldrons) { p.pivot.remove(p.mesh); disposeTree(p.mesh); }
+      this._pauldrons = null;
     }
   }
 
   setLegs(item) {
-    // Clear any previous leg overlays from both thighs.
+    const hips = this.char.parts.hips;
+    // Clear any previous leg overlays (shell + detail) from both thighs + the hips.
     for (const lg of [this.char.parts.legL, this.char.parts.legR]) {
       if (lg.pivot.userData.overlay) { lg.pivot.remove(lg.pivot.userData.overlay); disposeTree(lg.pivot.userData.overlay); lg.pivot.userData.overlay = null; }
+      const pm = lg.pivot.userData.pantsMeshes;
+      if (pm) for (const m of pm) m.visible = true;       // restore bare pants
     }
-    if (item) this.char.mats.pants.color.set(item.color || 0x6a6f74);
-    else { this.char.mats.pants.color.copy(this._origColors.pants); return; }
-    // Detailed greaves/knee-cops per item, mirrored onto both thighs.
-    const detail = LEGS_BUILDERS[item.baseId];
-    if (detail) {
-      for (const lg of [this.char.parts.legL, this.char.parts.legR]) {
-        const ov = detail(item.color || 0x6a6f74);
-        lg.pivot.add(ov); lg.pivot.userData.overlay = ov;
-      }
+    if (hips) {
+      if (hips.userData.overlay) { hips.remove(hips.userData.overlay); disposeTree(hips.userData.overlay); hips.userData.overlay = null; }
+      const pm = hips.userData.pantsMeshes;
+      if (pm) for (const m of pm) m.visible = true;       // restore bare pelvis
+    }
+    if (!item) { this.char.mats.pants.color.copy(this._origColors.pants); return; }
+    const color = item.color || 0x6a6f74;
+    const soft = !isPlateArmor(item);
+    const female = !!this.char.parts.isFemale;
+    // Worn leg armor COVERS the pants with its own layer (and HIDES the base pants
+    // meshes), instead of just recolouring the pants. It also covers the PELVIS/hip
+    // so no bare waistband shows between the chest armor and the greaves.
+    if (hips) {
+      const pm = hips.userData.pantsMeshes;
+      if (pm) for (const m of pm) m.visible = false;      // hide bare pelvis
+      const hg = buildHipShell(color, soft, female);
+      hips.add(hg); hips.userData.overlay = hg;
+    }
+    for (const lg of [this.char.parts.legL, this.char.parts.legR]) {
+      const pm = lg.pivot.userData.pantsMeshes;
+      if (pm) for (const m of pm) m.visible = false;      // hide the bare pants
+      const g = new THREE.Group();
+      g.add(buildLegShell(color, soft));                  // the covering layer
+      const detail = LEGS_BUILDERS[item.baseId];
+      if (detail) g.add(detail(color));                   // greaves/knee-cops on top
+      lg.pivot.add(g); lg.pivot.userData.overlay = g;
     }
   }
 
@@ -225,6 +297,8 @@ export class EquipVisuals {
     if (this.armorMesh) { this.char.parts.chestArmor.remove(this.armorMesh); disposeTree(this.armorMesh); this.armorMesh = null; }
     if (this.bagMesh) { this.char.parts.body.remove(this.bagMesh); disposeTree(this.bagMesh); this.bagMesh = null; }
     if (this.amuletMesh) { this.char.parts.chestArmor.remove(this.amuletMesh); disposeTree(this.amuletMesh); this.amuletMesh = null; }
+    this._clearPauldrons();
+    if (this.char.parts.setBodyClothesHidden) this.char.parts.setBodyClothesHidden(false);
     this.weaponType = null;
     if (this.char.setWeaponPose) this.char.setWeaponPose(null, false);
     if (this.char.setBowMesh) this.char.setBowMesh(null);
@@ -1399,41 +1473,68 @@ function applyHoldTransform(mesh, type, id = '') {
   // (+X rotation tips +Y toward +Z) well past vertical so the blade/head leads
   // out ahead of the fist, plus a small forward (+Z) and outward (−X, the right
   // hand is on −X) nudge so the haft clears the wrist/forearm.
+  // NOTE on seating: the haft must pass THROUGH the palm (the hand origin), so the
+  // forward (+Z) offset is kept tiny — a big +Z pushed the weapon out past the
+  // fingertips so it looked pinched at the tips, not gripped. We sit the grip ~at
+  // the palm and only pitch it forward so the blade/head leads out of the fist.
   if (type === 'bow') {
-    // Bows already place the grip at the origin and yaw the aim down the reach.
-    mesh.position.set(0, -0.02, 0.02);
+    // Held UPRIGHT in the fist (limbs vertical, facing forward) like an archer
+    // carrying a bow at their side — the build yaws the aim down the reach. A small
+    // grip-cuff (added below) wraps the riser so it reads as held, not stuck on.
+    mesh.position.set(0, 0.0, 0.015);
+    addGripCuff(mesh);
     return;
   }
   if (type === 'wand') {
-    // A focus rod canted up-and-forward out of a casting fist.
-    mesh.position.set(-0.02, -0.05, 0.06);
+    // A focus rod canted up-and-forward, butt seated IN the palm.
+    mesh.position.set(0, -0.03, 0.02);
     mesh.rotation.set(0.95, 0, 0.05);
+    addGripCuff(mesh);
     return;
   }
   if (type === 'axe') {
-    // Gripped near the butt; haft pitched forward so the head rides out front.
-    mesh.position.set(-0.02, -0.05, 0.07);
-    mesh.rotation.set(1.05, 0, 0.12);
+    // Gripped near the butt; haft pitched forward so the head rides out front, and
+    // YAWED 90° so the blade's cutting edge (built sweeping out +X) faces FORWARD.
+    mesh.position.set(0, -0.03, 0.025);
+    mesh.rotation.set(1.05, Math.PI / 2, 0.12);
+    addGripCuff(mesh);
     return;
   }
   if (type === 'mace') {
-    mesh.position.set(-0.02, -0.04, 0.07);
+    mesh.position.set(0, -0.03, 0.025);
     mesh.rotation.set(1.0, 0, 0.1);
+    addGripCuff(mesh);
     return;
   }
   if (type === 'lance') {
     // Couched almost level, pointing forward ahead of the hand.
-    mesh.position.set(-0.02, -0.02, 0.08);
+    mesh.position.set(0, -0.01, 0.03);
     mesh.rotation.set(1.35, 0, 0.04);
+    addGripCuff(mesh);
     return;
   }
-  // Sword: grip center to the palm, blade pitched forward-and-up out of the fist.
+  // Sword: grip center to the palm, blade pitched forward-and-up out of the fist,
+  // and YAWED 90° so the blade is held EDGE-forward (flat facing the sides) like a
+  // real grip — not the broad flat of the blade facing the camera.
+  addGripCuff(mesh);
   if (LOW_GRIP_SWORDS.has(id)) {
-    mesh.position.set(-0.02, 0.0, 0.07);
+    mesh.position.set(0, 0.02, 0.025);
   } else {
-    mesh.position.set(-0.02, -0.03, 0.07);
+    mesh.position.set(0, -0.02, 0.025);
   }
-  mesh.rotation.set(0.95, 0, 0.1);
+  mesh.rotation.set(0.95, Math.PI / 2, 0.1);
+}
+
+// A small dark grip cuff at the weapon's grip origin so the haft visibly passes
+// THROUGH a fist — the player's hand is just a skin sphere, and without this the
+// weapon read as floating at the fingertips. Sits at the mesh origin (the grip),
+// which is seated at the palm by the transforms above. Added once per weapon.
+function addGripCuff(mesh) {
+  if (!mesh || mesh.userData._gripCuff) return;
+  const cuff = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), mat(0x3a2a1c));
+  cuff.scale.set(1, 1.15, 1);
+  mesh.add(cuff);
+  mesh.userData._gripCuff = true;
 }
 
 // Sword ids whose grip is centered at y≈0.0 (katana + greatswords), so the hold
@@ -2006,6 +2107,100 @@ function isPlateArmor(item) {
   return !SOFT_ARMOR.test(item.baseId || '');
 }
 
+// A smooth, closed armor SHELL that wraps the whole upper body — front, back and
+// both sides — in the armor's colour. Every detailed breastplate (demon, dragon,
+// royal…) is authored as a front-facing plate sitting on the bare shirt, which
+// left the back and the gaps between pieces showing skin/cloth so the suit read
+// as "separate parts stuck on". This shell is added FIRST, under the detail, so
+// those gaps are filled by one continuous armored mass and the worn gear reads as
+// a single suit. Anchored at chestArmor (y≈0.95), the same space as the detail.
+// A covering layer over the PELVIS/hip (the `hips` group, local origin y=0.72 in
+// model space; the pelvis cone sits at local -0.1, the seat at -0.2). It rises a
+// little ABOVE the hip so it overlaps the chest armor's hem — no bare waistband
+// gap — and caps the seat below so it meets the thigh armor. `soft` = cloth/leather.
+function buildHipShell(color, soft, female) {
+  const g = new THREE.Group();
+  const m = soft ? mat(color) : metalMat(shade(color, 0.96));
+  const xz = female ? 0.96 : 1;
+  // Waist band: a flared cone rising up well past the hip top to overlap the chest
+  // armor's skirt all the way around (so no bare waist shows front or back).
+  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.205 * xz, 0.225 * xz, 0.3, 18), m);
+  waist.scale.set(1, 1, 0.86); waist.position.y = 0.1; g.add(waist);
+  // Hip cone covering the pelvis (matches the base pelvis cone).
+  const hip = new THREE.Mesh(new THREE.CylinderGeometry(0.215 * xz, 0.165 * xz, 0.26, 18), m);
+  hip.scale.set(1, 1, 0.84); hip.position.y = -0.1; g.add(hip);
+  // Seat dome capping the underside (overlaps the thigh armor tops).
+  const seat = new THREE.Mesh(new THREE.SphereGeometry(0.195 * xz, 16, 12), m);
+  seat.scale.set(1, 0.72, 0.84); seat.position.y = -0.2; g.add(seat);
+  // A belt line where the hip meets the torso (a darker trim).
+  const belt = new THREE.Mesh(new THREE.TorusGeometry(0.205 * xz, 0.02, 6, 20), soft ? mat(shade(color, 0.7)) : metalMat(shade(color, 0.8)));
+  belt.rotation.x = Math.PI / 2; belt.position.y = 0.1; belt.scale.set(1, 1, 0.84); g.add(belt);
+  return g;
+}
+
+// A covering layer over ONE leg (thigh → shin), so worn leg armor hides the bare
+// pants instead of recolouring them. Matches the character leg geometry: thigh at
+// y≈-0.13, knee -0.27, shin -0.36. A hair larger than the pants so it sits proud.
+// `soft` = matte cloth/leather, else brushed metal greaves.
+function buildLegShell(color, soft) {
+  const g = new THREE.Group();
+  const m = soft ? mat(color) : metalMat(shade(color, 0.96));
+  const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.14, 6, 12), m);
+  thigh.position.y = -0.13; g.add(thigh);
+  const knee = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), soft ? m : metalMat(shade(color, 0.85)));
+  knee.scale.set(1, 0.9, 1); knee.position.y = -0.27; g.add(knee);
+  const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.14, 6, 12), m);
+  shin.position.y = -0.36; g.add(shin);
+  return g;
+}
+
+// `soft` builds it from a flat lambert (cloth/leather) instead of metal so robes
+// stay matte; otherwise it's the same brushed metal as the plate pieces.
+function buildArmorShell(color, female, soft) {
+  const g = new THREE.Group();
+  const skin = soft ? mat(color) : metalMat(shade(color, 0.96));
+  const xz = female ? 0.94 : 1;
+  // Main cuirass: a capsule matching the torso trunk it covers, a hair larger so
+  // it sits proud of the shirt (no z-fighting) and fully hides it. Covers front,
+  // back and sides in one piece — this is what kills the "por partes" look.
+  const trunk = new THREE.Mesh(new THREE.CapsuleGeometry(0.235 * xz, 0.3, 8, 16), skin);
+  trunk.scale.set(1, 1, 0.92);
+  trunk.position.set(0, 0.02, 0.01);
+  g.add(trunk);
+  // Chest swell + waist taper so the shell follows the body's tapered shape
+  // instead of being a plain tube (matches the torso build in character.js).
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(0.255 * xz, 14, 12), skin);
+  chest.scale.set(1, 0.74, 0.9);
+  chest.position.set(0, 0.17, 0.0);
+  g.add(chest);
+  // A collar rising at the neck so the shirt doesn't peek out above the cuirass
+  // (was visible as a blue band at the nape from behind).
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 0.14, 16), skin);
+  collar.position.set(0, 0.36, 0);
+  g.add(collar);
+  const waist = new THREE.Mesh(new THREE.SphereGeometry(0.21 * xz, 12, 10), skin);
+  waist.scale.set(1, 0.82, 0.92);
+  waist.position.set(0, -0.16, 0.0);
+  g.add(waist);
+  // A SKIRT/fauld dropping well below the waist so the chest armor generously
+  // OVERLAPS the hip cover all the way around (front AND back) — no bare waistband
+  // shows between the cuirass and the leg armor. Flares out over the hips.
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.21 * xz, 0.245 * xz, 0.24, 18), skin);
+  skirt.scale.set(1, 1, 0.92);
+  skirt.position.set(0, -0.3, 0.0);
+  g.add(skirt);
+  // Shoulder caps so the shell flows onto the deltoids and the pauldrons of the
+  // detail builder land on armor, not on a bare shoulder.
+  const shoulderX = female ? 0.24 : 0.27;
+  for (const s of [-1, 1]) {
+    const sh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 10), skin);
+    sh.scale.set(1, 0.92, 1);
+    sh.position.set(shoulderX * s, 0.2, 0);
+    g.add(sh);
+  }
+  return g;
+}
+
 // Worn chest armor: rounded pauldrons over each shoulder, a domed breastplate
 // and a belt line. Anchored at chestArmor (y≈0.95) which sits over the torso.
 // Tinted to the armor's colour so dragon/golden/steel plate all read distinct.
@@ -2150,12 +2345,14 @@ function buildBootOverlay(id, color, side) {
       f.rotation.x = -1.4; f.rotation.z = 0.2;
       wing.add(f);
     }
-    wing.position.set(side * 0.09, 0.06, 0);
+    // Sit the wings + ankle band down on the LOW boot cuff (its top is now around
+    // local y≈0.05), so the feathers hug the boot instead of floating up the shin.
+    wing.position.set(side * 0.09, -0.03, 0);
     wing.rotation.y = side < 0 ? 0.4 : -0.4;
     g.add(wing);
     // a small gold ankle band
     const band = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.012, 6, 14), accent);
-    band.rotation.x = Math.PI / 2; band.position.y = 0.04;
+    band.rotation.x = Math.PI / 2; band.position.y = -0.05;
     g.add(band);
     return g;
   }

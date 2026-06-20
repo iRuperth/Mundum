@@ -22,9 +22,18 @@
 //   levelReq     level the quest unlocks at (quest mounts) — used to sort/show
 //   questId      the quest whose reward grants this mount (quest mounts)
 
-// The two universal mount buffs. A mounted player moves and jumps 30% better.
-export const MOUNT_SPEED_MUL = 1.3;
-export const MOUNT_JUMP_MUL = 1.3;
+// Per-mount buffs. Each mount carries its OWN bonus block:
+//   bonus: { speed, jump, shielding?, hpRegen?, manaRegen? }
+//     speed      additive movement bonus (0.2 = +20% speed)
+//     jump       additive jump-height bonus (0.1 = +10% jump)
+//     shielding  flat shielding/defense added WHILE mounted (bear)
+//     hpRegen    { amount, every } → +amount HP every `every` seconds (scorpion)
+//     manaRegen  { amount, every } → +amount mana every `every` seconds (stag)
+// player.js / main.js read these via mountSystem when the player mounts.
+// (MOUNT_SPEED_MUL / MOUNT_JUMP_MUL kept as a safe fallback for any mount that
+//  somehow lacks a bonus block.)
+export const MOUNT_SPEED_MUL = 1.2;
+export const MOUNT_JUMP_MUL = 1.1;
 
 export const MOUNTS = [
   // ===== SHOP MOUNTS (the stable master sells exactly these two) =====
@@ -34,6 +43,7 @@ export const MOUNTS = [
     family: 'mount_horse',
     color: 0x9a6b3f, scale: 1.0, seatFrac: 0.6, riderScale: 0.82,
     source: 'shop', cost: 450,
+    bonus: { speed: 0.2, jump: 0.1 },
     desc: {
       es: 'Tu primera montura. Un caballo robusto y fiel, perfecto para cubrir el mundo.',
       en: 'Your first mount. A sturdy, faithful horse, perfect for covering ground.',
@@ -45,6 +55,7 @@ export const MOUNTS = [
     family: 'mount_wolf',
     color: 0x6f7480, scale: 1.05, seatFrac: 0.62, riderScale: 0.8,
     source: 'shop', cost: 1200,
+    bonus: { speed: 0.2, jump: 0.2 },
     desc: {
       es: 'Un gran lobo gris domesticado. Ágil y silencioso por los bosques.',
       en: 'A great tamed grey wolf. Nimble and silent through the woods.',
@@ -58,6 +69,7 @@ export const MOUNTS = [
     family: 'mount_tiger',
     color: 0xd98a2b, scale: 1.1, seatFrac: 0.6, riderScale: 0.82,
     source: 'quest', levelReq: 15, questId: 'mount_tiger_quest',
+    bonus: { speed: 0.2, jump: 0.2 },
     desc: {
       es: 'Un tigre de franjas ardientes. Rápido y feroz, recompensa del Domador.',
       en: 'A blazing-striped tiger. Fast and fierce — the Tamer\'s reward.',
@@ -69,6 +81,7 @@ export const MOUNTS = [
     family: 'mount_boar',
     color: 0x5a4030, scale: 1.15, seatFrac: 0.62, riderScale: 0.82,
     source: 'quest', levelReq: 20, questId: 'mount_boar_quest',
+    bonus: { speed: 0.2, jump: 0.1 },
     desc: {
       es: 'Un jabalí acorazado de colmillos enormes. Embiste sin miedo.',
       en: 'An armored boar with huge tusks. It charges without fear.',
@@ -80,9 +93,10 @@ export const MOUNTS = [
     family: 'mount_bear',
     color: 0x5a4030, scale: 1.25, seatFrac: 0.6, riderScale: 0.85,
     source: 'quest', levelReq: 30, questId: 'mount_bear_quest',
+    bonus: { speed: 0.2, jump: 0, shielding: 5 },
     desc: {
-      es: 'Un oso pardo colosal. Lento de aspecto, imparable de verdad.',
-      en: 'A colossal brown bear. Slow-looking, truly unstoppable.',
+      es: 'Un oso pardo colosal. Lento de aspecto, imparable de verdad. Otorga +5 de escudo mientras lo montas.',
+      en: 'A colossal brown bear. Slow-looking, truly unstoppable. Grants +5 shielding while ridden.',
     },
   },
   {
@@ -91,9 +105,10 @@ export const MOUNTS = [
     family: 'mount_stag',
     color: 0x8a5a2a, scale: 1.15, seatFrac: 0.55, riderScale: 0.82,
     source: 'quest', levelReq: 40, questId: 'mount_stag_quest',
+    bonus: { speed: 0.2, jump: 0, manaRegen: { amount: 2, every: 4 } },
     desc: {
-      es: 'Un ciervo de astas enormes y porte noble del bosque profundo.',
-      en: 'A great-antlered stag with the noble bearing of the deep forest.',
+      es: 'Un ciervo de astas enormes y porte noble del bosque profundo. Restaura +2 de maná cada 4 segundos mientras lo montas.',
+      en: 'A great-antlered stag with the noble bearing of the deep forest. Restores +2 mana every 4 seconds while ridden.',
     },
   },
   {
@@ -105,6 +120,7 @@ export const MOUNTS = [
     // off a bbox-fraction seat).
     scale: 1.5, riderY: 0.5, riderScale: 0.78,
     source: 'quest', levelReq: 55, questId: 'mount_spider_quest',
+    bonus: { speed: 0.25, jump: 0.25 },
     desc: {
       es: 'Una araña colosal domada. Trepa donde nadie más se atreve.',
       en: 'A tamed colossal spider. It climbs where none else dare.',
@@ -116,9 +132,10 @@ export const MOUNTS = [
     family: 'mount_scorpion',
     color: 0xc8a44a, scale: 1.3, seatFrac: 0.82, riderScale: 0.8,
     source: 'quest', levelReq: 70, questId: 'mount_scorpion_quest',
+    bonus: { speed: 0.2, jump: 0.1, hpRegen: { amount: 2, every: 4 } },
     desc: {
-      es: 'Un escorpión acorazado de las dunas, con un aguijón curvo y reluciente.',
-      en: 'An armored dune scorpion with a gleaming, curved sting.',
+      es: 'Un escorpión acorazado de las dunas, con un aguijón curvo y reluciente. Restaura +2 de vida cada 4 segundos mientras lo montas.',
+      en: 'An armored dune scorpion with a gleaming, curved sting. Restores +2 HP every 4 seconds while ridden.',
     },
   },
   {
@@ -127,6 +144,7 @@ export const MOUNTS = [
     family: 'mount_wyvern',
     color: 0x4a8a5a, scale: 1.25, seatFrac: 0.62, riderScale: 0.82,
     source: 'quest', levelReq: 85, questId: 'mount_wyvern_quest',
+    bonus: { speed: 0.25, jump: 0.2 },
     desc: {
       es: 'Un wyvern alado de escamas verdes. La penúltima montura, casi un dragón.',
       en: 'A winged green-scaled wyvern. The penultimate mount, almost a dragon.',
@@ -138,6 +156,7 @@ export const MOUNTS = [
     family: 'mount_crystal_dragon',
     color: 0xbfe8ff, scale: 1.5, seatFrac: 0.6, riderScale: 0.85,
     source: 'quest', levelReq: 100, questId: 'mount_dragon_quest',
+    bonus: { speed: 0.2, jump: 0.3 },
     desc: {
       es: 'La montura suprema: un dragón volador de cristal de hielo casi transparente, ' +
         'con escamas heladas, púas de escarcha y un aliento gélido. Solo para los héroes de nivel 100.',

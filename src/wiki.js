@@ -1076,18 +1076,32 @@ export class Wiki {
   // -- MOUNTS ---------------------------------------------------------------
   _mounts() {
     const box = el('div', { class: 'wk-section' });
-    box.appendChild(el('p', { class: 'wk-lead', text: t('wikiMountsLead',
-      `+${Math.round((MOUNT_SPEED_MUL - 1) * 100)}`, `+${Math.round((MOUNT_JUMP_MUL - 1) * 100)}`) }));
+    box.appendChild(el('p', { class: 'wk-lead', text: lang() === 'en'
+      ? 'Each mount has its OWN bonuses — speed and jump, plus a special effect on some.'
+      : 'Cada montura tiene SUS propios bonos — velocidad y salto, y algunas un efecto especial.' }));
 
     const shop = MOUNTS.filter((m) => m.source === 'shop');
     const quest = MOUNTS.filter((m) => m.source === 'quest')
       .sort((a, b) => (a.levelReq || 0) - (b.levelReq || 0));
+
+    // A short stat line for a mount's bonus block (speed/jump + any special).
+    const bonusBits = (b) => {
+      if (!b) return [];
+      const out = [];
+      if (b.speed) out.push(`⚡ +${Math.round(b.speed * 100)}% ${lang() === 'en' ? 'speed' : 'velocidad'}`);
+      if (b.jump) out.push(`🦘 +${Math.round(b.jump * 100)}% ${lang() === 'en' ? 'jump' : 'salto'}`);
+      if (b.shielding) out.push(`🛡️ +${b.shielding} ${lang() === 'en' ? 'shielding' : 'escudo'}`);
+      if (b.hpRegen) out.push(`❤️ +${b.hpRegen.amount} ${lang() === 'en' ? 'HP' : 'vida'}/${b.hpRegen.every}s`);
+      if (b.manaRegen) out.push(`💧 +${b.manaRegen.amount} ${lang() === 'en' ? 'mana' : 'maná'}/${b.manaRegen.every}s`);
+      return out;
+    };
 
     const renderMount = (m) => {
       const card = el('div', { class: 'wk-entry' });
       card.appendChild(el('div', { class: 'wk-entry-head', html:
         `🐎 <b>${loc(m.name)}</b>` }));
       const meta = el('div', { class: 'wk-kv' });
+      for (const bit of bonusBits(m.bonus)) meta.appendChild(el('span', { class: 'wk-tag', text: bit }));
       if (m.source === 'shop') {
         meta.appendChild(kv('🏪', t('wikiMountSource'), t('wikiMountShop')));
         meta.appendChild(kv('💰', t('buy'), `${m.cost}`));

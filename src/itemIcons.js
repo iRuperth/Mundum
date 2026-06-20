@@ -1444,6 +1444,50 @@ function paintContainer(p, item) {
     const sx = 8, sy = 8.4;
     p.poly(`${sx},${sy - 2.4} ${sx + 0.7},${sy - 0.6} ${sx + 2.3},${sy - 0.5} ${sx + 1.0},${sy + 0.7} ${sx + 1.4},${sy + 2.4} ${sx},${sy + 1.4} ${sx - 1.4},${sy + 2.4} ${sx - 1.0},${sy + 0.7} ${sx - 2.3},${sy - 0.5} ${sx - 0.7},${sy - 0.6}`, '#ffe066', '#caa84a');
     p.px(5.2, 6.0, '#ffffff', 0.7, 0.7, 0.9); p.px(11, 7.2, '#ffffff', 0.6, 0.6, 0.9);
+  } else if (/scorpion/i.test(id)) {
+    // Desert SCORPION crest: a black body with curled stinger-tail, pincers and
+    // legs, sitting on the flap of the sandy-tan pack.
+    const k = '#1a120a', kl = '#3a2a16';
+    p.circle(8, 9.4, 1.05, k, null);                       // body / abdomen
+    p.circle(8, 7.9, 0.55, k, null);                       // head
+    // Pincers reaching up-out from the head.
+    p.line(8, 7.9, 6.4, 6.6, k, 0.6); p.poly('6.4,6.6 5.4,5.9 6.0,7.2', k, null);
+    p.line(8, 7.9, 9.6, 6.6, k, 0.6); p.poly('9.6,6.6 10.6,5.9 10.0,7.2', k, null);
+    // Curling tail sweeping up over the back, ending in a stinger.
+    p.parts.push(`<path d="M8 10.4 Q 9.6 11.8 10.6 10.6 Q 11.4 9.6 10.6 8.8" fill="none" stroke="${k}" stroke-width="0.7"/>`);
+    p.circle(10.4, 8.5, 0.45, k, null);                    // stinger bulb
+    p.px(10.3, 7.7, '#d94', 0.5, 0.6, 0.9);                // venom glint
+    // A few little legs.
+    p.line(7.1, 9.2, 6.0, 8.8, kl, 0.4); p.line(7.1, 9.8, 6.0, 10.2, kl, 0.4);
+    p.line(8.9, 9.2, 10.0, 8.8, kl, 0.4); p.line(8.9, 9.8, 10.0, 10.2, kl, 0.4);
+  } else if (/frost/i.test(id)) {
+    // Snow SNOWFLAKE crest: six icy spokes with little side-branches, pale blue-
+    // white on the frosted pack.
+    const ice = '#eaffff', ic2 = '#bfe3f2';
+    const cx = 8, cy = 9;
+    for (let a = 0; a < 6; a++) {
+      const ang = a / 6 * Math.PI * 2;
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      const ex = cx + dx * 2.6, ey = cy + dy * 2.6;
+      p.line(cx, cy, ex, ey, ice, 0.55);
+      // two small barbs partway along each spoke
+      const bx = cx + dx * 1.6, by = cy + dy * 1.6;
+      const px = -dy, py = dx;                              // perpendicular
+      p.line(bx, by, bx + (dx + px) * 0.7, by + (dy + py) * 0.7, ic2, 0.4);
+      p.line(bx, by, bx + (dx - px) * 0.7, by + (dy - py) * 0.7, ic2, 0.4);
+    }
+    p.circle(cx, cy, 0.5, ice, null);
+  } else if (/rosy/i.test(id)) {
+    // Pink premium: a little HEART crest + sparkles on a rosy pack.
+    p.parts.push(`<path d="M8 11 Q 5 8.4 6.2 6.9 Q 7.2 5.9 8 7.1 Q 8.8 5.9 9.8 6.9 Q 11 8.4 8 11 Z" fill="#ffd0e2" stroke="#d94f86" stroke-width="0.45"/>`);
+    p.px(5.4, 6.2, '#ffffff', 0.6, 0.6, 0.9); p.px(11, 7.4, '#ffffff', 0.6, 0.6, 0.9);
+  } else if (/purple_premium/i.test(id)) {
+    // Violet premium: a four-point sparkle/diamond crest, deep violet glow. (Only
+    // the premium `purple_premium_*` pack — the basic `violet_*` colour stays plain.)
+    const sx = 8, sy = 8.6;
+    p.poly(`${sx},${sy - 2.4} ${sx + 1.0},${sy} ${sx},${sy + 2.4} ${sx - 1.0},${sy}`, '#e6c8ff', '#7d2fb8');
+    p.line(sx - 2.2, sy, sx + 2.2, sy, '#c9a0e8', 0.4);
+    p.px(5.4, 6.2, '#ffffff', 0.6, 0.6, 0.9); p.px(10.8, 7.2, '#ffffff', 0.6, 0.6, 0.9);
   }
 }
 

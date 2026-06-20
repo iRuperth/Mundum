@@ -132,6 +132,8 @@ export class Net {
       .on('broadcast', { event: 'gm_kick' }, ({ payload }) => this._onGmKick(payload))
       .on('broadcast', { event: 'house_sync' }, ({ payload }) => this._onHouseSync(payload))
       .on('broadcast', { event: 'house_inside' }, ({ payload }) => this._onHouseInside(payload))
+      .on('broadcast', { event: 'house_visit' }, ({ payload }) => { if (this._cb.houseVisit) this._cb.houseVisit(payload); })
+      .on('broadcast', { event: 'status' }, ({ payload }) => { if (this._cb.status) this._cb.status(payload); })
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
         if (key === id) return;
         const meta = (newPresences && newPresences[0]) || {};
@@ -409,8 +411,26 @@ export class Net {
     this.channel.send({ type: 'broadcast', event: 'house_inside', payload: { from: this.user.id, lotId, inside: !!inside } });
   }
 
+  // Tell the OWNER of `ownerId`'s house that I just visited it, so they can show
+  // "X visited your house" when they next wake/log in. Carries my name + a stamp.
+  houseVisit(ownerId, lotId, visitorName, at) {
+    if (!this._online || !this.channel || !ownerId) return;
+    this.channel.send({ type: 'broadcast', event: 'house_visit',
+      payload: { from: this.user.id, ownerId, lotId, visitorName, at } });
+  }
+
+  // Broadcast a coarse status (e.g. {sleeping:true}) so peers can render it.
+  setStatus(status) {
+    if (!this._online || !this.channel) return;
+    this.channel.send({ type: 'broadcast', event: 'status', payload: { from: this.user.id, status } });
+  }
+
+  // My own user id (or null offline) — used to filter house-visit broadcasts.
+  userId() { return this.user ? this.user.id : null; }
+
   onHouseSync(cb) { this._cb.houseSync = cb; }
   onHouseInside(cb) { this._cb.houseInside = cb; }
+  onHouseVisit(cb) { this._cb.houseVisit = cb; }
 
   // trade
   //

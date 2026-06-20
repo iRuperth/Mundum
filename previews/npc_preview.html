@@ -2,6 +2,8 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="../freshreg.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>NPC Preview — Mundum</title>
 <script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
@@ -31,6 +33,7 @@
 import * as THREE from 'three';
 import { buildNpcModel, NPC_MODEL_KEYS } from '../src/npcModels.js';
 import { NPCS } from '../src/data/npcs.js';
+import { lookForNpc } from '../src/worldNpcs.js';
 
 // --- scene ---------------------------------------------------------------
 const stage = document.getElementById('stage');
@@ -54,9 +57,12 @@ const root = new THREE.Group(); scene.add(root);
 let model = null, spinning = true, moving = false, current = null;
 
 // Distinct colours per role so vendor variants don't all look the same.
-function buildModel(modelKey, color, label) {
+function buildModel(modelKey, color, label, look) {
   if (model) { root.remove(model.group); model.dispose(); }
-  model = buildNpcModel(modelKey, color != null ? { color } : {});
+  const opts = {};
+  if (color != null) opts.color = color;
+  if (look) opts.look = look;
+  model = buildNpcModel(modelKey, opts);
   root.add(model.group);
   nameEl.innerHTML = label;
   current = label;
@@ -82,7 +88,7 @@ for (const k of NPC_MODEL_KEYS) {
 section('NPCs del juego (' + NPCS.length + ')');
 for (const n of NPCS) {
   btn(`${n.name}  ·  ${n.role}`, () => buildModel(n.model, n.color,
-    `${n.name} <small>(${n.role} · ${n.city || '—'})</small><br><small>modelo: ${n.model}</small>`));
+    `${n.name} <small>(${n.role} · ${n.city || '—'})</small><br><small>modelo: ${n.model}</small>`, lookForNpc(n)));
 }
 
 // start on the first base model

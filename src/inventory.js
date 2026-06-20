@@ -4,7 +4,14 @@ import { getMaterial, instanceFromMaterial, genericMaterial } from './data/mater
 
 export const EQUIP_SLOTS = ['amulet', 'helmet', 'weapon', 'armor', 'shield', 'legs', 'boots', 'bag', 'extra', 'ring', 'quiver'];
 const BASE_CAPACITY = 400;
-const CAP_PER_LEVEL = 12;
+// Capacity gained PER LEVEL depends on vocation (heavier melee classes carry more):
+//   knight  +20   (front-line, lugs the most loot/armor)
+//   paladin +15   (Archer line; id is 'paladin' for save-compat)
+//   mage    +10   (squishy caster)
+//   druid   +10   (caster, same as mage)
+// Falls back to mage's +10 for any unknown profession.
+const CAP_PER_LEVEL = { knight: 20, paladin: 15, mage: 10, druid: 10 };
+const CAP_PER_LEVEL_DEFAULT = 10;
 
 function norm(id) {
   return String(id || '').toLowerCase().replace(/-/g, '_');
@@ -353,7 +360,9 @@ export class Inventory {
   }
 
   capacity(level) {
-    return BASE_CAPACITY + (level - 1) * CAP_PER_LEVEL;
+    // Per-level gain scales by the player's vocation (set via setProfession).
+    const perLevel = CAP_PER_LEVEL[this.profession] != null ? CAP_PER_LEVEL[this.profession] : CAP_PER_LEVEL_DEFAULT;
+    return BASE_CAPACITY + (level - 1) * perLevel;
   }
 
   canCarry(item, level) {
@@ -459,6 +468,48 @@ export class Inventory {
 
   removeFromBackpack(index) {
     return this.backpack.splice(index, 1)[0] || null;
+  }
+
+  // Remove a SPECIFIC item object from wherever it lives — an EQUIPPED slot, the
+  // top-level backpack, OR inside any nested bag. Returns the removed item (or
+  // null). Used when the house showcase lets the owner hang any held item,
+  // identified by reference rather than an index.
+  removeItemRef(item) {
+    if (!item) return null;
+    // Equipped slots (the worn piece itself).
+    for (const s of EQUIP_SLOTS) {
+      if (this.equip[s] === item) { this.equip[s] = null; return item; }
+    }
+    let i = this.backpack.indexOf(item);
+    if (i >= 0) return this.backpack.splice(i, 1)[0];
+    for (const it of this.backpack) {
+      if (!it || !Array.isArray(it.contents)) continue;
+      i = it.contents.indexOf(item);
+      if (i >= 0) return it.contents.splice(i, 1)[0];
+    }
+    return null;
+  }
+
+  // Every held item — EQUIPPED gear, top-level backpack, and inside nested bags —
+  // each tagged with where it lives so a caller can show one flat list (e.g. the
+  // house showcase picker). Returns [{ item, bagIndex, equipSlot }]: equipSlot is
+  // the paperdoll slot name for worn gear (else null); bagIndex is -1 for the
+  // top-level backpack, else the index of the containing bag.
+  allHeldItems() {
+    const out = [];
+    // Worn equipment first (so the player's best pieces head the picker). The
+    // equipped bag is skipped — it IS the backpack, not a display piece.
+    for (const s of EQUIP_SLOTS) {
+      if (s === 'bag') continue;
+      const it = this.equip[s];
+      if (it) out.push({ item: it, bagIndex: -1, equipSlot: s });
+    }
+    this.backpack.forEach((it, bi) => {
+      if (!it) return;
+      out.push({ item: it, bagIndex: -1, equipSlot: null });
+      if (Array.isArray(it.contents)) for (const c of it.contents) if (c) out.push({ item: c, bagIndex: bi, equipSlot: null });
+    });
+    return out;
   }
 
   // Nested bags: move an item from the main backpack INTO a container that is

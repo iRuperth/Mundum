@@ -10,6 +10,9 @@
 //   buyMult  price the player pays  = floor(item.value * buyMult)
 //   sellMult coins the player gets  = floor(item.value * sellMult)
 //   sells    what the vendor offers to BUY-from: { kinds:[], types:[], slots:[], excludePct } or { all:true }
+//            plus optional `also:[ids]` — extra item ids stocked ON TOP of the
+//            category rules; this is how a city sells its EXCLUSIVE premium
+//            container(s) (star/pink/violet/scorpion/snowflake bags+backpacks).
 //   buys     what the vendor accepts when the player SELLS: same shape (omit = nothing)
 
 export const NPCS = [
@@ -111,18 +114,20 @@ export const NPCS = [
   {
     id: 'rivertown_bagseller', name: 'Sela of the Sacks', city: 'rivertown', role: 'vendor',
     model: 'woman', color: 0xc06bb0, district: 'bag', offset: { x: -22, z: -8 },
-    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'] }, buys: { kinds: ['container'] } },
+    // Greenhollow exclusive: the Star bag/backpack (also: star_*). Other premium
+    // designs are sold only in their own distant cities.
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['star_bag', 'star_backpack'] }, buys: { kinds: ['container'] } },
     greeting: { es: 'Bolsas y mochilas, de todos los colores!', en: 'Bags and backpacks, in every color!' },
     lines: {
       es: [
         'Cosí cada mochila a mano. La roja, la azul, la que prefieras.',
         'Una buena mochila carga más botín y te hace ver con estilo.',
-        'Me llaman Sela de los Sacos. Nadie tiene más bolsas que yo.',
+        'Mi orgullo es la mochila de estrella: ¡solo la vendo yo, aquí en Greenhollow!',
       ],
       en: [
         'I stitched every backpack by hand. Red, blue, whichever you fancy.',
         'A good backpack carries more loot — and looks sharp doing it.',
-        'They call me Sela of the Sacks. No one carries more bags than I do.',
+        'My pride is the Star backpack — only I sell it, here in Greenhollow!',
       ],
     },
   },
@@ -280,6 +285,17 @@ export const NPCS = [
     lines: {
       es: ['Las mejores hierbas crecen donde nadie mira.', 'Old Wren me enseno todo lo que se.'],
       en: ['The best herbs grow where no one looks.', 'Old Wren taught me everything I know.'],
+    },
+  },
+  {
+    // Oakvale's bag vendor: basics in every colour PLUS the exclusive Violet pack.
+    id: 'oakvale_bagseller', name: 'Weaver Linnet', city: 'oakvale', role: 'vendor',
+    model: 'woman', color: 0x8a5fb0, district: 'market', offset: { x: 26, z: 18 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['purple_premium_bag', 'purple_premium_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Bolsas tenidas con bayas del bosque.', en: 'Bags dyed with forest berries.' },
+    lines: {
+      es: ['Tino mis mochilas con bayas: ningun violeta es mas vivo.', 'La mochila violeta solo se vende aqui, en Oakvale.'],
+      en: ['I dye my packs with berries — no violet is deeper.', 'The Violet backpack is sold only here, in Oakvale.'],
     },
   },
   {
@@ -490,14 +506,14 @@ export const NPCS = [
     },
   },
 
-  // Dragonreach: distant town near the dragon peaks.
+  // Dragonreach: a desert tomb-city; its dragon-hunters set out north toward the distant peaks.
   {
     id: 'dragonreach_priest', name: 'Oracle Sena', city: 'dragonreach', role: 'priest',
     model: 'priest', color: 0xf0d9b5, offset: { x: 0, z: -4 },
-    greeting: { es: 'Los dragones observan desde las cumbres.', en: 'Dragons watch from the peaks.' },
+    greeting: { es: 'Las arenas guardan a los muertos, y los muertos guardan sus secretos.', en: 'The sands keep the dead, and the dead keep their secrets.' },
     lines: {
-      es: ['Solo los mas fuertes llegan tan lejos.', 'Cura tus heridas, las necesitaras.', 'El fuego antiguo aun arde alli arriba.'],
-      en: ['Only the strongest reach this far.', 'Heal your wounds, you will need it.', 'Ancient fire still burns up there.'],
+      es: ['Solo los mas fuertes sobreviven a las tumbas.', 'Cura tus heridas, las necesitaras.', 'El polvo antiguo aun susurra bajo la arena.'],
+      en: ['Only the strongest survive the tombs.', 'Heal your wounds, you will need it.', 'Ancient dust still whispers beneath the sand.'],
     },
   },
   {
@@ -512,10 +528,10 @@ export const NPCS = [
   {
     id: 'dragonreach_sage', name: 'Sage Orin', city: 'dragonreach', role: 'questgiver',
     model: 'wizard', color: 0x4a55a8, offset: { x: 6, z: 3 },
-    greeting: { es: 'Conozco los secretos de los dragones.', en: 'I know the secrets of dragons.' },
+    greeting: { es: 'Conozco el viejo saber de los dragones, aunque los dragones queden a un largo camino al norte.', en: 'I know the old dragon-lore, though the dragons themselves are a long road north.' },
     lines: {
-      es: ['Las escamas de dragon tienen gran poder.', 'Traeme reliquias de las cumbres.', 'El saber antiguo abre nuevas puertas.'],
-      en: ['Dragon scales hold great power.', 'Bring me relics from the peaks.', 'Old wisdom opens new doors.'],
+      es: ['Las escamas de dragon tienen gran poder, si sobrevives al viaje al norte.', 'Traeme reliquias de las cumbres lejanas del norte.', 'El saber antiguo abre nuevas puertas.'],
+      en: ['Dragon scales hold great power, if you survive the trek north.', 'Bring me relics from the distant northern peaks.', 'Old wisdom opens new doors.'],
     },
   },
   {
@@ -523,8 +539,8 @@ export const NPCS = [
     model: 'guard', color: 0x9c5a4a, offset: { x: 5, z: -5 },
     greeting: { es: 'Este es el ultimo bastion del mundo.', en: 'This is the world last bastion.' },
     lines: {
-      es: ['Mas alla solo hay fuego y garras.', 'Vigilo el cielo por si vuelan dragones.', 'No avances sin estar bien preparado.'],
-      en: ['Beyond lie only fire and claws.', 'I watch the sky for flying dragons.', 'Do not advance unprepared.'],
+      es: ['Mas alla de los muros: arena, escorpiones y los muertos sin descanso.', 'Vigilo las dunas por si aparecen escorpiones y saqueadores de tumbas.', 'No avances sin estar bien preparado.'],
+      en: ['Beyond the walls: sand, scorpions, and the restless dead.', 'I watch the dunes for scorpions and grave-robbers.', 'Do not advance unprepared.'],
     },
   },
   // --- Dragonreach vendors (one per district) and desert-city folk -----------
@@ -554,8 +570,8 @@ export const NPCS = [
     shop: { buyMult: 1, sellMult: 0.4, sells: { types: ['wand'] }, buys: { types: ['wand'] } },
     greeting: { es: 'Varitas que canalizan el fuego antiguo.', en: 'Wands that channel the ancient fire.' },
     lines: {
-      es: ['Las escamas de dragon guardan magia dormida.', 'Una varita de fuego no teme a la noche del desierto.'],
-      en: ['Dragon scales hold sleeping magic.', 'A fire wand fears no desert night.'],
+      es: ['Las escamas que traen del lejano norte guardan magia dormida.', 'Una varita de fuego no teme a la noche del desierto.'],
+      en: ['The scales hauled from the far north hold sleeping magic.', 'A fire wand fears no desert night.'],
     },
   },
   {
@@ -569,12 +585,24 @@ export const NPCS = [
     },
   },
   {
+    // Dragonreach's bag vendor: basics plus the exclusive Scorpion pack (sandy
+    // tan with a black scorpion crest — the desert design).
+    id: 'dragonreach_bagseller', name: 'Sackmaker Qadir', city: 'dragonreach', role: 'vendor',
+    model: 'merchant', color: 0xc9a86a, district: 'market', offset: { x: -24, z: 16 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['scorpion_bag', 'scorpion_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Sacos de cuero curtido al sol del desierto.', en: 'Sacks of leather tanned in desert sun.' },
+    lines: {
+      es: ['Mi mochila del escorpion solo se cose aqui, en Dragonreach.', 'El cuero del desierto aguanta la arena y el sol.'],
+      en: ['My Scorpion backpack is stitched only here, in Dragonreach.', 'Desert leather shrugs off sand and sun.'],
+    },
+  },
+  {
     id: 'dragonreach_banker', name: 'Treasurer Amset', city: 'dragonreach', role: 'banker',
     model: 'merchant', color: 0xd9b34a, offset: { x: -12, z: 0 },
     greeting: { es: 'La camara del tesoro esta sellada con runas.', en: 'The treasure chamber is sealed with runes.' },
     lines: {
-      es: ['Ni la arena ni los ladrones entran aqui.', 'Guarda tu oro antes de retar a los dragones.'],
-      en: ['Neither sand nor thieves get in here.', 'Store your gold before you challenge dragons.'],
+      es: ['Ni la arena ni los ladrones entran aqui.', 'Guarda tu oro antes de adentrarte en las tumbas.'],
+      en: ['Neither sand nor thieves get in here.', 'Store your gold before you brave the tombs.'],
     },
   },
   {
@@ -600,8 +628,8 @@ export const NPCS = [
     model: 'woman', color: 0xc05a8a, offset: { x: 24, z: -28 },
     greeting: { es: 'El desierto es duro; alegralo un poco.', en: 'The desert is harsh; brighten it a little.' },
     lines: {
-      es: ['Bailo para los que vuelven vivos de las cumbres.', 'Una moneda y te cuento el rumor del dia.', 'Hasta los dragones se calman con buena musica.'],
-      en: ['I dance for those who return alive from the peaks.', 'A coin and I will tell you today rumor.', 'Even dragons settle for good music.'],
+      es: ['Bailo para los que vuelven vivos del largo camino al norte.', 'Una moneda y te cuento el rumor del dia.', 'Dicen que hasta las momias se calman con buena musica.'],
+      en: ['I dance for those who return alive from the long road north.', 'A coin and I will tell you today rumor.', 'They say even the mummies settle for good music.'],
     },
   },
   {
@@ -618,8 +646,8 @@ export const NPCS = [
     model: 'king', color: 0xa05a2a, offset: { x: 0, z: 20 },
     greeting: { es: 'Bienvenido a Dragonreach, el ultimo bastion.', en: 'Welcome to Dragonreach, the last bastion.' },
     lines: {
-      es: ['Deseas residenciarte? Renaceras bajo las piramides.', 'Solo los valientes hacen hogar tan cerca de los dragones.'],
-      en: ['Would you settle here? You will respawn beneath the pyramids.', 'Only the bold make a home this close to dragons.'],
+      es: ['Deseas residenciarte? Renaceras bajo las piramides.', 'Solo los valientes hacen hogar al borde del desierto, entre las tumbas.'],
+      en: ['Would you settle here? You will respawn beneath the pyramids.', 'Only the bold make a home at the desert edge, among the tombs.'],
     },
   },
   {
@@ -709,6 +737,17 @@ export const NPCS = [
     lines: {
       es: ['Algas, sal y un secreto que no contare.', 'Bebe esto y ni la peor tormenta te tumba.'],
       en: ['Kelp, salt and a secret I will not tell.', 'Drink this and no storm will lay you low.'],
+    },
+  },
+  {
+    // Westharbor's bag vendor: basics plus the exclusive Pink pack.
+    id: 'westharbor_bagseller', name: 'Sailmaker Posy', city: 'westharbor', role: 'vendor',
+    model: 'woman', color: 0xd87aa5, district: 'market', offset: { x: 22, z: 20 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['rosy_bag', 'rosy_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Bolsas cosidas con lona de vela.', en: 'Bags sewn from sailcloth.' },
+    lines: {
+      es: ['Tino la lona de rosa con caracolas del puerto.', 'La mochila rosa solo zarpa desde aqui, Westharbor.'],
+      en: ['I dye sailcloth pink with harbour shells.', 'The Pink backpack sets sail only from here, Westharbor.'],
     },
   },
   {
@@ -854,6 +893,18 @@ export const NPCS = [
     lines: {
       es: ['Mezclo musgo de nieve y grasa de oso.', 'Sin una de estas, no cruces el paso del norte.'],
       en: ['I mix snow-moss and bear fat.', 'Without one of these, do not cross the north pass.'],
+    },
+  },
+  {
+    // Frostpeak's bag vendor: basics plus the exclusive Snowflake pack (icy white-
+    // blue with a crystalline snowflake crest — the snow design).
+    id: 'frostpeak_bagseller', name: 'Stitcher Yrsa', city: 'frostpeak', role: 'vendor',
+    model: 'woman', color: 0x9fc7e0, district: 'market', offset: { x: -20, z: 22 },
+    shop: { buyMult: 1, sellMult: 0.45, sells: { kinds: ['container'], also: ['frost_bag', 'frost_backpack'] }, buys: { kinds: ['container'] } },
+    greeting: { es: 'Bolsas forradas de piel contra el frio.', en: 'Fur-lined bags against the cold.' },
+    lines: {
+      es: ['Bordo un copo de nieve en cada mochila escarchada.', 'La mochila de copo solo se cose aqui, en Frostpeak.'],
+      en: ['I stitch a snowflake on every frosted pack.', 'The Snowflake backpack is sewn only here, in Frostpeak.'],
     },
   },
   {
@@ -1066,6 +1117,113 @@ export const NPCS = [
       en: ['Would you settle here? You will respawn by the oasis.', 'Here water is shared and the stranger is a guest.'],
     },
   },
+
+  // ===================================================================
+  // LORE CHARACTERS — hand-authored, each unique in look AND story. Their
+  // `look` overrides the procedural generator; their `lore` ties them to the
+  // world (rumors, family feuds, the haunting outside Greenhollow).
+  // ===================================================================
+
+  // The madman of Greenhollow: went mad after seeing ghosts outside the walls.
+  // Nobody believes him. (Wild white beard, bushy brows, a thousand-yard stare.)
+  {
+    id: 'rivertown_madman', name: 'Loco Crispín', city: 'rivertown', role: 'villager',
+    model: 'man', color: 0x6a6258, offset: { x: -8, z: 8 },
+    look: { build: 'slim', beard: 'wild', hair: 0xe8e4dc, bushyBrows: true, scar: true, skin: 0xc68a5a },
+    greeting: { es: '¡Los vi! ¡Flotaban tras los árboles, te lo juro!', en: 'I saw them! Floating past the trees, I swear!' },
+    lines: {
+      es: [
+        'Salí a cazar conejos y los espectros me miraron con ojos vacíos.',
+        'Nadie me cree. Dicen que el vino me secó la cabeza. ¡Pero yo SÉ lo que vi!',
+        'No salgas de noche. El bosque ya no es nuestro… algo despertó ahí afuera.',
+      ],
+      en: [
+        'I went out for rabbits and the wraiths stared at me with hollow eyes.',
+        'No one believes me. They say wine rotted my mind. But I KNOW what I saw!',
+        'Don\'t go out at night. The forest isn\'t ours anymore… something woke out there.',
+      ],
+    },
+  },
+
+  // The half-orc of Greenhollow: human skin, but orc tusks and brawn. Stepson of
+  // a human woman and an orc — caught between two peoples, accepted by neither.
+  {
+    id: 'rivertown_halforc', name: 'Borgan el Mestizo', city: 'rivertown', role: 'villager',
+    model: 'guard', color: 0x5a6a4a, offset: { x: 9, z: 7 },
+    look: { tusks: true, build: 'broad', skin: 0xb8a06a, hair: 0x2a1a10, beard: 'short', scar: true, hat: 'none' },
+    greeting: { es: 'Sí, tengo colmillos. No, no voy a comerte. Siéntate.', en: 'Yes, I have tusks. No, I won\'t eat you. Sit.' },
+    lines: {
+      es: [
+        'Mi madre era humana de esta ciudad; mi padrastro, un orco de las colinas.',
+        'Los humanos me temen y los orcos me llaman débil. No pertenezco a ninguno.',
+        'Si vas a las tierras orcas, di que eres amigo de Borgan. Tal vez te perdonen la vida.',
+      ],
+      en: [
+        'My mother was a human of this town; my stepfather, an orc of the hills.',
+        'Humans fear me and orcs call me weak. I belong to neither.',
+        'If you go to the orc lands, say you\'re a friend of Borgan. They might spare you.',
+      ],
+    },
+  },
+
+  // Feuding cousins: Dorbel in Stonehaven and Marvel in Sandport. Same grandfather,
+  // a disputed inheritance (a mine), and they haven't spoken in twenty years.
+  {
+    id: 'stonehaven_cousin', name: 'Dorbel Picacueva', city: 'stonehaven', role: 'villager',
+    model: 'smith', color: 0x6a5a4a, offset: { x: -7, z: -9 },
+    look: { build: 'dwarf', beard: 'full', hair: 0x6a4a2a, bushyBrows: true, hat: 'cap' },
+    greeting: { es: 'Bah. ¿Vienes de parte de mi primo? Entonces vete.', en: 'Bah. Did my cousin send you? Then leave.' },
+    lines: {
+      es: [
+        'Mi primo Marvel, en Sandport, me robó la mina de nuestro abuelo. ¡Ladrón!',
+        'Veinte años sin hablarnos. Y que siga así hasta que devuelva lo que es mío.',
+        'Si lo ves en el desierto, dile que Dorbel no ha olvidado. Ni perdonado.',
+      ],
+      en: [
+        'My cousin Marvel, in Sandport, stole our grandfather\'s mine. Thief!',
+        'Twenty years without a word. Let it stay that way till he returns what\'s mine.',
+        'If you see him in the desert, tell him Dorbel has not forgotten. Nor forgiven.',
+      ],
+    },
+  },
+  {
+    id: 'sandport_cousin', name: 'Marvel Picacueva', city: 'sandport', role: 'villager',
+    model: 'merchant', color: 0xc8a44a, offset: { x: 8, z: -8 },
+    look: { build: 'fat', beard: 'goatee', hair: 0x4a2f1b, hat: 'feather', monocle: true },
+    greeting: { es: 'Ah, un viajero del norte. ¿No te habrá enviado el amargado de Dorbel?', en: 'Ah, a northern traveler. Did sour old Dorbel send you?' },
+    lines: {
+      es: [
+        'Mi primo Dorbel dice que le robé una mina. ¡La gané en una apuesta, justa y legal!',
+        'Él se quedó en las montañas heladas, rumiando. Yo prosperé bajo el sol. ¿Quién ganó?',
+        'Dile que la puerta de mi casa está abierta… si trae una disculpa.',
+      ],
+      en: [
+        'Cousin Dorbel says I stole a mine. I WON it in a wager, fair and square!',
+        'He stayed in the frozen mountains, sulking. I prospered under the sun. Who won?',
+        'Tell him my door is open… if he brings an apology.',
+      ],
+    },
+  },
+
+  // A retired one-eyed sailor in Westharbor with tall tales of sea monsters.
+  {
+    id: 'westharbor_sailor', name: 'Viejo Marlo', city: 'westharbor', role: 'villager',
+    model: 'man', color: 0x3a6a8a, offset: { x: -6, z: 9 },
+    look: { eyepatch: 1, beard: 'long', hair: 0xd8d8d8, bandana: true, hat: 'bandana', skin: 0x9c6b43 },
+    greeting: { es: 'Perdí el ojo con un kraken. ¿O fue una resaca? Ya no recuerdo.', en: 'Lost the eye to a kraken. Or a hangover? I forget.' },
+    lines: {
+      es: [
+        'Cuarenta años en el mar y aún sueño con la cosa de mil brazos.',
+        'Los jóvenes ríen, pero el océano se traga barcos enteros sin pedir permiso.',
+        'Si zarpas, lleva sal bendita. A las criaturas del fondo no les gusta.',
+      ],
+      en: [
+        'Forty years at sea and I still dream of the thing with a thousand arms.',
+        'The young laugh, but the ocean swallows whole ships without asking.',
+        'If you sail, bring blessed salt. The deep things don\'t care for it.',
+      ],
+    },
+  },
 ];
 
 // A "remains buyer" in EVERY city: buys creature trophies (rat tail, demon horn,
@@ -1092,6 +1250,52 @@ for (let i = 0; i < REMAINS_CITIES.length; i++) {
     lines: {
       es: ['Todo resto tiene su precio, por humilde que sea.', 'Los cazadores listos venden hasta las colas de rata.'],
       en: ['Every scrap has a price, however humble.', 'Smart hunters sell even rat tails.'],
+    },
+  });
+}
+
+// The RARITY COLLECTOR: an exclusive buyer in every city who pays REAL money for
+// rare gear (epic/legendary weapons, armor, jewelry) that no normal shop will
+// touch. Pays by level (levelReq × 100 → shown as silver/gold). He never SELLS —
+// his stall walls are lined with jewels, plate and trophies as decoration only.
+// `rarity: true` flags his shop so vendorBuysItem/sellPrice use the collector path.
+const COLLECTOR_CITIES = ['rivertown', 'oakvale', 'stonehaven', 'frostpeak', 'sandport', 'westharbor', 'dragonreach'];
+const COLLECTOR_INFO = {
+  rivertown:  { name: 'Lord Velasco', look: { build: 'fat', beard: 'goatee', hat: 'feather', monocle: true, hair: 0x2a1a10 } },
+  oakvale:    { name: 'Dame Ysolde', model: 'woman', look: { glasses: true, hair: 0xd8d8d8 } },
+  stonehaven: { name: 'Baron Krell', look: { build: 'broad', beard: 'full', hat: 'feather', hair: 0x555555, scar: true } },
+  frostpeak:  { name: 'Collector Voss', look: { build: 'slim', beard: 'long', hair: 0xe8e4dc, monocle: true } },
+  sandport:   { name: 'Emir Hadi', model: 'king', look: undefined },
+  westharbor: { name: 'Madame Corla', model: 'woman', look: { hair: 0x992222 } },
+  dragonreach:{ name: 'Magnate Orin', look: { build: 'fat', beard: 'short', hat: 'feather', monocle: true } },
+};
+for (let i = 0; i < COLLECTOR_CITIES.length; i++) {
+  const city = COLLECTOR_CITIES[i];
+  const info = COLLECTOR_INFO[city] || { name: 'Collector' };
+  NPCS.push({
+    id: `${city}_collector`, name: info.name, city, role: 'vendor',
+    model: info.model || 'merchant', color: 0x6a2a5a,
+    look: info.look,
+    // His own ornate stall, off to the side (not a district building).
+    offset: { x: -16 - (i % 2) * 3, z: 13 + (i % 3) * 3 },
+    collector: true,
+    // rarity:true tells the shop helpers to buy ANY rare gear and price by level.
+    shop: { rarity: true, buyMult: 1, sellMult: 0, sells: {}, buys: { rarity: true } },
+    greeting: {
+      es: 'Colecciono lo extraordinario. Si tienes algo raro, pagaré en plata… y oro.',
+      en: 'I collect the extraordinary. If you have something rare, I pay in silver… and gold.',
+    },
+    lines: {
+      es: [
+        'Las tiendas no tocan el equipo legendario. Yo sí — y pago por su nivel.',
+        'Un peto de nivel sesenta vale sesenta piezas de plata. Anillos y collares, mil de bronce.',
+        'Lo que ves en mis paredes no está a la venta. Son mis tesoros, mira pero no toques.',
+      ],
+      en: [
+        'Shops won\'t touch legendary gear. I will — and I pay for its level.',
+        'A level-sixty cuirass is worth sixty silver. Rings and amulets, a thousand bronze.',
+        'What hangs on my walls is not for sale. They are my treasures — look, don\'t touch.',
+      ],
     },
   });
 }

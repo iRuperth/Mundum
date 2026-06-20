@@ -24,24 +24,22 @@ function addDorsalSpine(root, parts, tint, API, mag = 0.5) {
   const m = API.lambert(API.shade(tint, 0.5));
   const standY = (parts && parts.standY) || 0.58;
   const r = (parts && parts.r) || 0.3;
-  // back ridge
+  // back ridge — base-anchored so each plate roots into the spine and rises out
+  // of the back, not a cone hovering above it. Seated a touch below the centre.
   for (let i = 0; i < 8; i++) {
-    const sp = mesh(G.cone, m);
     const hump = Math.sin((i / 7) * Math.PI);
     const sc = (0.09 + hump * 0.07) * mag * 2;
-    sp.scale.set(0.022 * mag * 2.4, sc, 0.05 * mag * 2.4);
-    sp.position.set(0, standY + r * 0.7 + hump * 0.05, r * 0.55 - i * (r * 1.5 / 7));
-    sp.rotation.x = 0.15;
-    root.add(sp);
+    const sp = API.addSpike(root, 0, standY + r * 0.58 + hump * 0.05,
+      r * 0.55 - i * (r * 1.5 / 7), 0.022 * mag * 2.4, sc, m, 0.15, 0, 0, false);
+    sp.scale.z = 0.05 * mag * 2.4;   // keep the flattened plate cross-section
   }
   // tail spines, parented to the tail group so they sweep with it
   if (parts && parts.tail) {
     for (let i = 0; i < 5; i++) {
-      const sp = mesh(G.cone, m);
       const sc = (0.06 - i * 0.008) * mag * 2;
-      sp.scale.set(0.018 * mag * 2, sc, 0.04 * mag * 2);
-      sp.position.set(0, r * 0.4 - i * r * 0.05, -i * r * 0.42 - r * 0.2);
-      parts.tail.add(sp);
+      const sp = API.addSpike(parts.tail, 0, r * 0.32 - i * r * 0.05,
+        -i * r * 0.42 - r * 0.2, 0.018 * mag * 2, sc, m, 0, 0, 0, false);
+      sp.scale.z = 0.04 * mag * 2;
     }
   }
 }
@@ -82,20 +80,18 @@ function addDragonMaw(head, r, tint, API, opts = {}) {
   gum.position.set(0, -r * 0.08, r * 0.55);
   head.add(gum);
 
-  // upper + lower fangs
+  // upper + lower fangs — base-anchored so each fang's root sits ON the gum and
+  // grows out of the jaw, instead of a centre-anchored cone hovering in the maw.
   const teeth = opts.teeth || 4;
   for (let i = 0; i < teeth; i++) {
     const t = (i / Math.max(1, teeth - 1) - 0.5) * 2; // -1..1
-    const upper = mesh(G.cone, tooth);
     const big = (i === 0 || i === teeth - 1) ? 1.5 : 1;
-    upper.scale.set(r * 0.05, r * 0.16 * big, r * 0.05);
-    upper.position.set(t * r * 0.18, -r * 0.04, r * 0.7 - Math.abs(t) * r * 0.05);
-    upper.rotation.x = Math.PI;
-    head.add(upper);
-    const lower = mesh(G.cone, tooth);
-    lower.scale.set(r * 0.045, r * 0.13 * big, r * 0.045);
-    lower.position.set(t * r * 0.16, -r * 0.28, r * 0.62 - Math.abs(t) * r * 0.04);
-    head.add(lower);
+    // upper fang: root on the upper gum, pointing DOWN into the mouth
+    API.addSpike(head, t * r * 0.18, -r * 0.04, r * 0.7 - Math.abs(t) * r * 0.05,
+      r * 0.05, r * 0.16 * big, tooth, Math.PI, 0, 0, false);
+    // lower fang: root on the lower gum, pointing UP
+    API.addSpike(head, t * r * 0.16, -r * 0.28, r * 0.62 - Math.abs(t) * r * 0.04,
+      r * 0.045, r * 0.13 * big, tooth, 0, 0, 0, false);
   }
 }
 
@@ -104,29 +100,20 @@ function addDragonHorns(head, r, tint, API, opts = {}) {
   const { mesh, G } = API;
   const hornM = API.lambert(opts.hornColor != null ? opts.hornColor : API.shade(tint, 0.4));
   const big = opts.big || 1;
-  // main swept horns
+  // Every horn/spike is base-anchored (API.addSpike) so its root seats on the
+  // skull and the horn grows outward, instead of a centre-anchored cone whose
+  // wide base hovered off the head.
   for (const s of [-1, 1]) {
-    const horn = mesh(G.cone, hornM);
-    horn.scale.set(r * 0.1 * big, r * 0.6 * big, r * 0.1 * big);
-    horn.position.set(s * r * 0.3, r * 0.52, -r * 0.28);
-    horn.rotation.x = -0.7;
-    horn.rotation.z = -s * 0.35;
-    head.add(horn);
+    // main swept horn
+    API.addSpike(head, s * r * 0.3, r * 0.46, -r * 0.26, r * 0.1 * big, r * 0.6 * big,
+      hornM, -0.7, 0, -s * 0.35);
     // brow horn (smaller, forward)
-    const brow = mesh(G.cone, hornM);
-    brow.scale.set(r * 0.06 * big, r * 0.3 * big, r * 0.06 * big);
-    brow.position.set(s * r * 0.22, r * 0.42, r * 0.1);
-    brow.rotation.x = -0.2;
-    brow.rotation.z = -s * 0.45;
-    head.add(brow);
+    API.addSpike(head, s * r * 0.22, r * 0.4, r * 0.1, r * 0.06 * big, r * 0.3 * big,
+      hornM, -0.2, 0, -s * 0.45);
     // cheek / jaw spikes
     for (let i = 0; i < (opts.cheek || 2); i++) {
-      const cheek = mesh(G.cone, hornM);
-      cheek.scale.set(r * 0.04 * big, r * 0.18 * big, r * 0.04 * big);
-      cheek.position.set(s * r * 0.42, -r * 0.02 - i * r * 0.12, r * 0.1 - i * r * 0.12);
-      cheek.rotation.z = -s * 1.4;
-      cheek.rotation.x = -0.2;
-      head.add(cheek);
+      API.addSpike(head, s * r * 0.4, -r * 0.02 - i * r * 0.12, r * 0.1 - i * r * 0.12,
+        r * 0.04 * big, r * 0.18 * big, hornM, -0.2, 0, -s * 1.4, false);
     }
   }
 }
@@ -181,12 +168,9 @@ function addWingStruts(parts, r, tint, API, opts = {}) {
       strut.position.set(s * len * 0.5, (0.4 - t) * r * 0.6, (t - 0.4) * r * 1.4);
       w.pivot.add(strut);
     }
-    // wing thumb-claw at the leading edge
-    const claw = mesh(G.cone, API.lambert(0xece4d0));
-    claw.scale.set(r * 0.05, r * 0.22, r * 0.05);
-    claw.position.set(s * reach * 0.55, r * 0.25, r * 0.5);
-    claw.rotation.x = -0.6;
-    w.pivot.add(claw);
+    // wing thumb-claw at the leading edge (base-anchored so it grows from the wing)
+    API.addSpike(w.pivot, s * reach * 0.55, r * 0.25, r * 0.5, r * 0.05, r * 0.22,
+      API.lambert(0xece4d0), -0.6, 0, 0, false);
   }
 }
 
@@ -213,12 +197,9 @@ function addShoulderSpikes(root, parts, tint, API, mag = 1) {
   const r = (parts && parts.r) || 0.3;
   for (const s of [-1, 1]) {
     for (let i = 0; i < 2; i++) {
-      const sp = mesh(G.cone, m);
-      sp.scale.set(r * 0.07 * mag, r * 0.28 * mag, r * 0.07 * mag);
-      sp.position.set(s * r * 0.7, standY + r * 0.45, r * 0.25 - i * r * 0.45);
-      sp.rotation.z = -s * 0.8;
-      sp.rotation.x = -0.2;
-      root.add(sp);
+      // base-anchored so the haunch spike roots into the trunk, not floats beside it
+      API.addSpike(root, s * r * 0.62, standY + r * 0.4, r * 0.25 - i * r * 0.45,
+        r * 0.07 * mag, r * 0.28 * mag, m, -0.2, 0, -s * 0.8, false);
     }
   }
 }
@@ -232,11 +213,9 @@ function addToeClaws(parts, r, API, count = 3) {
     const len = lg.dir > 0 ? 0.4 : 0.5;
     const footY = -standY * len * 1.7;
     for (let i = 0; i < count; i++) {
-      const claw = mesh(G.cone, m);
-      claw.scale.set(r * 0.045, r * 0.18, r * 0.045);
-      claw.position.set((i - (count - 1) / 2) * r * 0.12, footY - r * 0.05, r * 0.22);
-      claw.rotation.x = Math.PI * 0.5 + 0.35;
-      lg.pivot.add(claw);
+      // base-anchored toe-claw rooted in the foot, growing forward over the toe
+      API.addSpike(lg.pivot, (i - (count - 1) / 2) * r * 0.12, footY - r * 0.02, r * 0.18,
+        r * 0.045, r * 0.18, m, Math.PI * 0.5 + 0.35, 0, 0, false);
     }
   }
 }
@@ -691,7 +670,7 @@ const DESIGNS = {
       const { addFur, mesh, G } = API;
       const r = 0.24;
       // fur the abdomen and the front body lump
-      addFur(root, r * 0.95, tint, 2, 11, 0.8);
+      addFur(root, r * 0.95, tint, 2, 11, 0.8, parts.baseY || (r * 0.8));
       const cephFur = mesh(G.dome, API.lambert(API.shade(tint, 0.9)));
       cephFur.scale.set(r * 0.55, r * 0.45, r * 0.6);
       cephFur.position.set(0, r * 0.55, r * 0.55);
