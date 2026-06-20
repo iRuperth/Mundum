@@ -2,6 +2,8 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="../freshreg.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Powers Preview — Mundum</title>
 <script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
@@ -62,11 +64,16 @@ const world = { heightAt: () => 0 };
 const skillSystem = new SkillSystem(scene, world);
 
 // A caster character standing at origin, facing +X (down the range toward posts).
+// Spells fly along dir = (-sin(yaw), -cos(yaw)); with casterYaw = -π/2 that's +X.
+// The model faces +Z by default, and the game maps facing as rotation.y = yaw+π
+// (see player.js). So to face the SAME way the spell flies, the model must use
+// casterYaw + π — NOT casterYaw alone, which pointed it backwards (powers came
+// out of its back).
 const char = buildCharacter({ colors: { skin: '#f2c79b', shirt: '#6a5bef', pants: '#34495e', hair: '#4a2f1b' }, sex: 'male', hair: 'short', nose: 'small', mouth: 'smile' });
 char.group.position.set(0, 0, 0);
-char.group.rotation.y = -Math.PI / 2;   // face +X
+const casterYaw = -Math.PI / 2;          // spells fly toward +X (down the range)
+char.group.rotation.y = casterYaw + Math.PI;   // face the SAME way (+X)
 scene.add(char.group);
-const casterYaw = -Math.PI / 2;          // matches the model facing +X
 
 // --- UI ------------------------------------------------------------------
 const panel = document.getElementById('panel');
