@@ -311,6 +311,10 @@ export class AuthUI {
   // Screen: character select (up to 3 slots).
 
   async _renderSelect() {
+    // Free any live previews from the screen we're leaving (creation or a prior
+    // select render) before building fresh spinning slots.
+    this._disposePreview();
+    this._slotPreviews = [];
     const card = this._card();
     card.appendChild(el('h1', { text: 'MUNDUM' }));
     card.appendChild(el('p', { class: 'auth-sub', text: tt('selectCharacter') }));
@@ -343,14 +347,31 @@ export class AuthUI {
     const profName = prof ? loc(prof.name) : (c.profession || '');
     const meta = `${profName} · ${tt('level')} ${c.level != null ? c.level : 1}`;
 
-    // A front-facing thumbnail rendered from this character's look.
-    const thumb = el('img', { class: 'auth-thumb' });
+    // The character's look, with its equipped gear so the saved armor/weapon
+    // shows on the slot model exactly like in-game.
+    const profile = {
+      sex: c.sex || 'male', hair: c.hair || 'short', nose: c.nose || 'small',
+      mouth: c.mouth || 'smile', colors: { ...DEFAULT_COLORS, ...(c.colors || {}) },
+      equip: c.equip || {}, level: c.level || 1,
+    };
+
+    // A LIVE, slowly-spinning 3D model of the character (falls back to a static
+    // portrait thumbnail if WebGL is unavailable).
+    let thumb;
     try {
-      thumb.src = renderPortrait({
-        sex: c.sex || 'male', hair: c.hair || 'short', nose: c.nose || 'small',
-        mouth: c.mouth || 'smile', colors: { ...DEFAULT_COLORS, ...(c.colors || {}) },
-      }, 96);
-    } catch (_) { /* webgl unavailable */ }
+      const preview = new CharPreview(profile, { size: 96, autoRotate: true, interactive: false });
+      preview.spinVel = 0.55;            // gentle idle turn
+      this._slotPreviews = this._slotPreviews || [];
+      this._slotPreviews.push(preview);
+      preview.el.classList.add('auth-thumb');
+      preview.start();
+      thumb = preview.el;
+    } catch (_) {
+      thumb = el('img', { class: 'auth-thumb' });
+      try {
+        thumb.src = renderPortrait(profile, 96);
+      } catch (__) { /* webgl unavailable */ }
+    }
 
     return el('div', { class: 'auth-slot filled' }, [
       thumb,
@@ -496,9 +517,15 @@ export class AuthUI {
     this._mount(card);
   }
 
-  // Stop and free the live creation preview (its WebGL scene + RAF loop).
+  // Stop and free the live creation preview AND any character-select slot
+  // previews (each owns a WebGL scene + RAF loop), so switching screens never
+  // leaks spinning models in the background.
   _disposePreview() {
     if (this._preview) { try { this._preview.destroy(); } catch (_) { /* ignore */ } this._preview = null; }
+    if (this._slotPreviews) {
+      for (const p of this._slotPreviews) { try { p.destroy(); } catch (_) { /* ignore */ } }
+      this._slotPreviews = [];
+    }
   }
 
   _professionPicker(state, onPick) {
