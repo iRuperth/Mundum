@@ -42,27 +42,32 @@ export function buildCharacter(profile) {
 
   const female = sex === 'female';
 
-  // TORSO — a smooth tapered trunk: a capsule for the main mass, narrowed at the
-  // waist and broadened at the chest with two soft "shoulder" caps so the upper
-  // body reads as one organic shape (not a ball). `body` stays the named anchor
-  // (breathe() and equipVisuals' bag attach to it); the extra meshes are children
-  // so they ride with it and worn armor still overlays cleanly on chestArmor.
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(female ? 0.2 : 0.225, 0.3, 8, 18), mats.shirt);
-  body.position.y = 0.95;
-  body.scale.set(female ? 0.95 : 1, 1, female ? 0.92 : 1);
+  // TORSO — ONE long tapered capsule from the shoulders down past the waist, so
+  // the trunk is a single continuous shape with NO stacked spheres (those crossed
+  // each other and read as segmented rings/"parts"). The capsule's own rounded
+  // ends give the chest and waist; a gentle scale makes it a touch wider/deeper at
+  // chest height than at the waist for a natural taper. `body` is the named anchor
+  // (breathe() + the bag attach here); it reaches LOW so the pelvis below overlaps
+  // it with no skin gap. Worn armor still overlays cleanly on chestArmor.
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(female ? 0.19 : 0.215, 0.42, 10, 20), mats.shirt);
+  body.position.y = 1.0;
+  body.scale.set(female ? 0.96 : 1, 1, female ? 0.9 : 0.94);
   model.add(body);
-  // Chest swell: a slightly wider rounded mass high on the torso so the shoulders
-  // are broader than the waist (a tapered figure, not a tube).
-  const chest = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.225 : 0.25, 16, 14), mats.shirt);
-  chest.scale.set(1, 0.78, female ? 0.88 : 0.92);
-  chest.position.y = 0.2;
+  // A soft chest swell high on the trunk: not a separate ball, just a low-profile
+  // cap blended onto the capsule's front-upper so the shoulders read broader than
+  // the waist. Kept shallow and well inside the capsule radius so no seam shows.
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.2 : 0.225, 16, 14), mats.shirt);
+  chest.scale.set(1, 0.62, female ? 0.92 : 0.9);
+  chest.position.y = 0.16;
   body.add(chest);
-  // Waist taper: a smaller mass low on the torso that overlaps the pelvis below so
-  // the trunk flows into the hips with no seam.
-  const waist = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.185 : 0.2, 14, 12), mats.shirt);
-  waist.scale.set(female ? 1.04 : 1, 0.85, 0.92);
-  waist.position.y = -0.18;
-  body.add(waist);
+  // Shirt HEM — a short flared skirt of the shirt that hangs over the waistband,
+  // covering the top of the pants so there's NO bare-skin gap and no "two stacked
+  // blocks" look: the shirt visibly tucks over the hip. Slightly wider than the
+  // capsule's base so it drapes past it. Child of `body` so it breathes with it.
+  const hem = new THREE.Mesh(new THREE.CylinderGeometry(female ? 0.205 : 0.225, female ? 0.225 : 0.245, 0.16, 20), mats.shirt);
+  hem.scale.set(1, 1, female ? 0.92 : 0.94);
+  hem.position.y = -0.32;
+  body.add(hem);
 
   // NECK — a short tapered column bridging the torso and the head so the head
   // doesn't float above a gap.
@@ -75,36 +80,31 @@ export function buildCharacter(profile) {
   chestArmor.position.y = 0.95;
   model.add(chestArmor);
 
-  // PELVIS / lower body — a single tapered mass in the pants colour that overlaps
-  // the waist above and the two thighs below, so the legs grow OUT of one body
-  // instead of being a ball with two tubes stuck on. Slightly wider at the hips,
-  // narrowing toward the crotch where the thighs meet close together.
+  // PELVIS / lower body — ONE tapered hip block in the pants colour that reaches
+  // UP INTO the bottom of the shirt-torso (so there's no bare-skin gap and no
+  // separate "diaper" ball) and flows DOWN into both thighs. Built from a single
+  // truncated cone: wide at the top where it meets the waist, narrowing to the
+  // crotch, slim front-to-back so it's a hip — not a round bulge between the legs.
   const hips = new THREE.Group();
-  hips.position.y = 0.62;
+  hips.position.y = 0.72;
   model.add(hips);
-  // Pelvis: a hip block wide at the top (meets the waist) that stays WIDE as it
-  // comes down so it physically covers the top of BOTH legs — then the thighs
-  // grow straight out of its underside. Tall enough to bridge waist→thighs with
-  // no gap, slim front-to-back so it's not a round diaper ball.
-  const pelvis = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.215 : 0.205, 16, 14), mats.pants);
-  pelvis.scale.set(female ? 1.12 : 1.05, 0.86, 0.9);   // wide, fuller height, slim depth
-  pelvis.position.y = -0.02;                           // dropped so its wide belly sits over the leg-tops
+  // Hip cone: its WIDE top reaches up inside the shirt-torso (radius ≈ the torso's
+  // lower half) so the pants and shirt overlap with NO skin gap and no seam — they
+  // just blend at the waistline. It narrows downward toward where the thighs meet,
+  // slim front-to-back so it's a hip, not a bulge.
+  const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(female ? 0.205 : 0.215, female ? 0.155 : 0.16, 0.26, 18), mats.pants);
+  pelvis.scale.set(1, 1, 0.82);
+  pelvis.position.y = -0.1;
   hips.add(pelvis);
-  // Crotch bridge: a wide, short rounded mass spanning BOTH thigh tops (not a
-  // thin spike), so the inner thighs visibly join the hip — fills the V so the
-  // legs read as connected to the body, not hanging below it.
-  const crotch = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.2 : 0.195, 14, 12), mats.pants);
-  crotch.scale.set(1.0, 0.6, 0.82);                    // wide, low, slim
-  crotch.position.y = -0.12;
-  hips.add(crotch);
-  // A small inner-thigh fillet on each side smooths the join from the hip down
-  // into each leg (kills the pinch/gap at the very top of the thigh).
-  for (const s of [-1, 1]) {
-    const fillet = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), mats.pants);
-    fillet.scale.set(0.9, 1.0, 0.85);
-    fillet.position.set((female ? 0.1 : 0.108) * s, -0.13, 0);
-    hips.add(fillet);
-  }
+  // Rounded seat: a low dome capping the underside so the bottom of the pelvis is
+  // soft (a butt/lap), not a flat cylinder edge, and it overlaps the thigh tops.
+  const seat = new THREE.Mesh(new THREE.SphereGeometry(female ? 0.185 : 0.19, 16, 12), mats.pants);
+  seat.scale.set(1, 0.72, 0.82);
+  seat.position.y = -0.2;
+  hips.add(seat);
+  // The pelvis meshes, exposed so worn LEG armor can hide them and cover the hip
+  // with its own layer (so no bare pants show between the chest armor and greaves).
+  hips.userData.pantsMeshes = [pelvis, seat];
 
   // head
   const head = new THREE.Group();
@@ -158,7 +158,9 @@ export function buildCharacter(profile) {
     hand.add(palm);
     pivot.add(hand);
     model.add(pivot);
-    return { pivot, hand };
+    // `sleeve` + `upper` are the SHIRT on the shoulder/upper arm — exposed so worn
+    // plate armor can hide them (otherwise the shirt peeks out past the pauldrons).
+    return { pivot, hand, sleeve, upper };
   }
   // armR holds the weapon (and drives the swing); armL holds the shield. The
   // model faces +Z and the third-person camera views it from behind, so the
@@ -193,31 +195,33 @@ export function buildCharacter(profile) {
     const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.14, 6, 12), mats.pants);
     leg.position.y = -0.36;
     pivot.add(leg);
+    // The pants meshes on this leg, exposed so worn leg armor can HIDE them and
+    // cover with its own layer (instead of just recolouring the pants).
+    pivot.userData.pantsMeshes = [thigh, knee, leg];
     // A proper BOOT silhouette (Tibia-style) instead of one squashed blob: an
     // ankle SHAFT rising up the leg, a FOOT running forward, a rounded TOE cap and
     // a thin SOLE. All share the boots material so a worn boot recolours the whole
     // thing; overlays (wings, cuffs…) still attach to the `boot` group.
     const boot = new THREE.Group();
     boot.position.set(0, -0.42, 0.0);
-    // Shaft: the vertical cuff that wraps the ankle/lower shin.
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.085, 0.18, 12), mats.boots);
-    shaft.position.set(0, 0.06, 0.0);
+    // Shaft: the vertical cuff that wraps the ankle/lower shin. It is a hair WIDER
+    // than the pants shin (0.082) so it sits OVER the trouser leg, and its TOP
+    // reaches into the LOWER shin — a low boot, dropped well below mid-calf.
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.09, 0.14, 12), mats.boots);
+    shaft.position.set(0, -0.02, 0.0);
     boot.add(shaft);
     // Foot: the horizontal body of the boot, stretched forward toward the toe.
+    // Its rounded underside is the sole now — no separate flat slab (that read as
+    // a "board" sticking out under the shoe).
     const foot = new THREE.Mesh(new THREE.SphereGeometry(0.082, 10, 8), mats.boots);
-    foot.scale.set(1.0, 0.8, 1.75);
-    foot.position.set(0, -0.035, 0.08);
+    foot.scale.set(1.0, 0.85, 1.75);
+    foot.position.set(0, -0.05, 0.08);
     boot.add(foot);
     // Toe: a rounded cap so the front reads as a boot tip, not a stub.
     const toe = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), mats.boots);
-    toe.scale.set(0.92, 0.82, 1.0);
-    toe.position.set(0, -0.04, 0.18);
+    toe.scale.set(0.92, 0.85, 1.0);
+    toe.position.set(0, -0.055, 0.18);
     boot.add(toe);
-    // Sole: a thin slab under the foot, hugging the boot footprint (not a wide
-    // plinth) for a grounded heel/sole line.
-    const sole = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.03, 0.3), mats.boots);
-    sole.position.set(0, -0.092, 0.08);
-    boot.add(sole);
     pivot.add(boot);
     model.add(pivot);
     return { pivot, boot, foot };
@@ -319,9 +323,11 @@ export function buildCharacter(profile) {
     const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.06, 0.03), fletchMat);
     fletch.position.set(0, -0.15, 0.018);
     g.add(shaft, head, fletch);
-    // Lie the arrow roughly horizontal, pointing forward, as if pinched in the hand.
+    // Lie the arrow roughly horizontal, pointing forward, pinched IN the hand. The
+    // hand group's origin is the palm, so sit the arrow right there (was y=-0.42,
+    // which dropped it down by the foot).
     g.rotation.x = Math.PI / 2;
-    g.position.set(0, -0.42, 0.05);
+    g.position.set(0, 0.0, 0.04);
     return g;
   }
   function setWeaponPose(type, bow) {
@@ -341,13 +347,18 @@ export function buildCharacter(profile) {
     const target = active ? 1 : 0;
     breathAmt += (target - breathAmt) * Math.min(1, dt * 8);
     const b = Math.sin(breathT * 2.4) * breathAmt;
-    body.position.y = 0.95 + b * 0.012;
-    body.scale.y = 1 + b * 0.02;
-    head.position.y = 1.42 + b * 0.014;
-    // The worn armor overlay sits on chestArmor — move AND scale it with the body
-    // so a plate cuirass breathes with the chest instead of floating rigidly.
-    chestArmor.position.y = 0.95 + b * 0.012;
-    chestArmor.scale.y = 1 + b * 0.02;
+    // Breathe the WHOLE upper body as one rigid unit — torso, neck, head, both
+    // shoulders, the chest-armor overlay and the helmet all rise/fall by the SAME
+    // amount. Moving them together (and NOT scaling the armor) keeps the neck,
+    // shoulder pads and collar locked to the chest, and stops the cuirass lifting
+    // off to reveal the shirt/pants underneath as it did when only some parts moved.
+    const lift = b * 0.012;
+    body.position.y = 0.95 + lift;
+    neck.position.y = 1.27 + lift;
+    head.position.y = 1.42 + lift;
+    chestArmor.position.y = 0.95 + lift;
+    armL.pivot.position.y = 1.18 + lift;
+    armR.pivot.position.y = 1.18 + lift;
   }
 
   // While mounted, the hero sits on the saddle instead of walking. Set by the
@@ -355,7 +366,30 @@ export function buildCharacter(profile) {
   let seated = false;
   function setSeated(on) { seated = !!on; }
 
+  // SLEEPING: the hero lies flat on a bed. We tip the whole model onto its back
+  // (rotate the model group −90° about X so +Y becomes the bed surface), relax the
+  // limbs, and let it breathe slowly. The caller positions the group on the bed.
+  let sleeping = false;
+  function setSleeping(on) {
+    sleeping = !!on;
+    if (sleeping) {
+      model.rotation.x = -Math.PI / 2;   // lie on the back
+      // relax: arms slightly out, legs straight
+      armL.pivot.rotation.set(0, 0, 0.25);
+      armR.pivot.rotation.set(0, 0, -0.25);
+      legL.pivot.rotation.set(0, 0, 0.04);
+      legR.pivot.rotation.set(0, 0, -0.04);
+    } else {
+      model.rotation.x = 0;
+    }
+  }
+
   function animate(phase, intensity, grounded, dt = 0) {
+    // SLEEPING wins over everything: keep lying flat, breathe slowly, no gait.
+    if (sleeping) {
+      breathe(dt, true);
+      return;
+    }
     // SEATED (mounted) pose wins over everything: a static straddle, no gait. The
     // model faces +Z; legL sits at -X, legR at +X. rotation.x<0 swings a leg
     // FORWARD (+Z), so a small negative lifts the thighs; rotation.z splays the
@@ -486,16 +520,26 @@ export function buildCharacter(profile) {
     return swingT > 0 ? { progress: 1 - swingT / swingDur, type: swingType } : null;
   }
 
+  // The SHIRT meshes — the ENTIRE shirt: the main torso capsule, the chest swell,
+  // the hem, and both shoulder/upper-arm sleeves. Worn armor hides ALL of them so
+  // its own covering layer is the only thing seen (no shirt neck/edges peeking out
+  // past the cuirass). Removing armor restores them. The neck (skin) stays.
+  const shirtMeshes = [body, chest, hem, armL.sleeve, armL.upper, armR.sleeve, armR.upper];
+  function setBodyClothesHidden(hidden) {
+    for (const m of shirtMeshes) if (m) m.visible = !hidden;
+  }
+
   return {
     group,
     // The Game Master wears a fixed robe + cape: EquipVisuals reads this flag and
     // skips drawing any equipped armor/weapon so worn gear never shows on the GM.
     isGM: !!profile.gm,
-    parts: { head, helmet, hairGroup, chestArmor, armL, armR, legL, legR, legBootL: legL.boot, legBootR: legR.boot, body, hips, isFemale: female },
+    parts: { head, helmet, hairGroup, chestArmor, armL, armR, legL, legR, legBootL: legL.boot, legBootR: legR.boot, body, hips, isFemale: female, setBodyClothesHidden },
     mats,
     setColors,
     animate,
     setSeated,
+    setSleeping,
     triggerAttack,
     updateAttack,
     attackProgress,
