@@ -11,7 +11,7 @@ import { EquipVisuals, buildWeaponMesh, buildArrowMesh } from './equipVisuals.js
 import { wandColorForLevel, coinLootLabel, mmCoins } from './data/items.js';
 import { CombatSystem } from './combat.js';
 import { PlayerStatus } from './statusEffects.js';
-import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, CITIES, houseLotAt } from './cities.js';
+import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, collectorPrice, CITIES, houseLotAt } from './cities.js';
 import { HouseStore, HouseInterior, housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, buildForSaleSign, buildExteriorSkin, buildFacadeDisplay, FACADE_SLOTS } from './house.js';
 import { MarketStore, MarketDisplay, STALL_CAP } from './market.js';
 import { Minimap } from './minimap.js';
@@ -34,6 +34,7 @@ import { QuestTracker } from './questTracker.js';
 import { currentWaypoint, questGiverInfo } from './questGuide.js';
 import { Wiki } from './wiki.js';
 import { xpProgress, eventMultipliers, levelXpMultiplier } from './progression.js';
+import { Party, splitKillXp } from './party.js';
 import { QuestLog } from './questlog.js';
 import { WorldNpcs } from './worldNpcs.js';
 import { questsForNpc, getQuest } from './data/quests.js';
@@ -441,6 +442,9 @@ player.exp = 0;
 player.profession = getProfession(profile.profession) ? profile.profession : 'knight';
 let charStats = new CharacterStats(player.profession);
 applyVocationStats(true);
+// The party the local player belongs to (just themselves until they group up).
+// Drives the shared-kill XP split and the group XP bonus (see party.js).
+const party = new Party('self', player.profession);
 player.defense = 0;
 player.weapon = null;
 player.speedBonus = 0;
@@ -464,6 +468,8 @@ function applyVocationStats(fill) {
   // very first call happens before `inv` is constructed (module init order), so
   // guard against the temporal-dead-zone reference.
   try { if (inv && inv.setProfession) inv.setProfession(player.profession); } catch (_) {}
+  // Keep the party's record of MY profession current (drives the diversity bonus).
+  try { if (typeof party !== 'undefined' && party) party.setSelf(party.selfId, 'You', player.profession); } catch (_) {}
   const s = professionStats(player.profession, player.level);
   const sb = charStats ? charStats.bonusHp() : 0;
   const mb = charStats ? charStats.bonusMana() : 0;
@@ -576,8 +582,30 @@ function regenVitals(dt) {
       ringRegenAcc -= secs;
     }
   } else { ringRegenAcc = 0; }
+
+  // Mount regen: some mounts heal HP (scorpion) or mana (stag) every few seconds
+  // WHILE ridden. Each uses its own accumulator + interval from the mount's bonus.
+  const mHp = player.mounted ? player.mountHpRegen : null;
+  const mMana = player.mounted ? player.mountManaRegen : null;
+  if (mHp) {
+    mountHpAcc += dt;
+    if (mountHpAcc >= mHp.every) {
+      const ticks = Math.floor(mountHpAcc / mHp.every);
+      if (player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + ticks * mHp.amount);
+      mountHpAcc -= ticks * mHp.every;
+    }
+  } else { mountHpAcc = 0; }
+  if (mMana) {
+    mountManaAcc += dt;
+    if (mountManaAcc >= mMana.every) {
+      const ticks = Math.floor(mountManaAcc / mMana.every);
+      if (player.mana < player.maxMana) player.mana = Math.min(player.maxMana, player.mana + ticks * mMana.amount);
+      mountManaAcc -= ticks * mMana.every;
+    }
+  } else { mountManaAcc = 0; }
 }
 let ringRegenAcc = 0;
+let mountHpAcc = 0, mountManaAcc = 0;
 
 const depot = new DepotStore();
 const questLog = new QuestLog();
@@ -1135,12 +1163,19 @@ const combat = new CombatSystem(scene, world, {
     if (c.flash) c.flash();
   },
   onKill: (c, xp) => {
-    // Apply the level-banded XP boost (×10 early, tapering to ×1 past level 120;
-    // toggled by LEVEL_XP_SCALE_ENABLED in progression.js) on top of the event
-    // multiplier already folded into `xp`. Keyed to the player's current level.
-    const gained = Math.round(xp * levelXpMultiplier(player.level));
+    // The kill's XP is SPLIT among everyone who damaged the creature (party play),
+    // then the local player's share gets the party bonus (+10% grouped, +30% for a
+    // full 4-of-different-professions party). Single-player: 'self' dealt all the
+    // damage, so the player gets the whole base XP × the party bonus (×1 solo).
+    const shares = c._dmgBy || { self: 1 };
+    const split = splitKillXp(xp, shares);
+    let myXp = split.self != null ? split.self : xp;   // my damage share of the base XP
+    const partyMult = party ? party.xpMultiplier() : 1;
+    // Apply the level-banded XP boost and the party bonus on my share.
+    const gained = Math.round(myXp * levelXpMultiplier(player.level) * partyMult);
     gainXp(gained);
-    gameUI.toast(t('gainedXp', gained));
+    const tag = (party && party.inParty() && partyMult > 1) ? `  (${party.bonusLabel()})` : '';
+    gameUI.toast(t('gainedXp', gained) + tag);
     const changed = questLog.onEvent('kill', c.def.family);
     if (changed.length) onQuestProgress();
   },
@@ -1653,6 +1688,8 @@ async function connectOnline() {
     // tells us the house exists. Kept as a hook for future presence polish.
     void fromId; void payload;
   });
+  // Someone visited MY house — log it so I see it when I wake up / log back in.
+  net.onHouseVisit((payload) => recordHouseVisit(payload));
 
   // On connect, publish our own house so already-online peers can see it.
   broadcastHouse();
@@ -2364,7 +2401,9 @@ function doBuy(def, refresh, price) {
 function doSell(index, npc, refresh) {
   const item = inv.backpack[index];
   if (!item || !npc.shop || !vendorBuysItem(npc.shop, item)) return;
-  const price = sellPrice(npc.shop, item);
+  // The rarity collector pays by item level (levelReq × 100); everyone else pays
+  // the standard 10% buy-back. Coins auto-consolidate to silver/gold on payout.
+  const price = npc.shop.rarity ? collectorPrice(item) : sellPrice(npc.shop, item);
   if ((item.count || 1) > 1) item.count -= 1;
   else inv.removeFromBackpack(index);
   inv.addGold(price);
@@ -2649,7 +2688,40 @@ function askVisitHouse(lot, snapshot) {
   }
   gameUI.confirmVisitHouse(snapshot.owner, () => {
     enterHouse(lot, snapshot, { readOnly: true });
+    // Tell the owner someone looked around their house (for their wake-up report).
+    try {
+      const at = (() => { try { return Date.now(); } catch (_) { return 0; } })();
+      if (net && net.houseVisit && snapshot.ownerId) net.houseVisit(snapshot.ownerId, lot.id, myName, at);
+    } catch (_) {}
   });
+}
+
+// Visits to MY house, received over the network while I'm away/asleep. Kept in a
+// rolling list (most recent first), persisted with the character so the report
+// survives a re-login. Only recorded if the visitor was allowed in.
+const houseVisitors = [];
+function recordHouseVisit(payload) {
+  if (!payload || !houseStore.owned) return;
+  if (payload.ownerId !== (net.userId && net.userId())) return;   // not my house
+  // honour the ban/closed list — a banned visitor couldn't really get in
+  const vname = (payload.visitorName || 'Alguien');
+  const banned = houseStore.closed ||
+    (Array.isArray(houseStore.bans) && houseStore.bans.includes(vname.toLowerCase()));
+  if (banned) return;
+  houseVisitors.unshift({ name: vname, at: payload.at || 0 });
+  if (houseVisitors.length > 20) houseVisitors.length = 20;
+}
+
+// Show "who visited your house" — called on waking and on login if asleep.
+function reportVisitors() {
+  if (!houseVisitors.length) return;
+  const names = houseVisitors.slice(0, 8).map((v) => v.name);
+  const uniq = [...new Set(names)];
+  const lead = uniq.length === 1
+    ? `🏠 ${uniq[0]} ${t('visitedYourHouseOne') || 'pasó por tu casa'}`
+    : `🏠 ${uniq.join(', ')} ${t('visitedYourHouseMany') || 'pasaron por tu casa'}`;
+  gameUI.toast(lead, 'info');
+  houseVisitors.length = 0;
 }
 
 // Sell the owned house: refund half, drop the displayed items, clear ownership.
@@ -2677,14 +2749,21 @@ function onHouseChanged() {
 
 // --- Showcase item operations (owner) -------------------------------------
 
-// Place backpack item #bpIndex onto wall `wallId` at slot `index`. Removes it
-// from the backpack and hangs it. Returns true on success.
-function houseHangItem(wallId, index, bpIndex) {
-  const item = inv.backpack[bpIndex];
+// Hang a held item onto wall `wallId` at slot `index`. `ref` is the item OBJECT
+// (it may live top-level in the backpack or inside a nested bag). For a stack
+// (coins/potions/trophies) we peel ONE unit off for display and leave the rest;
+// a single item is removed whole. Returns true on success.
+function houseHangItem(wallId, index, ref) {
+  const item = (ref && typeof ref === 'object') ? ref : inv.backpack[ref];
   if (!item) return false;
-  const used = houseStore.place(wallId, item, index);
+  // The piece that actually goes on the wall: a shallow copy of one unit if it's
+  // a counted stack, else the item itself.
+  const stacked = item.count > 1;
+  const display = stacked ? { ...item, count: 1 } : item;
+  const used = houseStore.place(wallId, display, index);
   if (used < 0) { gameUI.toast(t('houseWallFull'), 'bad'); return false; }
-  inv.removeFromBackpack(bpIndex);
+  if (stacked) item.count -= 1;          // leave the rest of the stack in the bag
+  else inv.removeItemRef(item);          // remove the whole single item
   audio.sfx.click();
   recompute();
   onHouseChanged();
@@ -3461,6 +3540,21 @@ async function maybeLeaveHouse() {
     houseTransitioning = false;
     return;
   }
+  // BED (your own house, ground floor): step beside it → ask "sleep?". On Yes,
+  // the hero lies down asleep and the character goes offline (sleeping).
+  if (activeHouse.activeFloor === 0 && !activeHouse.readOnly && activeHouse.bedTrigger) {
+    const bed = activeHouse.bedTrigger();
+    const atBed = bed && Math.hypot(player.pos.x - bed.x, player.pos.z - bed.z) < bed.r;
+    if (atBed && !_sleepPromptShown && !houseTransitioning && !player.sleeping) {
+      _sleepPromptShown = true;
+      gameUI.confirmPrompt('🛏️ ' + (t('houseSleepTitle') || 'Dormir'),
+        t('houseSleepPrompt') || '¿Quieres dormir aquí? Tu personaje quedará durmiendo.',
+        t('houseSleep') || 'Dormir',
+        () => goToSleep());
+    } else if (!atBed) {
+      _sleepPromptShown = false;
+    }
+  }
   // Exit door (ground floor only). Instead of auto-firing when you brush the
   // doorway (which felt buggy and could re-trigger), ask "leave?" once while
   // you're at the door; on Yes, teleport OUTSIDE. The prompt is shown once per
@@ -3479,6 +3573,39 @@ async function maybeLeaveHouse() {
   }
 }
 let _exitPromptShown = false;
+let _sleepPromptShown = false;
+
+// Put the hero to sleep in their bed: lie the model down on the mattress, mark
+// the player sleeping (so movement is frozen and presence shows "asleep"), and
+// persist the sleeping flag + house so the "who visited" check works on return.
+function goToSleep() {
+  if (!activeHouse || player.sleeping) return;
+  const spot = activeHouse.bedSleepSpot && activeHouse.bedSleepSpot();
+  if (!spot) return;
+  player.sleeping = true;
+  player.sleepHouse = activeHouseLot ? activeHouseLot.id : null;
+  if (player.char && player.char.setSleeping) player.char.setSleeping(true);
+  // Lay the hero on the bed.
+  player.spawnAt(spot.x, spot.z);
+  player.pos.y = spot.y;
+  player.yaw = spot.yaw || 0;
+  // Tell the network/presence the player is asleep (visitors see a sleeping body).
+  try { if (net && net.setStatus) net.setStatus({ sleeping: true, house: player.sleepHouse }); } catch (_) {}
+  // Persist so a re-login knows the player is asleep (and where).
+  saveToAccount();
+  gameUI.toast(t('nowSleeping') || '😴 Durmiendo… (muévete para despertar)', 'info');
+}
+
+function wakeUp() {
+  if (!player.sleeping) return;
+  player.sleeping = false;
+  if (player.char && player.char.setSleeping) player.char.setSleeping(false);
+  player.pos.y = activeHouse ? activeHouse.floorY() : player.pos.y;
+  try { if (net && net.setStatus) net.setStatus({ sleeping: false }); } catch (_) {}
+  _sleepPromptShown = false;
+  // On waking, report who visited the house while you slept (Phase 5c).
+  reportVisitors();
+}
 
 async function exitHouse() {
   await screenFade(true);
@@ -3834,7 +3961,15 @@ function tick() {
     player.applyLook(look.x, look.y);
     controls.updateMove();
 
-    if (player.alive) {
+    // SLEEPING: the hero lies still in bed. Any movement input wakes them; until
+    // then we skip the normal update so they don't slide off the mattress.
+    if (player.sleeping) {
+      const m = controls.move || { x: 0, z: 0 };
+      const moved = Math.abs(m.x) > 0.01 || Math.abs(m.z) > 0.01 || controls.consumeJump();
+      if (moved) wakeUp();
+      else { player.char.animate(0, 0, true, dt); }
+    }
+    if (player.alive && !player.sleeping) {
       const wasGrounded = player.grounded;
       applyFollow(controls);                 // auto-walk after a followed peer
       player.update(dt, controls);
