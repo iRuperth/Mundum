@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Wardrobe Preview — Mundum</title>
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
 <style>
   html, body { margin: 0; height: 100%; background: #1d2228; color: #e7ecf2; font: 14px system-ui, sans-serif; }
   #app { display: flex; height: 100%; }
@@ -27,11 +27,11 @@
 </div>
 <script type="module">
 import * as THREE from 'three';
-import { buildCharacter } from './src/character.js';
-import { EquipVisuals } from './src/equipVisuals.js';
-import { WEAPONS, ARMORS, CONTAINERS } from './src/data/items.js';
-import { instanceFromArmor, instanceFromContainer } from './src/inventory.js';
-import { rollWeaponInstance } from './src/data/items.js';
+import { buildCharacter } from '../src/character.js';
+import { EquipVisuals } from '../src/equipVisuals.js';
+import { WEAPONS, ARMORS, CONTAINERS } from '../src/data/items.js';
+import { instanceFromArmor, instanceFromContainer } from '../src/inventory.js';
+import { rollWeaponInstance } from '../src/data/items.js';
 
 // --- scene ---------------------------------------------------------------
 const stage = document.getElementById('stage');
