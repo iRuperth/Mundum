@@ -825,13 +825,23 @@ export class CombatSystem {
   }
 
   // A flying enemy projectile (arrow/spear/bolt) that travels to the player and
-  // applies its damage on arrival via the onPlayerHit hook.
+  // applies its damage on arrival via the onPlayerHit hook. All shots look
+  // identical (small yellow sphere), so the mesh objects are pooled and reused
+  // instead of created/disposed per shot — this avoids GC stutters when several
+  // ranged enemies fire at once. Visually unchanged.
   spawnEnemyShot(from, to, dmg, src) {
-    const geo = new THREE.SphereGeometry(0.12, 6, 5);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffe066 }));
-    mesh.position.set(from.x, from.y + 1.0, from.z);
-    this.scene.add(mesh);
     if (!this._enemyShots) this._enemyShots = [];
+    if (!this._enemyShotPool) this._enemyShotPool = [];
+    // Shared geometry + material across every enemy shot (all are the same).
+    if (!this._enemyShotGeo) this._enemyShotGeo = new THREE.SphereGeometry(0.12, 6, 5);
+    if (!this._enemyShotMat) this._enemyShotMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+    let mesh = this._enemyShotPool.pop();
+    if (!mesh) {
+      mesh = new THREE.Mesh(this._enemyShotGeo, this._enemyShotMat);
+      this.scene.add(mesh);
+    }
+    mesh.visible = true;
+    mesh.position.set(from.x, from.y + 1.0, from.z);
     this._enemyShots.push({
       mesh, dmg, src,
       target: { x: to.x, y: to.y + 1.0, z: to.z },
@@ -893,10 +903,11 @@ export class CombatSystem {
         const d = Math.hypot(mx, my, mz);
         const step = s.speed * dt;
         if (d <= step || d < 0.4) {
-          // Arrived: apply the shot's damage and remove it.
+          // Arrived: apply the shot's damage and return the mesh to the pool
+          // (hidden, kept in the scene) instead of disposing it.
           this.hooks.onPlayerHit(s.dmg, s.src);
-          this.scene.remove(s.mesh);
-          s.mesh.geometry.dispose(); s.mesh.material.dispose();
+          s.mesh.visible = false;
+          this._enemyShotPool.push(s.mesh);
           this._enemyShots.splice(i, 1);
         } else {
           s.mesh.position.x += (mx / d) * step;
@@ -1545,8 +1556,15 @@ export class CombatSystem {
     // so a zone transition (descend/ascend/teleport) can't deal "phantom" damage
     // in the new context or leak their meshes into the scene.
     if (this._enemyShots) {
-      for (const s of this._enemyShots) { this.scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
+      // Enemy shots share one geometry/material and are pooled; remove every
+      // mesh (in-flight + idle pool) from the scene and dispose the shared
+      // resources once, then reset so the pool rebuilds lazily next zone.
+      for (const s of this._enemyShots) this.scene.remove(s.mesh);
+      if (this._enemyShotPool) for (const m of this._enemyShotPool) this.scene.remove(m);
+      if (this._enemyShotGeo) { this._enemyShotGeo.dispose(); this._enemyShotGeo = null; }
+      if (this._enemyShotMat) { this._enemyShotMat.dispose(); this._enemyShotMat = null; }
       this._enemyShots = [];
+      this._enemyShotPool = [];
     }
     if (this._fxRings) {
       for (const r of this._fxRings) { this.scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); }
