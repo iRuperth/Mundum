@@ -19,10 +19,13 @@ function sharedRenderer() {
 
 function makeStage(profile) {
   const scene = new THREE.Scene();
-  const key = new THREE.DirectionalLight(0xffffff, 1.25); key.position.set(1.5, 2.5, 2.5);
-  const rim = new THREE.DirectionalLight(0x9fd1ff, 0.5); rim.position.set(-2, 1.5, -2);
-  const fill = new THREE.HemisphereLight(0xcfe8ff, 0x2a2f48, 0.95);
-  scene.add(key, rim, fill);
+  // Three-point-ish lighting: a warm key, a cool rim for edge definition, a soft
+  // sky/ground fill, and a low front fill so the face/chest never go muddy.
+  const key = new THREE.DirectionalLight(0xfff4e2, 1.35); key.position.set(1.8, 2.6, 2.6);
+  const rim = new THREE.DirectionalLight(0x9fd1ff, 0.6); rim.position.set(-2.2, 1.8, -2);
+  const fill = new THREE.HemisphereLight(0xdcecff, 0x2a2f48, 1.0);
+  const front = new THREE.DirectionalLight(0xffffff, 0.35); front.position.set(0, 0.6, 4);
+  scene.add(key, rim, fill, front);
 
   const char = buildCharacter(profile);
   try { char.animate(0, 0, true, 0); } catch (_) { /* ignore */ }
@@ -37,9 +40,21 @@ function makeStage(profile) {
     } catch (_) { equipVisuals = null; }
   }
 
+  // Frame the camera to the ACTUAL model bounds (gear/hair change the height), so
+  // the character fills the view consistently and stands centred — not cropped at
+  // the feet or floating up top.
+  let camY = 0.95, dist = 3.6;
+  try {
+    const box = new THREE.Box3().setFromObject(char.group);
+    if (isFinite(box.min.y) && isFinite(box.max.y)) {
+      const h = Math.max(0.8, box.max.y - box.min.y);
+      camY = (box.max.y + box.min.y) / 2;
+      dist = h * 1.85;
+    }
+  } catch (_) { /* keep defaults */ }
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
-  camera.position.set(0, 1.0, 3.6);
-  camera.lookAt(0, 0.9, 0);
+  camera.position.set(0, camY + 0.05, dist);
+  camera.lookAt(0, camY, 0);
 
   function dispose() {
     scene.remove(char.group);
