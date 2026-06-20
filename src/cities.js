@@ -293,14 +293,48 @@ export function shopStockFor(shop) {
   return sellable.filter((d) => matchesDesc(shop.sells, d));
 }
 
+// The RARITY COLLECTOR: an exclusive buyer of rare gear that normal shops won't
+// touch (the value:0 epic/legendary tier). He does NOT sell anything. He pays by
+// the item's LEVEL — levelReq × 100 bronze — so a level-60 armor fetches 6000
+// (shown as 60 silver, since the coin pile auto-consolidates). Rings and amulets
+// are flat 1000. The price is intentionally generous so rare drops are worth real
+// money, but he only takes equippable gear (weapons/armor/jewelry), not junk.
+const COLLECTOR_GEAR_SLOTS = ['armor', 'legs', 'helmet', 'boots', 'shield'];
+export function isCollectorItem(item) {
+  if (!item) return false;
+  const slot = item.slot;
+  if (slot === 'amulet' || slot === 'ring') return true;
+  if (COLLECTOR_GEAR_SLOTS.includes(slot)) return true;
+  if (item.type && ['sword', 'axe', 'mace', 'club', 'lance', 'bow', 'wand'].includes(item.type)) return true;
+  return false;
+}
+export function collectorPrice(item) {
+  if (!item) return 0;
+  if (item.slot === 'amulet' || item.slot === 'ring') return 1000;
+  const lvl = item.levelReq || 1;
+  return Math.max(500, lvl * 100);   // lv60 → 6000, lv30 → 3000, floor 500
+}
+
 // Will this vendor buy the given backpack item from the player?
 export function vendorBuysItem(shop, item) {
+  if (shop && shop.rarity) return isCollectorItem(item);
   return !!(shop && matchesDesc(shop.buys, item));
 }
 
-// Coins the player receives when selling `item` to this vendor.
+// Standard shop buy-back rate: a vendor pays 10% of an item's value when the
+// player sells it back. (Was 40-60%.) A shop can still override with sellMult for
+// special cases, but the default — and what every weapon/armor/potion seller uses
+// — is 10%, so buying high and re-selling is a real sink, not a refund.
+export const SHOP_SELLBACK = 0.1;
+
+// Coins the player receives when selling `item` to this vendor. Regular shop
+// goods (weapons, armor, potions, food…) always buy back at 10%. The trophy/
+// materials "remains buyer" is a separate grind-income loop, so it keeps its own
+// (higher) sellMult — and the rarity collector prices by level, not by this.
 export function sellPrice(shop, item) {
-  const mult = shop && shop.sellMult != null ? shop.sellMult : 0.4;
+  const buysRemains = shop && shop.buys && shop.buys.kinds &&
+    (shop.buys.kinds.includes('trophy') || shop.buys.kinds.includes('material'));
+  const mult = buysRemains && shop.sellMult != null ? shop.sellMult : SHOP_SELLBACK;
   return Math.max(1, Math.floor((item.value || 0) * mult));
 }
 
