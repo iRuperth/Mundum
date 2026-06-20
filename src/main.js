@@ -11,8 +11,8 @@ import { EquipVisuals, buildWeaponMesh, buildArrowMesh } from './equipVisuals.js
 import { wandColorForLevel, coinLootLabel, mmCoins } from './data/items.js';
 import { CombatSystem } from './combat.js';
 import { PlayerStatus } from './statusEffects.js';
-import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, collectorPrice, CITIES, houseLotAt } from './cities.js';
-import { HouseStore, HouseInterior, housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, buildForSaleSign, buildExteriorSkin, buildFacadeDisplay, FACADE_SLOTS } from './house.js';
+import { buildCities, interactableAt, nearestCity, placeCities, vendorBuysItem, sellPrice, collectorPrice, CITIES, houseLotAt, MARKET_COIN_TIERS } from './cities.js';
+import { HouseStore, HouseInterior, housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, buildForSaleSign, buildExteriorSkin, buildFacadeDisplay, buildNameSign, FACADE_SLOTS } from './house.js';
 import { MarketStore, MarketDisplay, STALL_CAP } from './market.js';
 import { Minimap } from './minimap.js';
 import { UI } from './ui.js';
@@ -101,6 +101,32 @@ function lockPointer() {
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isTouch, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
+
+// --- Perf HUD (toggle with P) ----------------------------------------------
+// A tiny on-screen readout of FPS + draw calls + triangles, off by default.
+// Lets us confirm optimisations (e.g. the city draw-call count dropping after
+// the static-mesh merge) without any external profiler. Costs nothing while
+// hidden; while shown it samples once a second.
+const _perfHud = (() => {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:6px;left:6px;z-index:9999;display:none;'
+    + 'font:11px/1.4 monospace;color:#9fe;background:rgba(0,0,0,.55);'
+    + 'padding:4px 7px;border-radius:5px;pointer-events:none;white-space:pre;';
+  document.body.appendChild(el);
+  let frames = 0, acc = 0, fps = 0;
+  return {
+    visible: false,
+    toggle() { this.visible = !this.visible; el.style.display = this.visible ? 'block' : 'none'; },
+    sample(dt) {
+      if (!this.visible) return;
+      frames++; acc += dt;
+      if (acc >= 1) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
+      const r = renderer.info.render;
+      el.textContent = `FPS ${fps}\ncalls ${r.calls}\ntris ${r.triangles}`;
+    },
+  };
+})();
+addEventListener('keydown', (e) => { if (e.key === 'p' || e.key === 'P') _perfHud.toggle(); });
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(isTouch ? 70 : 75, innerWidth / innerHeight, 0.1, 3000);
@@ -359,6 +385,19 @@ const citiesGroup = citiesBuild.group;
 // gently pulse them without traversing the whole city group every frame.
 const templeAuras = [];
 citiesGroup.traverse((o) => { if (o.userData && o.userData.templeAura) templeAuras.push(o); });
+// Market-square coins (the spinning mm-coin on each market statue), collected once
+// so the tick can spin them + cycle their colour through the currency tiers.
+const marketCoins = [];
+citiesGroup.traverse((o) => { if (o.userData && o.userData.marketCoin) marketCoins.push(o.userData.marketCoin); });
+// City statues (tagged in statueLore.js): each carries its hero's legend + a glow
+// base/light. Collected once so the tick can ramp the night glow, and so pressing
+// near one shows its legend. { name, legend, kind, x, z, glow:{base,light} }.
+const cityStatues = [];
+citiesGroup.traverse((o) => {
+  if (o.userData && o.userData.statue) {
+    cityStatues.push({ ...o.userData.statue, glow: o.userData.statueGlow });
+  }
+});
 // Buyable house lots in the round towns (cities.js owns the shells; house.js
 // owns ownership, interiors and decoration). The player owns at most one.
 const houseLots = citiesBuild.houses || [];
@@ -638,6 +677,8 @@ let lastFullWarn = -99;    // game clock of the last "can't carry" toast (thrott
 let firstPerson = true;
 let introCam = 0;   // 1 = front welcome view, decays to 0 (behind) on first move
 let _evClock = 0, _evCached = null;   // cached daily event multipliers (refreshed every 30s)
+let _frame = 0;   // running frame counter, used to throttle work that needn't run at 60Hz
+let _camHitDist = Infinity;   // cached camera-wall march result (recomputed every few frames)
 const _crosshairEl = document.getElementById('crosshair');   // cached (looked up every frame otherwise)
 
 // Quest waypoint arrow on/off (persisted). Toggled from the Quests panel.
@@ -1550,6 +1591,11 @@ async function startGame() {
   // Game Master tools: build the left-side control panel for GM Maple. Works
   // offline too (the net-backed actions degrade to toasts when not connected).
   if (player.gm) setupGM();
+
+  // Logged off ASLEEP? Walk into the owned house and lie back down in the centre
+  // (Tibia-style). Done after the world is built and before going online so the
+  // sleeping presence is broadcast from inside the house.
+  resumeSleepIfNeeded();
 
   connectOnline();
 
@@ -2575,6 +2621,20 @@ function spawnFloatText(pos, text, color) {
   floatText.spawn(pos, text, color);
 }
 
+// The nearest city statue within reach (to read its legend), or null. Statues are
+// ~2m wide on their step; 3.5m gives a comfortable "stand near it and press" range.
+const STATUE_RADIUS = 3.5;
+function statueNear(px, pz) {
+  if (place !== 'surface') return null;
+  let best = null, bestD2 = STATUE_RADIUS * STATUE_RADIUS;
+  for (const s of cityStatues) {
+    const dx = s.x - px, dz = s.z - pz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2) { bestD2 = d2; best = s; }
+  }
+  return best;
+}
+
 function tryInteract() {
   // Inside a house, E acts on the nearest showcase slot (place / take / buy).
   if (place === 'house' && activeHouse) { interactHouseSlot(); return; }
@@ -2589,13 +2649,17 @@ function tryInteract() {
   const lot = houseAtPlayer();
   if (lot) { houseDoorAction(lot); return; }
 
+  // A city statue: read the hero's legend.
+  const statue = statueNear(player.pos.x, player.pos.z);
+  if (statue) { if (document.pointerLockElement) document.exitPointerLock(); gameUI.openStatueLegend(statue, getLang()); return; }
+
   const node = interactableAt(cityProps, player.pos.x, player.pos.z);
   if (!node) return;
   if (document.pointerLockElement) document.exitPointerLock();
   if (node.kind === 'shop') gameUI.openShop(node.city);
   else if (node.kind === 'depot') gameUI.openDepot(node.city);
   else if (node.kind === 'portal') gameUI.openTeleport(node.city, (dest) => teleportTo(dest));
-  else if (node.kind === 'stall') openMarketStall({ stallId: node.stallId, city: node.city.id });
+  else if (node.kind === 'stall') openMarketStall({ stallId: node.stallId, city: node.city.id, market: node.market });
   else if (node.kind === 'healStatue') useHealStatue();
 }
 
@@ -2649,6 +2713,12 @@ function interactHouseSlot() {
   if (!hit) return;
   if (document.pointerLockElement) document.exitPointerLock();
   const owner = activeHouseLot && houseStore.ownsLot(activeHouseLot.id);
+  // A door-wall FACADE niche: the owner edits what shows OUTSIDE (place / swap /
+  // clear), straight from inside. Visitors just see it (no editing).
+  if (hit.facadeSlot != null) {
+    if (owner) gameUI.openHouseFacadeSlot(activeHouseLot, houseStore, houseHooks(activeHouseLot), hit.facadeSlot);
+    return;
+  }
   if (owner) gameUI.openHouseSlot(hit.wallId, hit.index);
   else gameUI.openHouseVisitorSlot(activeHouse, hit.wallId, hit.index);
 }
@@ -2659,8 +2729,12 @@ function openHouseBuy(lot) {
 }
 
 // The owner's management menu (colours, light, ban list, walls, sell house).
-function openHouseManage(lot) {
-  gameUI.openHouseManage(lot, houseStore, {
+// The owner-only callbacks for managing a house (colours, light, bans, facade,
+// name sign…). Extracted so both the Manage-house panel AND the in-house facade
+// niche editor can share the exact same logic. onHouseChanged rebuilds the live
+// interior + exterior, saves, and syncs to visitors.
+function houseHooks(lot) {
+  return {
     enter: () => enterHouse(lot, houseStore, { readOnly: false }),
     setColor: (key, hex) => { houseStore.setColor(key, hex); onHouseChanged(); },
     setLight: (temp) => { houseStore.setLight(temp); onHouseChanged(); },
@@ -2668,15 +2742,22 @@ function openHouseManage(lot) {
     unban: (name) => { houseStore.unban(name); onHouseChanged(); gameUI.toast(t('houseUnbanned', name)); },
     toggleClosed: (v) => { houseStore.closed = !!v; onHouseChanged(); },
     sellHouse: () => sellHouse(lot),
-    // Facade display: show / clear one of the two front-wall slots. Display-only
-    // (the item is copied for show, never removed from the backpack).
+    // Facade display: show / clear a front-wall slot. Display-only (the item is
+    // copied for show, never removed from the backpack).
     setFacade: (index, bpIndex) => {
       const item = inv.backpack[bpIndex];
       if (item && item.kind !== 'coin') houseStore.setFacade(index, item);
       onHouseChanged();
     },
     clearFacade: (index) => { houseStore.clearFacade(index); onHouseChanged(); },
-  });
+    // House name sign over the door, and its background colour.
+    setHouseName: (text) => { houseStore.setName(text); onHouseChanged(); },
+    setHouseColor: (hex) => { houseStore.setNameColor(hex); onHouseChanged(); },
+  };
+}
+
+function openHouseManage(lot) {
+  gameUI.openHouseManage(lot, houseStore, houseHooks(lot));
 }
 
 // Ask a visitor whether to enter someone's house, honouring the ban list.
@@ -2840,8 +2921,11 @@ async function openMarketStall(stall) {
   // This stall is "mine" when it's empty (I can claim it) or every listing is mine.
   const free = here.length === 0;
   const mine = free || here.every((r) => r.seller_id === myUid);
+  const cityName = (CITIES.find((c) => c.id === stall.city) || {}).name || '';
   gameUI.openMarketStall(stall, here, mine, {
     free,
+    cityName,
+    market: stall.market || 'mini',
     place: (s, bp, price) => marketPlace(s, bp, price),
     take: (id) => marketTake(id, stall),
     buy: (id, item, price) => marketBuy(id, item, price, stall),
@@ -2959,6 +3043,8 @@ function updateInteractHint() {
           if (visited && visited.owner) hint = '🚪 ' + t('houseEnterPrompt', visited.owner);
           else if (!houseStore.ownsAny()) hint = '🏠 ' + t('houseBuyPrompt');
         }
+      } else if (statueNear(player.pos.x, player.pos.z)) {
+        hint = '📜 ' + (t('statueReadHint') || 'Leer la leyenda');
       } else {
         const node = interactableAt(cityProps, player.pos.x, player.pos.z);
         if (node && node.kind === 'stall') hint = '🛒 ' + t('marketStallHint');
@@ -2987,6 +3073,7 @@ function interactableNearby() {
   const chest = chestAt(dungeonChests, player.pos.x, player.pos.z);
   if (chest && !chest.opened) return true;
   if (houseAtPlayer()) return true;
+  if (statueNear(player.pos.x, player.pos.z)) return true;
   return !!interactableAt(cityProps, player.pos.x, player.pos.z);
 }
 
@@ -3079,6 +3166,57 @@ function updateTempleAuras() {
       if (m && m.transparent && m._baseOpacity == null) m._baseOpacity = m.opacity;
       if (m && m.transparent) m.opacity = m._baseOpacity * pulse;
     }
+  }
+}
+
+// City statues glow softly from their base UPWARD at night and go dark by day.
+// The night factor ramps with the sun's elevation (full at deep night, fading
+// through dusk/dawn), with a faint flicker so the glow reads as living light, not
+// a flat tint. Cheap: only a handful of statues, only on the surface.
+function updateStatueGlows() {
+  if (place !== 'surface' || !cityStatues.length) return;
+  // elevation: +1 noon → -1 midnight. Map the dark half to 0..1.
+  const e = daynight.elevation();
+  const night = Math.max(0, Math.min(1, (-e - 0.04) / 0.6));
+  const flicker = 0.9 + 0.1 * Math.sin(nowSec * 3.1);
+  const emissive = night * 0.9 * flicker;     // base slab glow
+  const lightI = night * 1.4 * flicker;       // upward point light
+  for (const s of cityStatues) {
+    const g = s.glow;
+    if (!g) continue;
+    if (g.base && g.base.material) g.base.material.emissiveIntensity = emissive;
+    if (g.light) g.light.intensity = lightI;
+  }
+}
+
+// Spin each market-square coin and cycle its colour through the currency tiers —
+// bronze → silver → gold → platinum → diamond — holding each for 5 seconds and
+// blending smoothly between them. Diamond glows the brightest (a blue shimmer).
+// Cheap: only the few coin objects, only on the surface.
+const COIN_TIER_SECONDS = 5;
+function updateMarketCoins() {
+  if (place !== 'surface' || !marketCoins.length || !MARKET_COIN_TIERS.length) return;
+  const N = MARKET_COIN_TIERS.length;
+  const phase = nowSec / COIN_TIER_SECONDS;
+  const i = Math.floor(phase) % N;
+  const next = (i + 1) % N;
+  const f = phase - Math.floor(phase);                  // 0..1 blend into the next tier
+  const a = MARKET_COIN_TIERS[i], b = MARKET_COIN_TIERS[next];
+  // Blend the two tier colours + glow so the change reads as a smooth shimmer.
+  const lerp = (x, y) => x + (y - x) * f;
+  const ar = (a.color >> 16) & 0xff, ag = (a.color >> 8) & 0xff, ab = a.color & 0xff;
+  const br = (b.color >> 16) & 0xff, bg = (b.color >> 8) & 0xff, bb = b.color & 0xff;
+  const r = lerp(ar, br) / 255, g = lerp(ag, bg) / 255, bl = lerp(ab, bb) / 255;
+  const glow = lerp(a.glow, b.glow);
+  const spin = nowSec * 1.4;
+  for (const mc of marketCoins) {
+    if (mc.pivot) mc.pivot.rotation.y = spin;
+    if (mc.mat) {
+      mc.mat.color.setRGB(r, g, bl);
+      mc.mat.emissive.setRGB(r, g, bl);
+      mc.mat.emissiveIntensity = glow;
+    }
+    if (mc.light) { mc.light.color.setRGB(r, g, bl); mc.light.intensity = glow; }
   }
 }
 
@@ -3390,13 +3528,16 @@ function refreshHouseExteriors() {
   for (const lot of houseLots) {
     if (houseStore.ownsLot(lot.id)) {
       g.add(buildExteriorSkin(lot, houseStore.colors));
-      // The owner's facade: up to two display items on the front wall.
+      // The owner's facade: two shelves of three display items under the windows,
+      // plus the optional name sign over the door.
       g.add(buildFacadeDisplay(lot, houseStore.facade));
+      g.add(buildNameSign(lot, houseStore.name, houseStore.nameColor));
     } else if (visitedHouses.has(lot.id)) {
       // A neighbour's house we've seen over the network: show their facade items
       // so passers-by see the best pieces without entering. Display-only.
       const snap = visitedHouses.get(lot.id);
       if (snap && Array.isArray(snap.facade)) g.add(buildFacadeDisplay(lot, snap.facade));
+      if (snap && snap.name) g.add(buildNameSign(lot, snap.name, snap.nameColor));
     } else if (!houseStore.ownsAny()) {
       // Only advertise FOR SALE while the player owns nothing (one house each).
       // The board just says "En venta"/"For sale"; the price + buy shows when you
@@ -3408,6 +3549,27 @@ function refreshHouseExteriors() {
   scene.add(g);
   g.visible = place === 'surface';
   refreshHousePoi();
+}
+
+// Looking at a facade display item shows its name + stats (display-only: you can
+// look but never take). Raycast from the crosshair against the exterior group and,
+// if the hit mesh carries userData.facadeItem within reach, show the read-only
+// tooltip. Cheap + throttled (every few frames) since it only matters on the
+// surface near a house. Called from the tick loop.
+const _facadeRay = new THREE.Raycaster();
+const _facadeCenter = new THREE.Vector2(0, 0);
+function updateFacadeHover() {
+  if (state !== 'play' || place !== 'surface' || !houseExteriorGroup) { gameUI.showFacadeTooltip(null); return; }
+  _facadeRay.setFromCamera(_facadeCenter, camera);
+  const hits = _facadeRay.intersectObjects(houseExteriorGroup.children, true);
+  let item = null;
+  for (const h of hits) {
+    if (h.distance > 8) break;                          // only when you're close
+    let o = h.object;
+    while (o && !item) { if (o.userData && o.userData.facadeItem) item = o.userData.facadeItem; o = o.parent; }
+    if (item) break;
+  }
+  gameUI.showFacadeTooltip(item);
 }
 
 // Mirror the player's owned house onto the minimap as a single 🏠 marker, so it's
@@ -3495,7 +3657,9 @@ async function enterHouse(lot, state, opts = {}) {
 
   player.world = activeHouse;
   combat.world = activeHouse;
-  const entry = activeHouse.entryPoint();
+  // Normally you appear just inside the door; on a wake-from-sleep re-login you
+  // appear in the MIDDLE of the room instead (Tibia-style).
+  const entry = (opts.center && activeHouse.centerPoint) ? activeHouse.centerPoint() : activeHouse.entryPoint();
   player.spawnAt(entry.x, entry.z);
   player.yaw = entry.yaw;
   place = 'house';
@@ -3575,36 +3739,93 @@ async function maybeLeaveHouse() {
 let _exitPromptShown = false;
 let _sleepPromptShown = false;
 
-// Put the hero to sleep in their bed: lie the model down on the mattress, mark
-// the player sleeping (so movement is frozen and presence shows "asleep"), and
-// persist the sleeping flag + house so the "who visited" check works on return.
-function goToSleep() {
+// Put the hero to sleep in their bed, Tibia-style: lay the model on the mattress,
+// mark the character asleep + remember the house, SAVE, then log out to the
+// character-select screen. A visitor can still walk in and see the sleeping body
+// (presence carries sleeping:true). On the next login the character resumes asleep
+// in the middle of the house (resumeSleepIfNeeded).
+async function goToSleep() {
   if (!activeHouse || player.sleeping) return;
   const spot = activeHouse.bedSleepSpot && activeHouse.bedSleepSpot();
   if (!spot) return;
   player.sleeping = true;
   player.sleepHouse = activeHouseLot ? activeHouseLot.id : null;
+  // Persist the sleep INSIDE houseStore so it rides the existing `house` cloud
+  // column (no schema change) and survives a re-login on any device.
+  houseStore.sleeping = true;
   if (player.char && player.char.setSleeping) player.char.setSleeping(true);
   // Lay the hero on the bed.
   player.spawnAt(spot.x, spot.z);
   player.pos.y = spot.y;
   player.yaw = spot.yaw || 0;
-  // Tell the network/presence the player is asleep (visitors see a sleeping body).
+  // Tell the network/presence the player is asleep (visitors see a sleeping body),
+  // then persist the sleeping flag + house so the next login resumes the sleep.
   try { if (net && net.setStatus) net.setStatus({ sleeping: true, house: player.sleepHouse }); } catch (_) {}
-  // Persist so a re-login knows the player is asleep (and where).
+  saveLocal();
   saveToAccount();
-  gameUI.toast(t('nowSleeping') || '😴 Durmiendo… (muévete para despertar)', 'info');
+  gameUI.toast(t('nowSleeping') || '😴 Durmiendo…', 'info');
+  // Tibia-style: sleeping logs you out to character selection.
+  await returnToCharacterSelect();
+}
+
+// Tear the running game down and return to the character-select screen WITHOUT
+// signing out of the account (the session stays, so AuthUI.show() jumps straight
+// to the character list). Used by sleep (logout-to-select). Disconnects realtime
+// so peers see us leave, and hides the in-game HUD/panels.
+async function returnToCharacterSelect() {
+  state = 'create';                       // not 'play' — freezes the game loop's play branch
+  controls.enabled = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+  try { await net.disconnect(); } catch (_) {}
+  // Drop the in-house instance + restore the surface so a later re-entry is clean.
+  if (activeHouse) { try { activeHouse.dispose(); } catch (_) {} activeHouse = null; activeHouseLot = null; }
+  // Hide the gameplay UI (mirror of what startGame() reveals).
+  ui.hud.classList.add('hidden');
+  ui.controlsUi.classList.add('hidden');
+  panelRefs.sidePanel.classList.add('hidden');
+  const leftPanel = document.getElementById('side-panel-left');
+  if (leftPanel) leftPanel.classList.add('hidden');
+  const mmBox = document.getElementById('minimap-box'); if (mmBox) mmBox.classList.add('hidden');
+  const chat = document.getElementById('chat'); if (chat) chat.classList.add('hidden');
+  gameUI.showFacadeTooltip(null);
+  // Back to the account's character list.
+  authUI.show();
 }
 
 function wakeUp() {
   if (!player.sleeping) return;
   player.sleeping = false;
+  player.sleepHouse = null;
+  houseStore.sleeping = false;   // clear the persisted sleep flag too
   if (player.char && player.char.setSleeping) player.char.setSleeping(false);
   player.pos.y = activeHouse ? activeHouse.floorY() : player.pos.y;
   try { if (net && net.setStatus) net.setStatus({ sleeping: false }); } catch (_) {}
   _sleepPromptShown = false;
   // On waking, report who visited the house while you slept (Phase 5c).
   reportVisitors();
+}
+
+// On login, if the character logged off ASLEEP, enter their owned house and WAKE
+// UP standing in the middle of the room (Tibia-style: you reappear inside your
+// own home). We deliberately do NOT resume the lying-down pose: in a small room
+// the only sensible camera is first-person, but a body lying flat on the floor
+// puts the first-person eye at ground level staring into a wall (you'd see the
+// "place item on this wall" slot prompt and the edge of your own model), which
+// is the login-glitch this replaces. Standing + awake is unambiguous and safe.
+async function resumeSleepIfNeeded() {
+  // The cloud-backed truth lives in houseStore.sleeping (rides the `house` column).
+  if (!houseStore.sleeping) return;
+  // The player owns exactly one house, so the owned lot IS the bed they slept in.
+  const lot = houseLots.find((l) => houseStore.ownsLot(l.id));
+  if (!lot) { houseStore.sleeping = false; player.sleeping = false; player.sleepHouse = null; return; }   // house gone → wake
+  player.sleeping = true;
+  player.sleepHouse = lot.id;
+  // enterHouse needs to start from the surface; it teleports us inside, centred.
+  await enterHouse(lot, houseStore, { readOnly: false, center: true });
+  // Wake immediately: clears the persisted sleep flag, drops the lie-down pose,
+  // restores a normal upright camera, broadcasts awake, and reports who visited
+  // while we slept. enterHouse already spawned us standing in the centre.
+  wakeUp();
 }
 
 async function exitHouse() {
@@ -3802,15 +4023,22 @@ function updateCamera() {
     const dirZ = Math.cos(player.yaw) * cp * side;
     const w = activeWorld();
     if (w && w.solidAt) {
-      const SKIN = 0.45;            // keep the camera this far in front of a wall
-      const step = 0.3;
-      let hit = d;
-      for (let dist = step; dist <= d; dist += step) {
-        const sx = player.pos.x + dirX * dist;
-        const sz = player.pos.z + dirZ * dist;
-        if (w.solidAt(sx, sz, 0.2)) { hit = Math.max(0.6, dist - SKIN); break; }
+      // March the camera ray against world solids only every 2nd frame and reuse
+      // the cached pull-in distance in between — the camera eases smoothly so one
+      // frame of lag on the wall pull-in is imperceptible, and this halves the
+      // per-frame raycast cost. Recompute immediately if we have no cached value.
+      if (_frame % 2 === 0 || _camHitDist === Infinity) {
+        const SKIN = 0.45;          // keep the camera this far in front of a wall
+        const step = 0.3;
+        let hit = d;
+        for (let dist = step; dist <= d; dist += step) {
+          const sx = player.pos.x + dirX * dist;
+          const sz = player.pos.z + dirZ * dist;
+          if (w.solidAt(sx, sz, 0.2)) { hit = Math.max(0.6, dist - SKIN); break; }
+        }
+        _camHitDist = hit;
       }
-      d = Math.min(d, hit);
+      d = Math.min(d, _camHitDist);
     }
     let cx = player.pos.x + dirX * d;
     let cz = player.pos.z + dirZ * d;
@@ -3938,6 +4166,7 @@ const clock = new THREE.Clock();
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05);
+  _frame++;
 
   // Underground, the surface day/night must not run (it would overwrite the
   // cave fog, background and lights every frame) and surface chunks needn't stream.
@@ -4069,11 +4298,18 @@ function tick() {
 
     updateCamera();
     updateInteractHint();
+    if (_frame % 3 === 0) updateFacadeHover();   // hover a house's display item → its info
     updateQuestArrow();
     updateMarketProximity();
     updateTempleAuras();
-    const mapBlips = place === 'surface' ? { ...peers.list(), ...bots.list() } : peers.list();
-    minimap.draw(player, mapBlips, combat.creatures, caveMinimapContext());
+    updateMarketCoins();
+    updateStatueGlows();
+    // The minimap needn't redraw at 60Hz — ~20Hz looks just as live and saves a
+    // full canvas repaint (plus the blip-list allocation) on the other frames.
+    if (_frame % 3 === 0) {
+      const mapBlips = place === 'surface' ? { ...peers.list(), ...bots.list() } : peers.list();
+      minimap.draw(player, mapBlips, combat.creatures, caveMinimapContext());
+    }
     gameUI.setVitals(player.hp, player.maxHp, player.mana, player.maxMana, xpProgress(player.exp));
 
     const danger = player.alive && player.hp / player.maxHp < 0.3;
@@ -4087,6 +4323,7 @@ function tick() {
   // state === 'banned' just keeps rendering the frozen scene under the overlay.
 
   renderer.render(scene, camera);
+  _perfHud.sample(dt);
 }
 tick();
 
@@ -4423,16 +4660,27 @@ function updateArrows(dt) {
 }
 
 let lastNetSend = 0;
+let _lastEquipSig = '';
 function sendNetState() {
   if (!net.isOnline()) return;
   const now = performance.now();
   if (now - lastNetSend < 120) return;
   lastNetSend = now;
+  // Worn gear, so other players see your set (and your sleeping body shows it).
+  // Equipment rarely changes, so only attach it when it changed since last send
+  // (or while asleep, so a visitor who arrives mid-sleep still gets it).
+  const equip = inv.equip || {};
+  const sig = JSON.stringify(['weapon', 'shield', 'helmet', 'armor', 'legs', 'boots', 'bag', 'amulet', 'quiver']
+    .map((s) => (equip[s] ? equip[s].baseId || equip[s].id || equip[s].type : 0)));
+  const sendEquip = sig !== _lastEquipSig || player.sleeping;
+  if (sig !== _lastEquipSig) _lastEquipSig = sig;
   net.sendState({
     x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw,
     level: player.level, name: profile.name, sex: profile.sex, hair: profile.hair, colors: profile.colors,
     nose: profile.nose, mouth: profile.mouth, eyes: profile.eyes, brows: profile.brows, ears: profile.ears,
     profession: player.profession,
+    sleeping: !!player.sleeping,
+    equip: sendEquip ? equip : undefined,
   });
 }
 
@@ -4448,6 +4696,8 @@ function serializeSave() {
     keyboard: keyboardPanel.serialize(), // MapleStory-style key→action binds
     keymap: controls.keymap.serialize(), // rebound game-action keys (per character)
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+    // (The logged-off-asleep flag lives inside house.serialize() above, so it
+    // rides the same `house` blob to the cloud — no separate field needed.)
     // Stamp every local save so, on reload, we can tell whether the (async, often
     // lagging) cloud row is actually fresher than what we last wrote locally.
     savedAt: Date.now(),
@@ -4475,6 +4725,8 @@ function applyCloudSave(data) {
   // filtering reflects the player's actual movement/jump layout.
   if (data.keymap) controls.keymap.load(data.keymap);
   if (data.keyboard) keyboardPanel.load(data.keyboard, resolveHotbarEntry);
+  // (The asleep flag was restored by houseStore.load(data.house) above; startGame
+  // reads houseStore.sleeping to resume the sleep.)
   applyVocationStats(true);
   recompute();
 }
@@ -4505,6 +4757,8 @@ function applyCharacterRow(row) {
   if (row.pos && typeof row.pos.x === 'number') {
     player.spawnAt(row.pos.x, row.pos.z);
   }
+  // The logged-off-asleep flag was restored by houseStore.load(row.house) above;
+  // startGame() reads houseStore.sleeping to resume the sleep in the house centre.
   recompute();
 }
 
@@ -4526,6 +4780,8 @@ function saveToAccount() {
     // keeps it regardless.
     keymap: controls.keymap.serialize(),
     pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+    // (The asleep flag travels inside `house` — houseStore.serialize() — so the
+    // existing `house` jsonb column carries it; no extra column needed.)
   });
 }
 

@@ -22,6 +22,7 @@
 import * as THREE from 'three';
 import { iconFor } from './itemIcons.js';
 import { buildItemMesh, fitItemToSlot } from './itemDisplay.js';
+import { houseFrontGeometry } from './cities.js';
 
 // ---------------------------------------------------------------------------
 // Pricing & capacity (everything scales with the house SIZE).
@@ -53,42 +54,47 @@ export function housePrice(lot) {
   return Math.max(5000, Math.round(base / 500) * 500);
 }
 
-export const SHOWCASE_ROWS = 3;
+// How many items the owner may show on the FRONT wall, outside the house. Two
+// shelves of TWO — one under each ground-floor window — so passers-by see four of
+// the owner's best pieces (display-only) without entering. Slots 0-1 = left window
+// shelf, 2-3 = right window shelf. Same four are mirrored inside on the door wall.
+export const FACADE_SLOTS = 4;
+export const FACADE_PER_SHELF = 2;
+// Plaque board size for the facade pieces — both the exterior shelves and the
+// indoor door-wall niches use this, so all the display plaques read the same size
+// as the showcase-wall ones inside.
+export const FACADE_PLAQUE_SIZE = 0.9;
 
-// How many items the owner may show on the FRONT wall, outside the house. The
-// spec: replace one window space with two display slots.
-export const FACADE_SLOTS = 2;
-
-// House SIZE TIER → total display slots (the player's spec):
-//   basic 1-floor cottage  →  9 slots
-//   2-floor house          → 12 slots
-//   large / mansion        → 20 slots
-// The slots are spread across a FEW walls (3 rows each), deliberately NOT filling
-// every wall — a 3×3 on one wall, a 3×4 split, etc. — so the room never looks like
-// a wall of plaques.
+// House SIZE TIER → items shown PER WALL (the player's spec). A house has 3 usable
+// walls — back, west and east — the fourth holds the door, so it's left clear.
+//   basic 1-floor cottage  →  3 per wall  (9 total)
+//   2-floor / medium house  →  4 per wall (12 total)
+//   large / mansion         →  6 per wall (18 total)
+// Each wall shows ONE big row of items spanning ~80% of the wall, so the pieces
+// read large and proud instead of a cramped grid of tiny plaques.
 export function houseSizeTier(lot) {
   if (lot.mansion || houseFootprint(lot) > 90) return 'large';
   if ((lot.floors || 1) >= 2 || houseFootprint(lot) > 45) return 'two';
   return 'basic';
 }
 
-// The showcase WALLS: each { id, cols, rows, cap, floor }. We pick a wall layout
-// per size tier that sums to the target total (9/12/20) without packing the room.
-export function showcaseWalls(lot) {
+// Items shown PER WALL for a size tier.
+export function perWallSlots(lot) {
   const tier = houseSizeTier(lot);
+  if (tier === 'large') return 6;
+  if (tier === 'two') return 4;
+  return 3;
+}
+
+// The showcase WALLS: each { id, cols, rows, cap, floor }. Three walls (back,
+// west, east), each a single row of `perWall` big slots. The door wall stays bare.
+export function showcaseWalls(lot) {
+  const perWall = perWallSlots(lot);
   const walls = [];
-  const add = (id, cols, rows, floor) => walls.push({ id, label: id, cols, rows, cap: cols * rows, floor });
-  if (tier === 'large') {
-    // 20 slots: back wall 3×4 (12) + west wall 2×4 (8). Two walls, room to spare.
-    add(0, 4, 3, 'ground');   // back  → 12
-    add(1, 4, 2, 'ground');   // west  → 8
-  } else if (tier === 'two') {
-    // 12 slots: back wall 3×4 only. One feature wall, the rest stays open.
-    add(0, 4, 3, 'ground');   // back  → 12
-  } else {
-    // 9 slots: a single tidy 3×3 on the back wall.
-    add(0, 3, 3, 'ground');   // back  → 9
-  }
+  const add = (id) => walls.push({ id, label: id, cols: perWall, rows: 1, cap: perWall, floor: 'ground' });
+  add(0);   // back wall
+  add(1);   // west wall
+  add(2);   // east wall
   return walls;
 }
 
@@ -138,6 +144,14 @@ export class HouseStore {
     // of a window), so passers-by see the owner's best pieces without entering.
     // Display-only — these can't be bought. Each entry is an item instance or null.
     this.facade = new Array(FACADE_SLOTS).fill(null);
+    // A name sign over the door ("Nana's House"), with an editable background
+    // colour. Owner-only to edit (from Manage house); visitors just read it.
+    this.name = '';
+    this.nameColor = 0xffcaa0;   // warm parchment by default
+    // Logged-off-asleep flag (Tibia bed). Lives HERE so it rides the existing
+    // `house` jsonb column to the cloud (no schema change) — on re-login the
+    // character resumes asleep in the middle of this house. false when awake.
+    this.sleeping = false;
   }
 
   ownsAny() { return !!this.owned; }
@@ -153,6 +167,8 @@ export class HouseStore {
     this.bans = [];
     this.closed = false;
     this.facade = new Array(FACADE_SLOTS).fill(null);
+    this.name = '';
+    this.nameColor = 0xffcaa0;
   }
 
   // Give up the house: returns the array of items that were on display (so the
@@ -233,6 +249,11 @@ export class HouseStore {
   }
   facadeItem(index) { return this.facade[index] || null; }
 
+  // House name sign (owner-only edit). Name is trimmed + length-capped so it fits
+  // the sign; the colour is the sign's background.
+  setName(text) { this.name = String(text || '').slice(0, 22); }
+  setNameColor(hex) { this.nameColor = (hex >>> 0); }
+
   serialize() {
     return {
       owned: this.owned,
@@ -242,6 +263,9 @@ export class HouseStore {
       bans: this.bans,
       closed: this.closed,
       facade: this.facade,
+      name: this.name,
+      nameColor: this.nameColor,
+      sleeping: this.sleeping,
     };
   }
 
@@ -256,6 +280,9 @@ export class HouseStore {
     // Normalize the facade to exactly FACADE_SLOTS entries (older saves lack it).
     const f = Array.isArray(data.facade) ? data.facade : [];
     this.facade = new Array(FACADE_SLOTS).fill(null).map((_, i) => f[i] || null);
+    this.name = typeof data.name === 'string' ? data.name.slice(0, 22) : '';
+    this.nameColor = (data.nameColor != null ? data.nameColor : 0xffcaa0) >>> 0;
+    this.sleeping = !!data.sleeping;
   }
 
   // The public snapshot other players receive to render a visit (colours, light,
@@ -271,6 +298,8 @@ export class HouseStore {
       facade: this.facade,
       closed: this.closed,
       bans: this.bans,
+      name: this.name,
+      nameColor: this.nameColor,
     };
   }
 }
@@ -378,6 +407,7 @@ export class HouseInterior {
     this.lamp = null;
     this._lampBase = 1.1;
     this._wallMeshes = [];   // showcase plaque groups, indexed for picking
+    this._facadeMeshes = []; // door-wall facade niches, indexed for picking
 
     this.rebuild();
   }
@@ -399,6 +429,12 @@ export class HouseInterior {
   // Where the player should stand when they enter (just inside the door, facing in).
   entryPoint() {
     return { x: this.worldX(0), z: this.worldZ(this.exit.z - 1.6), yaw: Math.PI };
+  }
+
+  // The middle of the room — where a player who logged off ASLEEP wakes up on
+  // re-login (Tibia-style: you reappear standing in the centre of your house).
+  centerPoint() {
+    return { x: this.worldX(0), z: this.worldZ(0), yaw: Math.PI };
   }
 
   // World-space exit trigger (step here → leave the house).
@@ -515,6 +551,10 @@ export class HouseInterior {
         const sp = p.userData && p.userData.spin;
         if (sp) sp.rotation.y = t;
       }
+      for (const p of (this._facadeMeshes || [])) {
+        const sp = p.userData && p.userData.spin;
+        if (sp) sp.rotation.y = t;
+      }
     }
   }
 
@@ -524,6 +564,7 @@ export class HouseInterior {
     // Clear previous children.
     while (this.group.children.length) this.group.remove(this.group.children[0]);
     this._wallMeshes = [];
+    this._facadeMeshes = [];   // door-wall facade niches (editable from inside)
     const c = this.state.colors || defaultColors();
     const W = this.W, D = this.D, H = this.H;
     const ox = this.origin.x, oy = this.origin.y, oz = this.origin.z;
@@ -586,6 +627,11 @@ export class HouseInterior {
     // Hang the showcase plaques on each wall.
     this._hangWalls(ox, oy, oz, W, D, H);
 
+    // Mirror the FACADE pieces (the ones shown outside under the windows) on the
+    // INSIDE of the door wall — two per side of the door — so the owner sees their
+    // shopfront from indoors too. Display-only: not editable, not pickable.
+    this._hangFacadeReflection(ox, oy, oz, W, D, H, doorHalf);
+
     // Basement: a stair down to a second room with its own showcase walls.
     if (this.lot.basement) this._buildBasement(ox, oy, oz, W, D);
 
@@ -617,17 +663,16 @@ export class HouseInterior {
     this.group.add(fixture);
   }
 
-  // Lay each showcase wall's slots out as a 3-row grid of framed plaques on the
-  // four interior walls (and the gallery wall, if any), at eye height.
+  // Lay each showcase wall's slots out as ONE big row of framed plaques, spanning
+  // ~80% of the wall, on the three usable interior walls (back, west, east). The
+  // front wall holds the door, so it's deliberately left bare.
   _hangWalls(ox, oy, oz, W, D, H) {
     const walls = showcaseWalls(this.lot).filter((w) => w.floor === 'ground');
-    // Map wall ids to a flat placement on each interior face.
+    // Wall ids 0/1/2 → back / west / east faces. (No front/door wall.)
     const faces = [
       { nx: 0, nz: 1, cx: 0, cz: -D / 2 + 0.18, span: W },   // back wall, faces +z
       { nx: 1, nz: 0, cx: -W / 2 + 0.18, cz: 0, span: D },   // west wall, faces +x
       { nx: -1, nz: 0, cx: W / 2 - 0.18, cz: 0, span: D },   // east wall, faces -x
-      { nx: 0, nz: -1, cx: 0, cz: D / 2 - 0.18, span: W },   // front (over door), faces -z
-      { nx: 0, nz: 1, cx: 0, cz: -D / 2 + 0.5, span: W },    // gallery (slightly in)
     ];
     for (let wi = 0; wi < walls.length; wi++) {
       const wall = walls[wi];
@@ -636,34 +681,74 @@ export class HouseInterior {
     }
   }
 
-  // Lay a single wall's slots: `rows` rows × `cols` cols, centred on the face.
+  // The interior side of the FACADE: four display niches on the door wall — TWO to
+  // the LEFT of the doorway (facade slots 0,1) and TWO to the RIGHT (2,3) —
+  // mirroring the two exterior shelves under the windows, same plaque size as the
+  // showcase walls. The owner edits these from INSIDE (aim + interact): an empty
+  // niche shows a frame to fill, a filled one can be swapped/taken, and any change
+  // updates what passers-by see OUTSIDE. A visitor (read-only) just sees them.
+  _hangFacadeReflection(ox, oy, oz, W, D, H, doorHalf) {
+    const facade = (this.state && Array.isArray(this.state.facade)) ? this.state.facade : [];
+    const size = FACADE_PLAQUE_SIZE;
+    // The front wall (thickness 0.3) is centred at oz + D/2, so its interior face
+    // is at oz + D/2 - 0.15. Stand the plaque a hair proud of that, INTO the room.
+    const zFace = oz + D / 2 - 0.15 - 0.05;
+    const yMid = oy + H * 0.52;             // eye height, same band as the side walls
+    // Two niches per side, evenly distributed across the wall segment from the
+    // doorframe to the corner — so they fit and stay centred even on a big house.
+    const inner = doorHalf + size * 0.6 + 0.2;   // first niche clears the doorframe
+    const outer = W / 2 - size * 0.6 - 0.2;       // last niche clears the corner
+    const lo = Math.min(inner, outer), hi = Math.max(inner, outer);
+    const xs = [lo + (hi - lo) * 0.33, lo + (hi - lo) * 0.67];   // 2 columns per side
+    // Left side: facade slots 0,1 (x negative). Right side: 2,3 (x positive).
+    const layout = [];
+    xs.forEach((xv, i) => { layout.push({ x: -xv, slot: i }); });            // left
+    xs.forEach((xv, i) => { layout.push({ x: xv, slot: FACADE_PER_SHELF + i }); }); // right
+    for (const { x, slot } of layout) {
+      const item = facade[slot] || null;
+      // Always draw the niche (empty → just the frame, a "vitrine" to fill).
+      const plaque = buildPlaque(item ? { item } : null, size);
+      plaque.position.set(ox + x, yMid, zFace);
+      plaque.rotation.y = Math.PI;          // face into the room (-z)
+      // Tag as an editable FACADE slot so the interior picker (slotAtAim) can edit
+      // what shows outside. Also tag the item for the hover tooltip when filled.
+      plaque.userData.facadeSlot = slot;
+      if (item) { plaque.userData.facadeItem = item; }
+      plaque.traverse((o) => { o.userData.facadeSlot = slot; if (item) o.userData.facadeItem = item; });
+      this.group.add(plaque);
+      this._facadeMeshes.push(plaque);
+    }
+  }
+
+  // Lay a single wall's slots as ONE centred ROW that spans ~80% of the wall.
+  // The plaques are sized to fill that span (big, proud showpieces), centred at
+  // eye height.
   _hangOneWall(wall, face, ox, oy, oz, H, yBase) {
     const arr = (this.state.walls && this.state.walls[wall.id]) || [];
-    const cell = 0.82;
-    const cols = wall.cols, rows = wall.rows;
-    const totalW = Math.min(face.span - 0.6, cols * cell);
-    const stepX = cols > 1 ? totalW / cols : 0;
-    const startX = -totalW / 2 + stepX / 2;
-    const yTop = yBase + H - 0.8;
+    const n = wall.cap;
+    if (n <= 0) return;
+    // 80% of the wall span, divided into one cell per item. The plaque board is a
+    // hair smaller than its cell so neighbours don't touch.
+    const span = face.span * 0.8;
+    const stepX = span / n;
+    const startX = -span / 2 + stepX / 2;
+    const size = Math.min(stepX * 0.9, H * 0.55);   // cap height so it fits the wall
+    const yMid = yBase + H * 0.52;                  // centred a touch above middle
     // Along-face axis is perpendicular to the face normal.
     const ax = face.nz, az = -face.nx; // 90° rotation of the normal
-    for (let r = 0; r < rows; r++) {
-      for (let col = 0; col < cols; col++) {
-        const idx = r * cols + col;
-        if (idx >= wall.cap) break;
-        const slot = arr[idx] || null;
-        const plaque = buildPlaque(slot, cell * 0.92);
-        const offX = startX + col * stepX;
-        const y = yTop - r * cell;
-        const px = ox + face.cx + ax * offX + face.nx * 0.04;
-        const pz = oz + face.cz + az * offX + face.nz * 0.04;
-        plaque.position.set(px, oy + y, pz);
-        plaque.rotation.y = Math.atan2(face.nx, face.nz);
-        const spin = plaque.userData.spin || null;  // preserve the showpiece ref
-        plaque.userData = { wallId: wall.id, index: idx, spin };
-        this.group.add(plaque);
-        this._wallMeshes.push(plaque);
-      }
+    for (let col = 0; col < n; col++) {
+      const idx = col;
+      const slot = arr[idx] || null;
+      const plaque = buildPlaque(slot, size);
+      const offX = startX + col * stepX;
+      const px = ox + face.cx + ax * offX + face.nx * 0.04;
+      const pz = oz + face.cz + az * offX + face.nz * 0.04;
+      plaque.position.set(px, oy + yMid, pz);
+      plaque.rotation.y = Math.atan2(face.nx, face.nz);
+      const spin = plaque.userData.spin || null;  // preserve the showpiece ref
+      plaque.userData = { wallId: wall.id, index: idx, spin };
+      this.group.add(plaque);
+      this._wallMeshes.push(plaque);
     }
   }
 
@@ -701,10 +786,11 @@ export class HouseInterior {
   }
 
   // Pick the showcase slot the player is looking/standing nearest to, for the
-  // interact key (returns { wallId, index } or null). `px,pz` are world coords.
+  // interact key (returns { wallId, index } for a wall plaque, { facadeSlot } for a
+  // door-wall facade niche, or null). `px,pz` are world coords.
   nearestSlot(px, pz, maxDist = 2.2) {
     let best = null, bestD2 = maxDist * maxDist;
-    for (const m of this._wallMeshes) {
+    for (const m of [...this._wallMeshes, ...(this._facadeMeshes || [])]) {
       const dx = m.position.x - px, dz = m.position.z - pz;
       const d2 = dx * dx + dz * dz;
       if (d2 < bestD2) { bestD2 = d2; best = m.userData; }
@@ -712,18 +798,21 @@ export class HouseInterior {
     return best;
   }
 
-  // The wall slot the player is AIMING at: a Raycaster from the crosshair hits a
-  // slot mesh. So you place the item exactly where the cross points, not at a
-  // slot picked by proximity. Falls back to the nearest slot if the ray misses.
+  // The slot the player is AIMING at: a Raycaster from the crosshair hits a plaque
+  // mesh. So you place the item exactly where the cross points, not at a slot
+  // picked by proximity. Checks both the showcase WALL plaques and the door-wall
+  // FACADE niches. Falls back to the nearest slot if the ray misses.
   slotAtAim(raycaster, px, pz) {
-    if (this._wallMeshes && this._wallMeshes.length) {
+    const all = [...(this._wallMeshes || []), ...(this._facadeMeshes || [])];
+    if (all.length) {
       // Recurse: a plaque is a Group, so the ray hits a child mesh — walk up to
-      // the plaque that carries the slot userData.
-      const hits = raycaster.intersectObjects(this._wallMeshes, true);
+      // the plaque carrying the slot userData (wallId for a wall, facadeSlot for
+      // a door-wall niche).
+      const hits = raycaster.intersectObjects(all, true);
       for (const h of hits) {
         let o = h.object;
-        while (o && !(o.userData && o.userData.wallId != null)) o = o.parent;
-        if (o && o.userData && o.userData.wallId != null) return o.userData;
+        while (o && !(o.userData && (o.userData.wallId != null || o.userData.facadeSlot != null))) o = o.parent;
+        if (o && o.userData && (o.userData.wallId != null || o.userData.facadeSlot != null)) return o.userData;
       }
     }
     return this.nearestSlot(px, pz, 4.0);
@@ -793,6 +882,30 @@ function makeSignBoard(text, bg, frame) {
   return g;
 }
 
+// The owner's house NAME sign ("Nana's House"), centred high on the front wall
+// over the door, in the owner's chosen background colour. Empty name → no sign.
+// Reuses makeSignBoard for the canvas-textured board; the frame stays a fixed
+// dark wood so only the parchment colour changes. Returns a Group (empty if no
+// name), positioned + rotated to sit flush over the doorway.
+export function buildNameSign(lot, name, colorHex) {
+  const g = new THREE.Group();
+  if (!name) return g;
+  const rot = lot.rot || 0;
+  const fx = Math.sin(rot), fz = Math.cos(rot);    // outward front normal
+  const geom = houseFrontGeometry(lot);
+  const sign = makeSignBoard(name, (colorHex != null ? colorHex : 0xffcaa0) >>> 0, 0x6a4a2b);
+  // High on the wall, just under the eave: a hair below the wall top, centred on
+  // the door's X/Z, standing slightly proud so it never z-fights the wall.
+  const out = 0.12;
+  sign.position.set(
+    lot.doorX + fx * out,
+    lot.y + geom.wallH - 0.55,
+    lot.doorZ + fz * out);
+  sign.rotation.y = rot;
+  g.add(sign);
+  return g;
+}
+
 // A recolour overlay over the owned house shell: a thin coloured box hugging the
 // walls, a roof cap and a door plate, in the owner's chosen exterior colours.
 export function buildExteriorSkin(lot, colors) {
@@ -827,43 +940,63 @@ export function buildExteriorSkin(lot, colors) {
   return g;
 }
 
-// Two framed item plaques on the FRONT wall, to one side of the door — the spec:
-// one window slot becomes two display spaces showing the owner's best pieces so
-// passers-by see them without entering. Display-only (no buying). `facade` is the
-// HouseStore.facade array (up to FACADE_SLOTS items or null). Returns a Group, or
-// an empty Group when nothing is on show.
+// Two display SHELVES on the FRONT wall — one under each ground-floor window —
+// each carrying TWO of the owner's best pieces (FACADE_PER_SHELF), so passers-by
+// see four showpieces without entering. The plaques are the same size as the
+// indoor showcase plaques (FACADE_PLAQUE_SIZE) and the gap adapts to the house's
+// window spacing so two always fit cleanly under each window, even on big homes.
+// Display-only (no buying, no taking): each plaque is tagged with userData.facadeItem
+// so the world raycast can show its name + stats on hover. `facade` is the
+// HouseStore.facade array (FACADE_SLOTS items or null). Slots 0-1 hang under the
+// left window, 2-3 under the right. Returns a Group (empty if none).
 export function buildFacadeDisplay(lot, facade) {
   const g = new THREE.Group();
   if (!Array.isArray(facade)) return g;
   const rot = lot.rot || 0;
-  const fx = Math.sin(rot), fz = Math.cos(rot);     // outward (door-facing) normal
-  const sx = Math.cos(rot), sz = -Math.sin(rot);    // along the house front (side)
-  // A window-sized framed board carrying both plaques, mounted RIGHT of the door
-  // (the +side of the front wall), at window height. Two slots side by side.
-  const baseSide = 2.0;     // offset from the door along the front wall
-  const gap = 0.62;         // spacing between the two plaques
-  const wy = lot.y + 1.5;   // window height
-  const out = 0.07;         // stand a hair proud of the wall so it never z-fights
-  // A backing board behind both plaques, like a shop window.
-  const board = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.95, 0.06), lambert(0x4a3826));
-  board.position.set(
-    lot.doorX + fx * out + sx * baseSide,
-    wy,
-    lot.doorZ + fz * out + sz * baseSide);
-  board.rotation.y = rot;
-  g.add(board);
-  for (let i = 0; i < FACADE_SLOTS; i++) {
-    const item = facade[i];
-    if (!item) continue;
-    const plaque = buildPlaque({ item }, 0.55);
-    const off = (i - (FACADE_SLOTS - 1) / 2) * gap;   // centre the row of plaques
-    plaque.position.set(
-      lot.doorX + fx * (out + 0.05) + sx * (baseSide + off),
-      wy,
-      lot.doorZ + fz * (out + 0.05) + sz * (baseSide + off));
-    plaque.rotation.y = rot;
-    g.add(plaque);
-  }
+  const out = 0.07;          // stand a hair proud of the wall so it never z-fights
+  const geom = houseFrontGeometry(lot);
+  const { fx, fz, sx, sz } = geom;
+  const plaqueSize = FACADE_PLAQUE_SIZE;
+  // The shelf hangs just UNDER each window. The window pane is 0.8 tall centred at
+  // winY, so its SILL is at winY - 0.4. Drop the shelf board right under the sill,
+  // and centre the plaques in the band below it.
+  const sillY = lot.y + geom.winY - 0.4;             // bottom edge of the window
+  const boardY = sillY - 0.18;                       // shelf board just under the sill
+  const shelfY = boardY - 0.06 - plaqueSize * 0.5;   // plaques rest ON the board
+  // Two plaques per shelf, side by side with a small gap. The half-width of the
+  // pair (used to size the shelf board + back-plate).
+  const gap = plaqueSize + 0.18;                     // centre-to-centre spacing
+  const halfSpan = gap / 2 + plaqueSize / 2;
+
+  geom.windows.forEach((win, wi) => {
+    // A wooden shelf board under this window, flush to the wall.
+    const board = new THREE.Mesh(new THREE.BoxGeometry(halfSpan * 2 + 0.3, 0.1, 0.4), lambert(0x6a4a2a));
+    board.position.set(win.x + fx * (out + 0.14), boardY, win.z + fz * (out + 0.14));
+    board.rotation.y = rot;
+    g.add(board);
+    // A thin back-plate so the items read against the wall like a cabinet.
+    const back = new THREE.Mesh(new THREE.BoxGeometry(halfSpan * 2 + 0.3, plaqueSize + 0.2, 0.04), lambert(0x4a3826));
+    back.position.set(win.x + fx * out, shelfY, win.z + fz * out);
+    back.rotation.y = rot;
+    g.add(back);
+
+    for (let j = 0; j < FACADE_PER_SHELF; j++) {
+      const slot = wi * FACADE_PER_SHELF + j;
+      const item = facade[slot];
+      if (!item) continue;
+      const plaque = buildPlaque({ item }, plaqueSize);
+      const off = (j - (FACADE_PER_SHELF - 1) / 2) * gap;   // centre the two
+      plaque.position.set(
+        win.x + fx * (out + 0.06) + sx * off,
+        shelfY,
+        win.z + fz * (out + 0.06) + sz * off);
+      plaque.rotation.y = rot;
+      // Tag so the world raycast can show "name + stats" on hover (display-only).
+      plaque.userData.facadeItem = item;
+      plaque.traverse((o) => { o.userData.facadeItem = item; });
+      g.add(plaque);
+    }
+  });
   return g;
 }
 
