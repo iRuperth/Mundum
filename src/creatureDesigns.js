@@ -109,7 +109,7 @@ const DESIGNS = {
       muzzle.position.set(0, -r * 0.05, r * 0.75);
       head.add(muzzle);
       // dark blotchy hide spots over the barrel
-      addSpots(root, r, tint, 7, 0.35);
+      addSpots(root, r, tint, 7, 0.35, parts.baseY || 0.6);
       // pink udder under the belly
       const udder = mesh(G.sphere, lambert(0xddaa99));
       const bodyY = (o.legLen || 0.32) + r * 0.6;
@@ -496,7 +496,7 @@ const DESIGNS = {
         }
       }
       // white dappled spots on the back (fawn look)
-      addSpots(root, r, 0xffffff, 5, 1.6);
+      addSpots(root, r, 0xffffff, 5, 1.6, parts.baseY || 0.6);
       // white throat patch
       const throat = mesh(G.sphere, lambert(shade(tint, 1.5)));
       throat.scale.set(r * 0.4, r * 0.4, r * 0.3);
@@ -689,7 +689,7 @@ const DESIGNS = {
       const r = o.bodyR || 0.24;
       const head = parts.head;
       // big shaggy body fur all over the barrel
-      addFur(root, r * 1.15, shade(tint, 0.85), 3, 10, 0.85);
+      addFur(root, r * 1.15, shade(tint, 0.85), 3, 10, 0.85, parts.baseY || 0.6);
       // small round ears
       for (const s of [-1, 1]) {
         const ear = mesh(G.sphere, lambert(tint));
@@ -1695,7 +1695,7 @@ const DESIGNS = {
       // a few warts (small bumps) on the shoulders.
       for (const s of [-1,1]) { const wart = mesh(G.lowSphere, lambert(shade(tint,0.6))); wart.scale.setScalar(0.04); wart.position.set(s*0.18, hb+0.22, -0.02); root.add(wart); }
       // rough hide texture
-      addSpots(root, 0.2, tint, 7, 0.6);
+      addSpots(root, 0.2, tint, 7, 0.6, parts.baseY || 0.9);
     },
   },
   frost_troll: {
@@ -2267,12 +2267,13 @@ const DESIGNS = {
       // shaggy mane crest down the back of the neck/head
       addMane(head, hs, shade(tint, 0.55), 6);
       // fur ruff around the chest/shoulders for a beefy bovine bulk
-      addFur(parts.head.parent ? root : root, 0.3, tint, 1, 9, 0.8);
-      // muscled shoulder plates
+      addFur(root, 0.3, tint, 1, 9, 0.8, (parts.baseY || 0.65) + 0.1);
+      // muscled shoulder plates — pulled in over the actual shoulder so they cap
+      // the deltoid instead of floating out to the side.
       for (const s of [-1, 1]) {
         const plate = mesh(G.sphere, lambert(shade(tint, 0.92)));
         plate.scale.set(0.18, 0.16, 0.14);
-        plate.position.set(s * 0.26, (parts.baseY || 0.65) + 0.15, 0.08);
+        plate.position.set(s * 0.18, (parts.baseY || 0.65) + 0.18, 0.06);
         root.add(plate);
       }
     },
@@ -2589,8 +2590,9 @@ const DESIGNS = {
       loin.scale.set(0.34, 0.2, 0.3);
       loin.position.y = 0.42;
       root.add(loin);
-      // hide texture (rough bumps)
-      addSpots(root, 0.26, tint, 6, 0.65);
+      // hide texture (rough bumps) — lifted to the torso so they don't scatter on
+      // the floor as "dirt"
+      addSpots(root, 0.26, tint, 6, 0.65, parts.baseY || 1.0);
       for (const arm of parts.arms) addClaws(arm, parts.handY || -0.3, 0.04, 0.03, 0.05, 4);
     },
   },
@@ -2659,7 +2661,7 @@ const DESIGNS = {
       ember.position.set(0.06, (parts.baseY || 0.6) - 0.05, 0.27);
       root.add(ember);
       // tool marks and soot marks
-      addSpots(root, 0.24, 0x3a2a20, 5, 0.7);
+      addSpots(root, 0.24, 0x3a2a20, 5, 0.7, parts.baseY || 1.0);
     },
   },
   cyclops_drone: {
@@ -2729,7 +2731,7 @@ const DESIGNS = {
         root.add(scar);
       }
       // thick warpaint band and claws — bigger, meaner than the base cyclops
-      addSpots(root, 0.32, tint, 5, 0.6);
+      addSpots(root, 0.32, tint, 5, 0.6, parts.baseY || 1.0);
       for (const arm of parts.arms) addClaws(arm, parts.handY || -0.34, 0.04, 0.035, 0.06, 4);
     },
   },
@@ -2797,7 +2799,7 @@ const DESIGNS = {
       chest.scale.set(0.42, 0.34, 0.3);
       chest.position.set(0, (parts.baseY || 0.6) + 0.05, 0.16);
       root.add(chest);
-      addFur(root, 0.42, shade(tint, 0.8), 1, 11, 0.7);
+      addFur(root, 0.42, shade(tint, 0.8), 1, 11, 0.7, parts.baseY || 0.7);
       for (let i = 0; i < 4; i++) {
         const ridge = mesh(G.cone, darkHorn);
         ridge.scale.set(0.05, 0.14 - i * 0.02, 0.05);
@@ -3599,73 +3601,71 @@ const DESIGNS = {
     color: 2234918,
     optionsFn(API) {
       const { THREE, G, mesh, lambert, shade, addEyes, addSpots, addFur, addMane, addClaws, giveWeapon, collectMats, EYE_W, EYE_B, WHITE, DARK, WOOD, STEEL, IRON, GOLD, STRING } = API;
-      return { legs: 8, bodyR: 0.34, tint: 0x221a26 };
+      return { legs: 8, bodyR: 0.34, tint: 0x221a26, spider: true };
     },
     decorate(root, parts, o, tint, API) {
       const { THREE, G, mesh, lambert, shade, addEyes, addSpots, addFur, addMane, addClaws, giveWeapon, collectMats, EYE_W, EYE_B, WHITE, DARK, WOOD, STEEL, IRON, GOLD, STRING } = API;
-      // Anchor everything to the bug base's ACTUAL geometry, or eyes/fangs float
-      // off the body. The bug builder uses: legY = r*0.5; abdomen at z=-r*0.3 and
-      // head segment at (0, legY+r*0.3, r*0.6) scaled (r*0.7, r*0.55, r*0.7).
+      // Anchor to the bug base's tarantula geometry (spider:true): a BIG abdomen
+      // set back at z=-r*0.62 and a SMALL cephalothorax up front at z=+r*0.42.
       const r = o.bodyR || 0.34;
       const legY = r * 0.5;
-      const bodyY = legY + r * 0.3;             // abdomen/head centre height
-      const headZ = r * 0.6;                    // head segment centre Z (front)
-      const faceZ = headZ + r * 0.62;           // just proud of the head's front face
+      const headY = legY + r * 0.24;            // cephalothorax centre height
+      const headZ = r * 0.42;                   // cephalothorax centre Z (front)
+      const faceZ = headZ + r * 0.5;            // just proud of its front face
+      const abZ = -r * 0.62;                    // abdomen centre Z (rear)
       const mark = lambert(0xaa1133);
-      const fangMat = lambert(0xddccaa);
-      const venom = lambert(0x88dd44);
+      const fangMat = lambert(0xe9e0cc);        // bone-white fangs (single colour)
       const eyeMat = API.isBoss ? API.EYE_BOSS : lambert(0xcc2244);
 
-      // dark blotches + a red hourglass on the abdomen (rear)
-      const abdomen = root.children.find((c) => c.isMesh && c.position.z < -0.1);
-      if (abdomen) addSpots(abdomen, r, 0x551122, 5, 1.0);
+      // dark blotches + a red hourglass on the big abdomen (rear)
+      const abdomen = root.children.find((c) => c.isMesh && c.position.z < -0.3);
+      if (abdomen) addSpots(abdomen, r * 1.3, 0x551122, 6, 1.0);
       const hour = mesh(G.lowSphere, mark);
-      hour.scale.set(r * 0.24, r * 0.36, r * 0.12);
-      hour.position.set(0, bodyY + r * 0.55, -r * 0.3 - r * 0.5);
+      hour.scale.set(r * 0.26, r * 0.4, r * 0.12);
+      hour.position.set(0, legY + r * 0.85, abZ - r * 0.7);
       root.add(hour);
 
-      // EIGHT glowing eyes clustered on the FRONT FACE of the head segment (a row
-      // of 4 + a 2+2 cluster), sitting just proud of it so none float.
+      // EIGHT eyes clustered on the FRONT FACE of the small cephalothorax.
       for (let i = 0; i < 4; i++) {
         const e = mesh(G.lowSphere, eyeMat);
-        e.scale.setScalar(r * 0.11);
-        e.position.set((i - 1.5) * r * 0.22, bodyY + r * 0.22, faceZ - Math.abs(i - 1.5) * r * 0.06);
+        e.scale.setScalar(r * 0.08);
+        e.position.set((i - 1.5) * r * 0.14, headY + r * 0.18, faceZ - Math.abs(i - 1.5) * r * 0.04);
         root.add(e);
       }
       for (const s of [-1, 1]) {
         for (let j = 0; j < 2; j++) {
           const e = mesh(G.lowSphere, eyeMat);
-          e.scale.setScalar(r * 0.13);
-          e.position.set(s * r * (0.18 + j * 0.2), bodyY + r * 0.02, faceZ - r * 0.06 - j * r * 0.05);
+          e.scale.setScalar(r * 0.09);
+          e.position.set(s * r * (0.12 + j * 0.12), headY + r * 0.04, faceZ - r * 0.04 - j * r * 0.04);
           root.add(e);
         }
       }
 
-      // chelicerae fangs hanging DOWN from the front underside of the head
+      // Chelicerae: a pair of fang bases the SAME colour as the body (not a black
+      // cone), each tipped with a white fang pointing down-and-forward. One colour
+      // per fang so it no longer looks black-then-white.
+      const bodyMat = abdomen ? abdomen.material : lambert(tint);
       for (const s of [-1, 1]) {
-        const chel = mesh(G.cone, lambert(0x110a14));
-        chel.scale.set(r * 0.14, r * 0.4, r * 0.14);
-        chel.position.set(s * r * 0.2, bodyY - r * 0.35, headZ + r * 0.5);
-        chel.rotation.x = 2.6;
-        root.add(chel);
-        const ft = mesh(G.cone, fangMat);
-        ft.scale.set(r * 0.06, r * 0.22, r * 0.06);
-        ft.position.set(s * r * 0.2, bodyY - r * 0.62, headZ + r * 0.55);
-        ft.rotation.x = Math.PI;
-        root.add(ft);
-        const drip = mesh(G.lowSphere, venom);
-        drip.scale.setScalar(r * 0.07);
-        drip.position.set(s * r * 0.2, bodyY - r * 0.78, headZ + r * 0.55);
-        root.add(drip);
+        const base = mesh(G.sphere, bodyMat);
+        base.scale.set(r * 0.12, r * 0.16, r * 0.12);
+        base.position.set(s * r * 0.14, headY - r * 0.16, headZ + r * 0.36);
+        root.add(base);
+        // white fang growing down-and-forward from the base (base-anchored spike)
+        API.addSpike(root, s * r * 0.14, headY - r * 0.28, headZ + r * 0.42,
+          r * 0.05, r * 0.34, fangMat, 2.7, 0, 0, false);
       }
 
-      // pointed claw tips at the end of each leg
+      // pedipalps: two short white-tipped feelers in front of the mouth
+      for (const s of [-1, 1]) {
+        API.addSpike(root, s * r * 0.1, headY - r * 0.05, faceZ - r * 0.02,
+          r * 0.035, r * 0.26, bodyMat, 1.3, s * 0.4, 0, false);
+      }
+
+      // pointed claw tips at the end of each leg (on the bent knee/tibia)
       for (const l of parts.legs) {
-        const tip = mesh(G.cone, lambert(0x110a14));
-        tip.scale.set(r * 0.06, r * 0.22, r * 0.06);
-        tip.position.y = -r * 1.05;
-        tip.rotation.x = 0.6;
-        l.pivot.add(tip);
+        const target = l.knee || l.pivot;
+        API.addSpike(target, 0, -r * 1.0, r * 0.05, r * 0.05, r * 0.18,
+          lambert(0x110a14), 0.6, 0, 0, false);
       }
     },
   },
