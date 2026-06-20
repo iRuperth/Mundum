@@ -406,7 +406,7 @@ export const ARMORS = [
   { id: 'iron_boots', name: 'Iron Boots', slot: 'boots', defense: 6, weight: 26, levelReq: 12, shopTier: 'shop', value: 280, color: 0xb0b4ba, speedBonus: 0 },
   { id: 'traveller_boots', name: "Traveller's Boots", slot: 'boots', defense: 4, weight: 16, levelReq: 14, shopTier: 'shop', value: 900, color: 0x9bbf3b, speedBonus: 0.15 },
   { id: 'steel_boots', name: 'Steel Boots', slot: 'boots', defense: 8, weight: 28, levelReq: 18, shopTier: 'shop', value: 700, color: 0xd0d6dd, speedBonus: 0 },
-  { id: 'fast_boots', name: 'Boots of Haste', slot: 'boots', defense: 3, weight: 16, levelReq: 20, shopTier: 'shop', value: 3500, color: 0xffd24d, speedBonus: 0.3 },
+  { id: 'fast_boots', name: 'Boots of Haste', slot: 'boots', defense: 3, weight: 16, levelReq: 20, shopTier: 'shop', value: 3500, color: 0x6b4423, speedBonus: 0.3 },
   { id: 'plate_boots', name: 'Plate Boots', slot: 'boots', defense: 10, weight: 30, levelReq: 24, shopTier: 'shop', value: 1200, color: 0xc8ccd2, speedBonus: 0 },
   { id: 'knight_boots', name: 'Knight Boots', slot: 'boots', defense: 12, weight: 30, levelReq: 28, shopTier: 'shop', value: 1800, color: 0xe6eef5, speedBonus: 0 },
   { id: 'soft_boots', name: 'Soft Boots', slot: 'boots', defense: 4, weight: 12, levelReq: 30, shopTier: 'shop', value: 9000, color: 0x66ddaa, speedBonus: 0.3 },
@@ -418,6 +418,10 @@ export const ARMORS = [
   { id: 'demon_boots', name: 'Demon Boots', slot: 'boots', defense: 30, weight: 30, levelReq: 95, shopTier: 'legendary-tier', value: 0, color: 0x7a0022, speedBonus: 0.35 },
   { id: 'hermes_boots', name: 'Boots of Hermes', slot: 'boots', defense: 14, weight: 10, levelReq: 105, shopTier: 'legendary-tier', value: 0, color: 0xffe066, speedBonus: 0.35 },
   { id: 'celestial_boots', name: 'Celestial Boots', slot: 'boots', defense: 40, weight: 26, levelReq: 125, shopTier: 'legendary-tier', value: 0, color: 0xfff0a0, speedBonus: 0.35 },
+  // Regen boots (no wings — plain tinted boots). hpRegenPerSec/manaRegenPerSec
+  // tick through the existing ring-regen loop, so e.g. 1/s reads as "+2 every 2s".
+  { id: 'verdant_boots', name: 'Verdant Boots', slot: 'boots', defense: 6, weight: 14, levelReq: 25, shopTier: 'epic', value: 6000, color: 0x2ec27a, speedBonus: 0, hpRegenPerSec: 1, manaRegenPerSec: 1 },
+  { id: 'amethyst_boots', name: 'Amethyst Boots', slot: 'boots', defense: 10, weight: 16, levelReq: 50, shopTier: 'epic', value: 14000, color: 0x9b4fd6, speedBonus: 0, hpRegenPerSec: 1.5, manaRegenPerSec: 2 },
 ];
 
 // --- Tibia-7.4 compression of armor defense ---------------------------------
