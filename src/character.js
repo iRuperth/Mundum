@@ -370,6 +370,7 @@ export function buildCharacter(profile) {
   // (rotate the model group −90° about X so +Y becomes the bed surface), relax the
   // limbs, and let it breathe slowly. The caller positions the group on the bed.
   let sleeping = false;
+  let blanket = null;   // a cover pulled over the sleeping body, "tucked in"
   function setSleeping(on) {
     sleeping = !!on;
     if (sleeping) {
@@ -379,8 +380,22 @@ export function buildCharacter(profile) {
       armR.pivot.rotation.set(0, 0, -0.25);
       legL.pivot.rotation.set(0, 0, 0.04);
       legR.pivot.rotation.set(0, 0, -0.04);
+      // "Arropado": a soft blanket pulled up over the legs and waist to the chest,
+      // so a visitor sees the body tucked in, not just lying flat. Built once and
+      // parented to the model so it lies + breathes with the body.
+      if (!blanket) {
+        blanket = new THREE.Mesh(
+          new THREE.BoxGeometry(0.78, 1.15, 0.34),
+          new THREE.MeshLambertMaterial({ color: 0x8a3b4b }));   // burgundy bedsheet
+        // Cover from the feet up to mid-chest (model space: y is body height,
+        // z lifts it off the mattress a touch so it reads as a raised cover).
+        blanket.position.set(0, 0.62, 0.16);
+        model.add(blanket);
+      }
+      blanket.visible = true;
     } else {
       model.rotation.x = 0;
+      if (blanket) blanket.visible = false;
     }
   }
 
