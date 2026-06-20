@@ -22,7 +22,7 @@ function itemDisplayName(id, lang = 'es') {
   return String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 import { EQUIP_SLOTS, itemWeight } from './inventory.js';
-import { shopStock, shopStockFor, vendorBuysItem, sellPrice, buyPrice, CITIES, cityRecLevel } from './cities.js';
+import { shopStock, shopStockFor, vendorBuysItem, sellPrice, buyPrice, collectorPrice, CITIES, cityRecLevel } from './cities.js';
 import { iconFor, slotPlaceholderIcon } from './itemIcons.js';
 import { housePrice, showcaseWalls, showcaseCapacity, houseSizeKey, HOUSE_PALETTE, FACADE_SLOTS } from './house.js';
 
@@ -40,6 +40,19 @@ function rarityClass(item) {
   if (item.rarity === RARITY.LEGENDARY) return 'rar-legendary';
   if (item.rarity === RARITY.ELITE) return 'rar-elite';
   return 'rar-normal';
+}
+
+// The display name of an item, localized. For a STACK (count > 1) it prefixes the
+// amount — "100 × Crystal Coin", "12 × Mana Potion" — so anywhere a stacked item is
+// shown (house/shop/collector walls, market, displays) the amount reads clearly.
+// We use "N × name" rather than pluralising, so it's correct in both ES and EN
+// (Spanish names like "Moneda de Plata" don't pluralise with a simple +s).
+function itemDisplayName(item) {
+  if (!item) return '';
+  const base = typeof item.name === 'string' ? item.name
+    : (item.name && (item.name[getLang()] || item.name.es || item.name.en)) || '';
+  const c = item.count || 1;
+  return c > 1 ? `${c} × ${base}` : base;
 }
 
 // Weapon types that read as "handed" — a blade/bow/staff held in a hand. When
@@ -1179,9 +1192,9 @@ export class UI {
       for (const { it, i } of sellable) {
         const row = document.createElement('div');
         row.className = 'shop-row';
-        const label = typeof it.name === 'string' ? it.name : (it.name[lang] || it.name.es);
-        const price = sellPrice(shop, it);
-        row.innerHTML = `<span><span class="row-ico">${iconFor(it)}</span> ${label}</span><span class="price">+${price} 💰</span>`;
+        const label = itemDisplayName(it);    // shows the count for stacks
+        const price = shop.rarity ? collectorPrice(it) : sellPrice(shop, it);
+        row.innerHTML = `<span><span class="row-ico">${iconFor(it)}</span> ${label}</span><span class="price">+${mmCoins(price)} 💰</span>`;
         const sell = document.createElement('button');
         sell.textContent = t('sell');
         sell.addEventListener('click', () => this.hooks.sell(i, npc, () => this.openVendor(npc)));
@@ -1515,7 +1528,7 @@ export class UI {
       cell.className = 'house-facadecell' + (item ? ' ' + rarityClass(item) : '');
       if (item) {
         cell.innerHTML = `<span class="ico">${iconFor(item)}</span>`;
-        cell.title = typeof item.name === 'string' ? item.name : (item.name[getLang()] || item.name.es);
+        cell.title = itemDisplayName(item);    // "100 Crystal Coins" for stacks
         // Click a filled slot to clear it.
         cell.addEventListener('click', () => { hooks.clearFacade(i); this.openHouseManage(lot, store, hooks); });
       } else {
@@ -1540,7 +1553,7 @@ export class UI {
       const cell = document.createElement('button');
       cell.className = 'house-pickcell ' + rarityClass(it);
       cell.innerHTML = `<span class="ico">${iconFor(it)}</span>`;
-      cell.title = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+      cell.title = itemDisplayName(it);
       cell.addEventListener('click', () => { hooks.setFacade(index, i); this.openHouseManage(lot, store, hooks); });
       grid.appendChild(cell);
     });
@@ -1607,14 +1620,23 @@ export class UI {
       card.appendChild(sub);
       const grid = document.createElement('div');
       grid.className = 'house-pickgrid';
-      this.inv.backpack.forEach((it, i) => {
-        if (it.kind === 'coin') return;   // coins aren't display pieces
+      // Every held item — WORN gear, top-level backpack, AND inside nested bags —
+      // so the owner can hang anything they have (equipped pieces, trophies,
+      // consumables, coins…). Hanging a worn piece unequips it first.
+      const held = this.inv.allHeldItems ? this.inv.allHeldItems()
+        : this.inv.backpack.map((item) => ({ item, bagIndex: -1, equipSlot: null }));
+      held.forEach(({ item: it, equipSlot }) => {
         const cell = document.createElement('button');
-        cell.className = 'house-pickcell ' + rarityClass(it);
-        cell.innerHTML = `<span class="ico">${iconFor(it)}</span>`;
-        cell.title = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+        cell.className = 'house-pickcell ' + rarityClass(it) + (equipSlot ? ' worn' : '');
+        const label = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+        // A coin/potion stack shows its count; a worn piece shows a "⚔" badge so
+        // the owner knows clicking it will take it off the character.
+        const badge = it.count > 1 ? `<span class="count">${it.count}</span>`
+          : (equipSlot ? `<span class="worn-badge">⚔</span>` : '');
+        cell.innerHTML = `<span class="ico">${iconFor(it)}</span>${badge}`;
+        cell.title = equipSlot ? `${label} (${t('equipped') || 'equipped'})` : label;
         cell.addEventListener('click', () => {
-          this.hooks.houseHangItem(wallId, index, i);
+          this.hooks.houseHangItem(wallId, index, it);
           this.closeContext();
         });
         grid.appendChild(cell);
@@ -1625,7 +1647,7 @@ export class UI {
       // Filled: show the item and let the owner take it back. Houses are
       // display-only now — selling moved to the city free market.
       const it = slot.item;
-      const label = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+      const label = itemDisplayName(it);    // "100 Crystal Coins" for stacks
       card.insertAdjacentHTML('beforeend',
         `<div class="ctx-body ${rarityClass(it)}"><span class="row-ico">${iconFor(it)}</span> ${label}</div>`);
       card.insertAdjacentHTML('beforeend', this.itemDetails(it));
@@ -1651,7 +1673,7 @@ export class UI {
     const slot = arr[index];
     if (!slot || !slot.item) { this.closeContext(); return; }
     const it = slot.item;
-    const label = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+    const label = itemDisplayName(it);    // "100 Crystal Coins" for stacks
     card.innerHTML = `<div class="ctx-head ${rarityClass(it)}">${label}</div>
       <div class="ctx-body"><span class="row-ico">${iconFor(it)}</span></div>`;
     card.insertAdjacentHTML('beforeend', this.itemDetails(it));
@@ -1687,7 +1709,7 @@ export class UI {
     list.className = 'shop-list';
     for (const r of rows) {
       const it = r.item || {};
-      const label = typeof it.name === 'string' ? it.name : ((it.name && (it.name[lang] || it.name.es)) || '');
+      const label = itemDisplayName(it);
       const row = document.createElement('div');
       row.className = 'shop-row';
       row.innerHTML = `<span><span class="row-ico">${iconFor(it)}</span> ${esc(label)}</span>` +
@@ -1745,7 +1767,7 @@ export class UI {
       const cell = document.createElement('button');
       cell.className = 'house-pickcell ' + rarityClass(it);
       cell.innerHTML = `<span class="ico">${iconFor(it)}</span>`;
-      cell.title = typeof it.name === 'string' ? it.name : (it.name[getLang()] || it.name.es);
+      cell.title = itemDisplayName(it);
       cell.addEventListener('click', () => this._marketSetPrice(stall, i, it, ctx));
       grid.appendChild(cell);
     });
@@ -1758,7 +1780,7 @@ export class UI {
   // Ask the seller for a price, then list the chosen backpack item.
   _marketSetPrice(stall, bpIndex, item, ctx) {
     const card = this.refs.contextCard;
-    const label = typeof item.name === 'string' ? item.name : (item.name[getLang()] || item.name.es);
+    const label = itemDisplayName(item);    // shows the count for stacks
     card.innerHTML = `<div class="ctx-head">🏷️ ${t('marketSetPriceFor', label)}</div>
       <div class="ctx-body"><span class="row-ico">${iconFor(item)}</span></div>`;
     const input = document.createElement('input');
