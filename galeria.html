@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<script src="./freshreg.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mundum — Galería 3D</title>
+<!-- Lives at the REPO ROOT (not /previews) so it loads as http://localhost:8000/galeria.html
+     and its src/ + vendor/ imports resolve from the root with no ../ gymnastics. -->
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<style>
+  :root { --bg:#161b21; --panel:#20262d; --panel2:#272e37; --line:#3a434d; --ink:#e7ecf2; --dim:#9fb0c2; --accent:#3b6ea5; --accent2:#5a90c8; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px system-ui, sans-serif; }
+  #top { display:flex; align-items:center; gap:14px; padding:12px 18px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:10; }
+  #top h1 { font-size:18px; font-weight:800; margin:0; letter-spacing:.02em; }
+  #top h1 span { color:var(--accent2); }
+  .tabs { display:flex; gap:6px; }
+  .tabs button { background:var(--panel2); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 14px; cursor:pointer; font-size:13px; font-weight:600; }
+  .tabs button.on { background:var(--accent); border-color:var(--accent2); }
+  #search { margin-left:auto; background:var(--panel2); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 12px; font-size:13px; width:200px; }
+  #count { color:var(--dim); font-size:12px; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; padding:16px; }
+  .cell { background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; cursor:pointer; transition:border-color .12s, transform .12s; }
+  .cell:hover { border-color:var(--accent2); transform:translateY(-2px); }
+  .cell canvas { display:block; width:100%; height:150px; background:radial-gradient(ellipse at 50% 35%, #2b333d 0%, #1b2128 70%); }
+  .cell .cap { padding:7px 9px; font-size:12px; line-height:1.25; border-top:1px solid var(--line); }
+  .cell .cap b { display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cell .cap small { color:var(--dim); font-size:10.5px; }
+  #warn { display:none; padding:20px; margin:20px; background:#3a2020; border:1px solid #6a3030; border-radius:10px; color:#ffd9d0; }
+  #warn.show { display:block; }
+  /* Lightbox: a big rotatable view when a cell is clicked. */
+  #box { position:fixed; inset:0; background:rgba(8,10,14,.86); display:none; align-items:center; justify-content:center; z-index:50; }
+  #box.show { display:flex; }
+  #box .inner { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; width:min(86vw,560px); }
+  #box canvas { width:100%; height:min(64vh,520px); background:radial-gradient(ellipse at 50% 40%, #2b333d 0%, #161b21 72%); border-radius:10px; cursor:grab; }
+  #box canvas.grabbing { cursor:grabbing; }
+  #box .row { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  #box .row b { font-size:16px; }
+  #box .row small { color:var(--dim); }
+  #box .row .x { margin-left:auto; background:var(--panel2); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  #box .hint { color:var(--dim); font-size:11px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div id="top">
+  <h1>Mundum<span>·</span>Galería 3D</h1>
+  <div class="tabs">
+    <button id="tabChars" class="on">🧍 Personajes</button>
+    <button id="tabCreatures">🐉 Criaturas</button>
+  </div>
+  <input id="search" type="search" placeholder="Buscar…" />
+  <span id="count"></span>
+</div>
+<div id="warn">⚠️ No se pudo iniciar WebGL (3D). Activa la aceleración por hardware del navegador (chrome://settings → Sistema) y recarga.</div>
+<div id="grid"></div>
+
+<div id="box">
+  <div class="inner">
+    <canvas id="boxCanvas"></canvas>
+    <div class="row"><b id="boxName"></b><small id="boxSub"></small><button class="x" id="boxClose">Cerrar ✕</button></div>
+    <div class="hint">Arrastra para girar · rueda para acercar</div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import './src/creatureDesigns.js';        // registers authored designs
+import './src/creatureDesignsExtra.js';   // registers vermin + dragons
+import { buildCreatureModel, getDesignKeys } from './src/creatureModels.js';
+import { buildCharacter } from './src/character.js';
+import { CREATURES } from './src/data/creatures.js';
+
+// ---- one shared WebGL renderer; each cell blits from it ------------------
+let shared = null;
+function renderer() {
+  if (shared) return shared;
+  try {
+    const cv = document.createElement('canvas');
+    shared = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    shared.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+  } catch (e) { document.getElementById('warn').classList.add('show'); throw e; }
+  return shared;
+}
+
+// A lit scene + framed camera around a model group. `lift` drops the model so its
+// feet rest on the bottom of the frame (matches the in-game footOffset).
+function makeStage(group, opts = {}) {
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x2a2f48, 1.0));
+  const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(2, 3, 2.5); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x9fd1ff, 0.45); rim.position.set(-2, 1.5, -2); scene.add(rim);
+  const pivot = new THREE.Group();
+  pivot.add(group);
+  group.position.y = opts.lift || 0;          // ground the feet
+  scene.add(pivot);
+  const box = new THREE.Box3().setFromObject(group);
+  const h = Math.max(0.6, (box.max.y - box.min.y) || 1);
+  const cx = (box.max.y + box.min.y) / 2;
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 100);
+  const dist = h * 2.0;
+  camera.position.set(0, cx + h * 0.12, dist);
+  camera.lookAt(0, cx, 0);
+  return { scene, camera, pivot, h, cx, dist, group };
+}
+
+// Lift so the model's lowest point sits at y=0 (same idea as game footOffset).
+function liftFor(group) {
+  const box = new THREE.Box3().setFromObject(group);
+  return isFinite(box.min.y) ? -box.min.y : 0;
+}
+
+function renderStage(st, w, h) {
+  const r = renderer();
+  r.setSize(w, h, false);
+  st.camera.aspect = w / h; st.camera.updateProjectionMatrix();
+  r.render(st.scene, st.camera);
+  return r.domElement;
+}
+
+// ---- data: distinct character looks + distinct creature MODELS -----------
+const CHAR_LOOKS = (() => {
+  const C = (skin, shirt, pants, hair, sex, hairStyle, name) =>
+    ({ name, profile: { sex, hair: hairStyle, nose: 'small', mouth: 'smile',
+       colors: { skin, shirt, pants, hair } } });
+  return [
+    C('#f2c79b', '#3498db', '#34495e', '#4a2f1b', 'male',   'short',    'Aventurero'),
+    C('#e0ac7e', '#e74c3c', '#2c3e50', '#1a1a1a', 'male',   'mohawk',   'Guerrero'),
+    C('#ffdbac', '#9b59b6', '#5d4037', '#b3823e', 'female', 'ponytail', 'Maga'),
+    C('#c68a5a', '#2ecc71', '#1565c0', '#2c1b10', 'female', 'long',     'Cazadora'),
+    C('#9c6b43', '#f1c40f', '#616161', '#992222', 'male',   'bald',     'Bárbaro'),
+    C('#7a4f2e', '#1abc9c', '#2e7d32', '#555555', 'female', 'bun',      'Druida'),
+    C('#ffdbac', '#ecf0f1', '#34495e', '#e8c04a', 'male',   'curly',    'Paladín'),
+    C('#e0ac7e', '#ff6fa5', '#8e24aa', '#ff7043', 'female', 'pigtails', 'Bárdica'),
+  ];
+})();
+
+// One entry per unique creature MODEL (family + design), so the grid isn't 200
+// recolours of the same shape. Keeps the lowest-level representative's color.
+const CREATURE_MODELS = (() => {
+  const designKeys = new Set(getDesignKeys());
+  const seen = new Map();
+  const list = [...CREATURES].sort((a, b) => (a.baseLevel || 0) - (b.baseLevel || 0));
+  for (const c of list) {
+    const key = (c.design && designKeys.has(c.design)) ? c.design : c.family;
+    if (seen.has(key)) continue;
+    seen.set(key, {
+      name: c.name, sub: `${c.family}${c.design ? ' · ' + c.design : ''}`,
+      family: c.family, design: c.design, color: c.color, scale: c.variantScale || 1,
+      level: c.baseLevel || 0,
+    });
+  }
+  return [...seen.values()];
+})();
+
+// ---- build a model group for a gallery entry ----------------------------
+function buildCharGroup(look) {
+  const ch = buildCharacter(look.profile);
+  try { ch.animate(0, 0, true, 0); } catch (_) {}
+  return { group: ch.group, char: ch, animate: (p, dt) => { try { ch.animate(p, 0, true, dt); } catch (_) {} } };
+}
+function buildCreatureGroup(m) {
+  const built = buildCreatureModel(m.family, { color: m.color, scale: m.scale, design: m.design });
+  try { built.update(0, false); } catch (_) {}
+  return { group: built.group, update: built.update, animate: (p, dt) => { try { built.update(dt, false); } catch (_) {} } };
+}
+
+// ---- grid of live cells -------------------------------------------------
+const grid = document.getElementById('grid');
+const countEl = document.getElementById('count');
+const searchEl = document.getElementById('search');
+let mode = 'chars';       // 'chars' | 'creatures'
+let cells = [];           // active cell records {el, st, model, yaw, hovered}
+let raf = null;
+
+function clearGrid() {
+  if (raf) cancelAnimationFrame(raf), raf = null;
+  for (const c of cells) {
+    try { c.model.group.parent && c.model.group.parent.remove(c.model.group); } catch (_) {}
+    c.model.group.traverse(o => { o.geometry && o.geometry.dispose && o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(mm => mm.dispose && mm.dispose()); });
+  }
+  cells = [];
+  grid.innerHTML = '';
+}
+
+function makeCell(rec) {
+  // rec: { name, sub, build } -> build() returns {group, animate}
+  const cell = document.createElement('div'); cell.className = 'cell';
+  const cv = document.createElement('canvas'); cv.width = 300; cv.height = 300;
+  const cap = document.createElement('div'); cap.className = 'cap';
+  cap.innerHTML = `<b>${rec.name}</b><small>${rec.sub || ''}</small>`;
+  cell.appendChild(cv); cell.appendChild(cap); grid.appendChild(cell);
+
+  const model = rec.build();
+  const st = makeStage(model.group, { lift: liftFor(model.group) });
+  const ctx = cv.getContext('2d');
+  const record = { el: cell, cv, ctx, st, model, yaw: 0, hovered: false, phase: 0 };
+  cell.addEventListener('mouseenter', () => record.hovered = true);
+  cell.addEventListener('mouseleave', () => record.hovered = false);
+  cell.addEventListener('click', () => openBox(rec));
+  cells.push(record);
+  return record;
+}
+
+function paint(record, dt) {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const cssW = record.cv.clientWidth || 150, cssH = record.cv.clientHeight || 150;
+  const w = Math.max(1, (cssW * dpr) | 0), h = Math.max(1, (cssH * dpr) | 0);
+  if (record.cv.width !== w || record.cv.height !== h) { record.cv.width = w; record.cv.height = h; }
+  record.yaw += (record.hovered ? 1.1 : 0.32) * dt;
+  record.phase += dt;
+  record.st.pivot.rotation.y = record.yaw;
+  record.model.animate(record.phase, dt);
+  const dom = renderStage(record.st, w, h);
+  record.ctx.clearRect(0, 0, w, h);
+  record.ctx.drawImage(dom, 0, 0, w, h);
+}
+
+function loop(t) {
+  raf = requestAnimationFrame(loop);
+  const now = t / 1000;
+  const dt = loop._last ? Math.min(0.05, now - loop._last) : 0; loop._last = now;
+  // Only paint cells in/near the viewport so a 100-cell grid stays smooth.
+  for (const rec of cells) {
+    const r = rec.el.getBoundingClientRect();
+    if (r.bottom < -200 || r.top > innerHeight + 200) continue;
+    paint(rec, dt);
+  }
+}
+
+function build() {
+  clearGrid();
+  const q = searchEl.value.trim().toLowerCase();
+  let recs;
+  if (mode === 'chars') {
+    recs = CHAR_LOOKS.map(l => ({ name: l.name, sub: `${l.profile.sex === 'female' ? 'mujer' : 'hombre'} · ${l.profile.hair}`,
+      build: () => buildCharGroup(l), _look: l }));
+  } else {
+    recs = CREATURE_MODELS.map(m => ({ name: m.name, sub: `${m.sub} · lv${m.level}`,
+      build: () => buildCreatureGroup(m), _model: m }));
+  }
+  if (q) recs = recs.filter(r => (r.name + ' ' + r.sub).toLowerCase().includes(q));
+  countEl.textContent = `${recs.length} ${mode === 'chars' ? 'looks' : 'modelos'}`;
+  for (const r of recs) makeCell(r);
+  loop._last = 0;
+  raf = requestAnimationFrame(loop);
+}
+
+// ---- lightbox (big drag-to-rotate) --------------------------------------
+const box = document.getElementById('box');
+const boxCanvas = document.getElementById('boxCanvas');
+const boxCtx = boxCanvas.getContext('2d');
+let boxState = null;
+function openBox(rec) {
+  closeBox();
+  const model = rec.build();
+  const st = makeStage(model.group, { lift: liftFor(model.group) });
+  boxState = { st, model, yaw: 0.4, dragging: false, lastX: 0, vel: 0.25, zoom: 1, phase: 0, baseDist: st.dist, raf: null };
+  document.getElementById('boxName').textContent = rec.name;
+  document.getElementById('boxSub').textContent = rec.sub || '';
+  box.classList.add('show');
+  const tick = (t) => {
+    boxState.raf = requestAnimationFrame(tick);
+    const now = t / 1000; const dt = boxState._last ? Math.min(0.05, now - boxState._last) : 0; boxState._last = now;
+    if (!boxState.dragging) boxState.yaw += boxState.vel * dt;
+    boxState.phase += dt;
+    st.pivot.rotation.y = boxState.yaw;
+    st.camera.position.z = boxState.baseDist * boxState.zoom;
+    st.camera.updateProjectionMatrix();
+    model.animate(boxState.phase, dt);
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const w = Math.max(1, (boxCanvas.clientWidth * dpr) | 0), h = Math.max(1, (boxCanvas.clientHeight * dpr) | 0);
+    if (boxCanvas.width !== w || boxCanvas.height !== h) { boxCanvas.width = w; boxCanvas.height = h; }
+    const dom = renderStage(st, w, h);
+    boxCtx.clearRect(0, 0, w, h); boxCtx.drawImage(dom, 0, 0, w, h);
+  };
+  boxState.raf = requestAnimationFrame(tick);
+}
+function closeBox() {
+  if (!boxState) return;
+  cancelAnimationFrame(boxState.raf);
+  try { boxState.model.group.parent && boxState.model.group.parent.remove(boxState.model.group); } catch (_) {}
+  boxState.model.group.traverse(o => { o.geometry && o.geometry.dispose && o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(mm => mm.dispose && mm.dispose()); });
+  boxState = null;
+  box.classList.remove('show');
+}
+document.getElementById('boxClose').addEventListener('click', closeBox);
+box.addEventListener('click', (e) => { if (e.target === box) closeBox(); });
+boxCanvas.addEventListener('mousedown', (e) => { if (!boxState) return; boxState.dragging = true; boxState.lastX = e.clientX; boxState.vel = 0; boxCanvas.classList.add('grabbing'); });
+window.addEventListener('mousemove', (e) => { if (boxState && boxState.dragging) { boxState.yaw += (e.clientX - boxState.lastX) * 0.012; boxState.lastX = e.clientX; } });
+window.addEventListener('mouseup', () => { if (boxState) { boxState.dragging = false; boxCanvas.classList.remove('grabbing'); } });
+boxCanvas.addEventListener('touchstart', (e) => { if (!boxState) return; boxState.dragging = true; boxState.lastX = e.touches[0].clientX; boxState.vel = 0; }, { passive: true });
+boxCanvas.addEventListener('touchmove', (e) => { if (boxState && boxState.dragging) { boxState.yaw += (e.touches[0].clientX - boxState.lastX) * 0.012; boxState.lastX = e.touches[0].clientX; } }, { passive: true });
+boxCanvas.addEventListener('touchend', () => { if (boxState) boxState.dragging = false; });
+boxCanvas.addEventListener('wheel', (e) => { if (!boxState) return; e.preventDefault(); boxState.zoom = Math.min(2.2, Math.max(0.5, boxState.zoom + (e.deltaY > 0 ? 0.1 : -0.1))); }, { passive: false });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeBox(); });
+
+// ---- tabs + search ------------------------------------------------------
+const tabChars = document.getElementById('tabChars'), tabCreatures = document.getElementById('tabCreatures');
+function setMode(m) { mode = m; tabChars.classList.toggle('on', m === 'chars'); tabCreatures.classList.toggle('on', m === 'creatures'); build(); }
+tabChars.addEventListener('click', () => setMode('chars'));
+tabCreatures.addEventListener('click', () => setMode('creatures'));
+let searchT = null;
+searchEl.addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(build, 180); });
+
+// Open the tab named in the hash (#creatures) so you can deep-link.
+if ((location.hash || '').includes('creature')) setMode('creatures'); else build();
+</script>
+</body>
+</html>
